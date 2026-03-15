@@ -12,7 +12,7 @@ import { useAuth } from "@/context/AuthContext";
 import { roleLabel, hasGestorAccess } from "@/lib/types";
 import { getAllowedResourcesForRole, RESOURCES } from "@/lib/constants";
 import { getWeekStart, toISODate } from "@/lib/utils";
-import { getStoredReservations } from "@/lib/storageMensajesYNotificaciones";
+import { getStoredReservations, getMessagesToGestor } from "@/lib/storageMensajesYNotificaciones";
 import { buildSlotViews, getUsers } from "@/lib/dataHelpers";
 import { WeekCalendar } from "@/components/calendar/WeekCalendar";
 import { WeekGridCalendar } from "@/components/calendar/WeekGridCalendar";
@@ -20,6 +20,7 @@ import { DaySlotGrid } from "@/components/calendar/DaySlotGrid";
 import { VistaSemanal } from "@/components/gestor/VistaSemanal";
 import { ConsultaPreanestesiaRow } from "@/components/calendar/ConsultaPreanestesiaRow";
 import { MiPerfil } from "@/components/MiPerfil";
+import { ContactarCoordinacion } from "@/components/ContactarCoordinacion";
 import { HistoricoView } from "@/components/HistoricoView";
 import { CrearNuevoUsuario } from "@/components/gestor/CrearNuevoUsuario";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
@@ -29,7 +30,7 @@ import { hasAnesthetistAccess } from "@/lib/types";
 export default function CalendarioPage() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  type TabId = "calendario" | "perfil" | "crear-usuario" | "asignar-anestesistas" | "historico";
+  type TabId = "calendario" | "perfil" | "coordinacion" | "crear-usuario" | "asignar-anestesistas" | "mensajes" | "historico";
   const [viewTab, setViewTab] = useState<TabId>("calendario");
   const isAnestesista = user ? hasAnesthetistAccess(user.role) : false;
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
@@ -102,6 +103,9 @@ export default function CalendarioPage() {
                 </button>
                 {isGestor && (
                   <>
+                    <button type="button" onClick={() => setViewTab("mensajes")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "mensajes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+                      Mensajes
+                    </button>
                     <button type="button" onClick={() => setViewTab("crear-usuario")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "crear-usuario" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                       Crear nuevo usuario
                     </button>
@@ -115,6 +119,9 @@ export default function CalendarioPage() {
                     Histórico
                   </button>
                 )}
+                <button type="button" onClick={() => setViewTab("coordinacion")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "coordinacion" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+                  Contactar coordinación
+                </button>
                 <button type="button" onClick={() => setViewTab("perfil")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "perfil" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                   Mi perfil
                 </button>
@@ -132,12 +139,42 @@ export default function CalendarioPage() {
           <MiPerfil user={user} />
         )}
 
+        {user && viewTab === "coordinacion" && (
+          <ContactarCoordinacion user={user} />
+        )}
+
         {user && isGestor && viewTab === "crear-usuario" && (
           <CrearNuevoUsuario />
         )}
 
         {user && isGestor && viewTab === "asignar-anestesistas" && (
           <AsignarAnestesistas reservations={reservations} />
+        )}
+
+        {user && isGestor && viewTab === "mensajes" && (
+          <section className="rounded-xl border border-gray-200 bg-white p-6">
+            <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Mensajes recibidos</h2>
+            <p className="mb-4 text-sm text-gray-600">
+              Mensajes enviados por cirujanos, anestesistas y otros usuarios desde Mi perfil → Contactar a la coordinación.
+            </p>
+            <div className="space-y-4">
+              {getMessagesToGestor().length === 0 ? (
+                <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">No hay mensajes.</p>
+              ) : (
+                getMessagesToGestor().map((msg) => (
+                  <article key={msg.id} className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-[var(--ribera-navy)]">{msg.fromName}</span>
+                      {msg.fromEmail && <span className="text-sm text-gray-500">{msg.fromEmail}</span>}
+                      <span className="text-sm text-gray-400">{new Date(msg.date).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}</span>
+                    </div>
+                    <h3 className="mb-1 font-medium text-gray-800">{msg.subject}</h3>
+                    <p className="whitespace-pre-wrap text-sm text-gray-700">{msg.body}</p>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
         )}
 
         {user && viewTab === "historico" && (

@@ -8,7 +8,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { getWeekStart, getWeekDays, toISODate, getSlotDurationMinutes } from "@/lib/utils";
+import { getWeekStart, toISODate, getSlotDurationMinutes, isNextWeekReserveClosed } from "@/lib/utils";
 import { getStoredReservations, addOrUpdateStoredReservation } from "@/lib/storageMensajesYNotificaciones";
 import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES } from "@/lib/constants";
@@ -17,6 +17,7 @@ import { ProgramarPacientesModal, type SlotSelection } from "@/components/ciruja
 import { DaySlotGrid } from "@/components/calendar/DaySlotGrid";
 import type { SlotView } from "@/lib/types";
 import { MiPerfil } from "@/components/MiPerfil";
+import { ContactarCoordinacion } from "@/components/ContactarCoordinacion";
 import { HistoricoView } from "@/components/HistoricoView";
 import type { Reservation, ResourceId, PatientInBlock } from "@/lib/types";
 import type { Shift } from "@/lib/types";
@@ -29,7 +30,7 @@ function slotKey(date: string, resourceId: string, shift: string, slotIndex: num
 export default function CirujanoPage() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const [tab, setTab] = useState<"bloque" | "perfil" | "historico">("bloque");
+  const [tab, setTab] = useState<"bloque" | "pacientes" | "perfil" | "coordinacion" | "historico">("bloque");
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
   const [calendarPeriodStart, setCalendarPeriodStart] = useState(() => getWeekStart(new Date()));
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
@@ -105,12 +106,33 @@ export default function CirujanoPage() {
 
   const totalReservedMinutes = selectedSlots.reduce((s, x) => s + x.durationMinutes, 0);
 
+  /** Si alguna ranura seleccionada es de la semana siguiente (cerrada a reserva desde el jueves): solo programar, no "Solo reservar" */
+  const hasClosedWeekSlot = useMemo(
+    () => selectedSlots.some((s) => isNextWeekReserveClosed(s.date)),
+    [selectedSlots]
+  );
+
+  /** Pacientes ya programados por este cirujano/endoscopista (reservas con pacientes) */
+  const misPacientesProgramados = useMemo(() => {
+    const list: { date: string; resourceLabel: string; shift: Shift; patient: PatientInBlock; reservationId: string }[] = [];
+    reservations
+      .filter((r) => r.surgeonId === user?.id && r.patients?.length > 0)
+      .forEach((r) => {
+        const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
+        r.patients.forEach((p) => {
+          list.push({ date: r.date, resourceLabel, shift: r.shift, patient: p, reservationId: r.id });
+        });
+      });
+    return list.sort((a, b) => a.date.localeCompare(b.date) || a.patient.order - b.patient.order);
+  }, [reservations, user?.id]);
+
   if (!user || (user.role !== "cirujano" && user.role !== "endoscopista")) {
     return null;
   }
 
   const handleSoloReservar = () => {
     if (selectedSlots.length === 0) return;
+    if (selectedSlots.some((s) => isNextWeekReserveClosed(s.date))) return;
     const now = new Date().toISOString();
     selectedSlots.forEach((slot) => {
       const res: Reservation = {
@@ -196,10 +218,24 @@ export default function CirujanoPage() {
             </button>
             <button
               type="button"
+              onClick={() => setTab("pacientes")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "pacientes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
+            >
+              Mis pacientes programados
+            </button>
+            <button
+              type="button"
               onClick={() => setTab("historico")}
               className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "historico" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
             >
               Histórico
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("coordinacion")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "coordinacion" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
+            >
+              Contactar coordinación
             </button>
             <button
               type="button"
@@ -219,6 +255,56 @@ export default function CirujanoPage() {
 
         {tab === "perfil" && (
           <MiPerfil user={user} />
+        )}
+
+        {tab === "coordinacion" && (
+          <ContactarCoordinacion user={user} />
+        )}
+
+        {tab === "pacientes" && (
+          <section className="rounded-xl border border-gray-200 bg-white p-6">
+            <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes programados</h2>
+            <p className="mb-4 text-sm text-gray-600">
+              Listado de pacientes que ya tiene programados en sus reservas de quirófano.
+            </p>
+            {misPacientesProgramados.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">Aún no tiene pacientes programados. Reserve huecos y use &quot;Reservar y programar pacientes&quot; para añadirlos.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Fecha</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Recurso</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Turno</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Paciente / Nº historia</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Procedimiento</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Duración</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Anestesia</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Entidad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient }) => (
+                      <tr key={`${date}-${resourceLabel}-${shift}-${patient.id}`} className="border-b border-gray-100 hover:bg-gray-50/50">
+                        <td className="px-3 py-2 text-gray-800">{new Date(date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</td>
+                        <td className="px-3 py-2 text-gray-800">{resourceLabel}</td>
+                        <td className="px-3 py-2 text-gray-800">{shift === "morning" ? "Mañana" : "Tarde"}</td>
+                        <td className="px-3 py-2">
+                          <span className="font-medium text-gray-800">{patient.name || "—"}</span>
+                          <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-700">{patient.procedure}</td>
+                        <td className="px-3 py-2 text-gray-700">{patient.estimatedDurationMinutes} min</td>
+                        <td className="px-3 py-2 text-gray-700">{patient.anesthesiaType}</td>
+                        <td className="px-3 py-2 text-gray-700">{patient.entidadFinanciadora}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         )}
 
         {tab === "historico" && (
@@ -245,6 +331,11 @@ export default function CirujanoPage() {
               <div className="min-w-0 flex-1">
                 {selectedDateForGrid ? (
                   <>
+                    {selectedDateForGrid && isNextWeekReserveClosed(toISODate(selectedDateForGrid)) && (
+                      <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        Para esta semana (a partir del jueves) solo puede <strong>programar pacientes directamente</strong> en huecos libres; no puede reservar huecos vacíos.
+                      </div>
+                    )}
                     <div className="rounded-lg border border-gray-200 bg-white p-3 mb-4">
                       <p className="text-sm text-gray-600">
                         <span className="inline-block h-4 w-4 rounded bg-emerald-100 border border-emerald-300 align-middle" /> Libre
@@ -262,9 +353,16 @@ export default function CirujanoPage() {
                         <span className="font-medium text-gray-800">
                           Ha seleccionado {selectedKeys.size} hueco(s). Tiempo total: {totalReservedMinutes} min.
                         </span>
-                        <button type="button" onClick={handleSoloReservar} className="btn-ribera-outline">
-                          Solo reservar
-                        </button>
+                        {hasClosedWeekSlot && (
+                          <span className="text-sm text-amber-800">
+                            Para la semana seleccionada solo puede programar pacientes (no reservar huecos vacíos).
+                          </span>
+                        )}
+                        {!hasClosedWeekSlot && (
+                          <button type="button" onClick={handleSoloReservar} className="btn-ribera-outline">
+                            Solo reservar
+                          </button>
+                        )}
                         <button type="button" onClick={() => setShowProgramarModal(true)} className="btn-ribera-primary">
                           Reservar y programar pacientes
                         </button>
