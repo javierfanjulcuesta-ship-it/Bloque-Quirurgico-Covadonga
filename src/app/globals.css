@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* Grupo Ribera: identidad corporativa (rojo y blanco) */
+:root {
+  --background: #f9fafb;
+  --foreground: #1e293b;
+  --ribera-red: #c41e3a;
+  --ribera-red-dark: #9e1830;
+  --ribera-red-light: #e8a0a8;
+  --ribera-red-soft: #f5d5d9;
+  --ribera-red-pale: #fdf2f3;
+  --ribera-navy: #1a365d;
+  --ribera-gray-light: #f1f5f9;
+  --slot-free: #d1fae5;
+  --slot-reserved: #fef3c7;
+  --slot-occupied: #fecaca;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ribera-red: var(--ribera-red);
+  --color-ribera-red-dark: var(--ribera-red-dark);
+  --color-ribera-navy: var(--ribera-navy);
+  --color-ribera-red-pale: var(--ribera-red-pale);
+  --font-sans: var(--font-ribera-sans, ui-sans-serif, system-ui, sans-serif);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-ribera-sans), system-ui, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tarjetas y botones Grupo Ribera */
+.card-ribera {
+  border-radius: 0.75rem;
+  border: 1px solid #f3f4f6;
+  background: #fff;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+}
+
+.btn-ribera-primary {
+  border-radius: 0.5rem;
+  padding: 0.625rem 1rem;
+  font-weight: 600;
+  color: #fff;
+  background-color: var(--ribera-red);
+  border: none;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  transition: background-color 0.2s;
+}
+
+.btn-ribera-primary:hover {
+  background-color: var(--ribera-red-dark);
+}
+
+.btn-ribera-primary:focus {
+  outline: 2px solid var(--ribera-red);
+  outline-offset: 2px;
+}
+
+.btn-ribera-outline {
+  border-radius: 0.5rem;
+  border: 2px solid var(--ribera-red);
+  background: #fff;
+  color: var(--ribera-red);
+  padding: 0.625rem 1rem;
+  font-weight: 600;
+  transition: background-color 0.2s;
+}
+
+.btn-ribera-outline:hover {
+  background-color: var(--ribera-red-pale);
+}
+
+/* Huecos del calendario: libre (verde), reservado (ámbar), ocupado (rojo) */
+.slot-free {
+  background-color: var(--slot-free);
+  border: 1px solid #a7f3d0;
+}
+
+.slot-reserved {
+  background-color: var(--slot-reserved);
+  border: 1px solid #fcd34d;
+}
+
+.slot-occupied {
+  background-color: var(--slot-occupied);
+  border: 1px solid #fca5a5;
+}
+
+/* Utilidades de color Ribera (para uso con Tailwind o en línea) */
+.text-ribera-red { color: var(--ribera-red); }
+.text-ribera-navy { color: var(--ribera-navy); }
+.bg-ribera-red { background-color: var(--ribera-red); }
+.bg-ribera-red-pale { background-color: var(--ribera-red-pale); }
+.border-ribera-red { border-color: var(--ribera-red); }
+.bg-ribera-gray-light { background-color: var(--ribera-gray-light); }
+.bg-ribera-red-soft { background-color: var(--ribera-red-soft); }
