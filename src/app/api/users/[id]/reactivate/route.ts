@@ -1,13 +1,14 @@
 /**
  * PATCH /api/users/[id]/reactivate
  * Reactiva un usuario (isActive=true). Solo GESTOR y GESTOR_ANESTESISTA.
+ *
+ * NOTA: Desactivado temporalmente porque User no tiene isActive en schema.prisma
+ * del proyecto desplegado.
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
-import { prisma } from "@/lib/db/prisma";
-import { logUserAuditEvent } from "@/lib/userAudit";
 
 export async function PATCH(
   _req: Request,
@@ -24,34 +25,11 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
-    const targetUser = await prisma.user.findUnique({ where: { id } });
-    if (!targetUser) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
-
-    if (targetUser.isActive) {
-      return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
-    }
-
-    await prisma.user.update({
-      where: { id },
-      data: {
-        isActive: true,
-        deletedAt: null,
-        deletedByUserId: null,
-        deletionReason: null,
-      },
-    });
-
-    await logUserAuditEvent({
-      userId: id,
-      eventType: "USER_REACTIVATED",
-      actorUserId: session!.userId,
-      detailsJson: {
-        targetEmail: targetUser.email,
-        targetRole: targetUser.role,
-      },
-    });
-
-    return NextResponse.json({ ok: true });
+    // Campo isActive no existe en User del schema desplegado.
+    return NextResponse.json(
+      { error: "Reactivación de usuarios no disponible temporalmente" },
+      { status: 503 }
+    );
   } catch (err) {
     console.error("[users reactivate]", err);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
