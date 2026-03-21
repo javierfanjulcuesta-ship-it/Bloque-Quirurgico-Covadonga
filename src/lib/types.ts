@@ -24,7 +24,7 @@ export function roleLabel(role: UserRole): string {
 
 /** Roles que usan la pantalla de programación (calendario, reservas, etc.) */
 export function hasProgrammingAccess(role: UserRole): boolean {
-  return role === "cirujano" || role === "endoscopista";
+  return role === "cirujano" || role === "endoscopista" || role === "gestor-anestesista";
 }
 
 /** Recursos del bloque: quirófanos Q1–Q3, sala de procedimientos menores, zona de técnicas del dolor */
@@ -48,6 +48,8 @@ export interface User {
   email: string;
   role: UserRole;
   approved: boolean;
+  /** true = puede anestesiar pacientes SESPA */
+  canSespa?: boolean;
 }
 
 /** Tramo horario (hueco) dentro de un turno */
@@ -122,6 +124,8 @@ export interface SlotView {
   patientNames?: string[];
   /** true si algún paciente tiene financiación privada */
   hasPrivate?: boolean;
+  /** true si algún paciente tiene entidad SESPA */
+  hasSespa?: boolean;
   /** true si el anestesista actual está asignado a este slot */
   assignedToAnesthetist?: boolean;
 }

@@ -98,6 +98,11 @@ body {
   border: 1px solid #fdba74;
 }
 
+.slot-sespa {
+  background-color: #fce7f3;
+  border: 1px solid #f9a8d4;
+}
+
 /* Utilidades de color Ribera (para uso con Tailwind o en línea) */
 .text-ribera-red { color: var(--ribera-red); }
 .text-ribera-navy { color: var(--ribera-navy); }

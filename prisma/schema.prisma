@@ -38,6 +38,7 @@ model User {
   name                   String
   role                   UserRole
   approved               Boolean                   @default(false)
+  canSespa               Boolean                   @default(false)
   createdAt              DateTime                  @default(now())
   updatedAt              DateTime                  @updatedAt
   reservations           Reservation[]             @relation("SurgeonReservations")

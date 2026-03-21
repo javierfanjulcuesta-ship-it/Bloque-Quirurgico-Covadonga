@@ -247,6 +247,11 @@ export default function CalendarioPage() {
                 <button type="button" onClick={() => setViewTab("calendario")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "calendario" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                   Calendario
                 </button>
+                {user?.role === "gestor-anestesista" && (
+                  <button type="button" onClick={() => router.push("/cirujano")} className="rounded-lg px-4 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">
+                    Reservar / programar
+                  </button>
+                )}
                 {isGestor && (
                   <>
                     <button type="button" onClick={() => setViewTab("mensajes")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "mensajes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
@@ -288,7 +293,7 @@ export default function CalendarioPage() {
           {viewTab === "calendario" && (
             <>
               <p className="mt-2 text-sm text-gray-600">
-                Elija un día para ver el estado del bloque. Pacientes privados en naranja.
+                Elija un día para ver el estado del bloque. Privados en naranja, SESPA en rosa.
               </p>
               {reservationsError && (
                 <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">

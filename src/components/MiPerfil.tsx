@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from "react";
 import type { User } from "@/lib/types";
 import { getProfile, setProfile } from "@/lib/storagePerfiles";
 import { isValidEmail } from "@/lib/validation";
+import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 import { modoDemo } from "@/lib/config";
 
 interface MiPerfilProps {
@@ -94,8 +95,9 @@ export function MiPerfil({ user, onSaved }: MiPerfilProps) {
       setPasswordError("La nueva contraseña es obligatoria.");
       return;
     }
-    if (newPassword.length < 8) {
-      setPasswordError("La nueva contraseña debe tener al menos 8 caracteres.");
+    const pwdValidation = validatePasswordStrength(newPassword);
+    if (!pwdValidation.valid) {
+      setPasswordError(pwdValidation.error ?? "Contraseña no válida.");
       return;
     }
     if (newPassword !== confirmPassword) {

@@ -179,7 +179,7 @@ export async function createReservation(payload: CreateReservationPayload): Prom
 
   if (!res.ok) {
     if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError("Solo cirujanos y endoscopistas pueden crear reservas.", 403);
+    if (res.status === 403) throw new ReservationsApiError("Solo cirujanos, endoscopistas y gestores-anestesistas pueden crear reservas.", 403);
     if (res.status === 409) throw new ReservationsApiError((data as { error?: string }).error ?? "El hueco ya está ocupado.", 409);
     throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear la reserva", res.status);
   }

@@ -47,7 +47,7 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
     () =>
       getUsers().filter(
         (u) =>
-          (u.role === "cirujano" || u.role === "endoscopista") &&
+          (u.role === "cirujano" || u.role === "endoscopista" || u.role === "gestor-anestesista") &&
           u.id !== currentUserId &&
           u.approved
       ),

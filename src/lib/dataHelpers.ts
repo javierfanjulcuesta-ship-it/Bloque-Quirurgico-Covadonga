@@ -6,6 +6,7 @@
 import type { Reservation, SlotView, User } from "./types";
 import { RESOURCES } from "./constants";
 import { getWeekDays, getSlots, toISODate } from "./utils";
+import { isPrivateFunding, reservationHasSespa } from "./patientInsurance";
 
 /** Reservas en un rango de fechas (incluidas from y to). */
 export function getReservationsInPeriod(
@@ -46,9 +47,6 @@ export function buildSlotViews(
   const getSurgeonName = (surgeonId: string) =>
     users.find((u) => u.id === surgeonId)?.name;
 
-  const hasPrivateFunding = (r: { patients?: Array<{ entidadFinanciadora?: string }> }) =>
-    r.patients?.some((p) => !!(p.entidadFinanciadora?.trim() && /privad/i.test(p.entidadFinanciadora))) ?? false;
-
   days.forEach((date) => {
     const dateStr = toISODate(date);
     resourceIds.forEach((resourceId) => {
@@ -65,7 +63,8 @@ export function buildSlotViews(
           res &&
           (res.surgeonId === currentUserId ||
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
-        const hasPrivate = res ? hasPrivateFunding(res) : false;
+        const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
+        const hasSespa = res ? reservationHasSespa(res) : false;
         views.push({
           resourceId,
           date: dateStr,
@@ -81,6 +80,7 @@ export function buildSlotViews(
               ? (res.patients ?? []).map((p) => p.name ?? p.numeroHistoria)
               : undefined,
           hasPrivate: hasPrivate || undefined,
+          hasSespa: hasSespa || undefined,
         });
       }
       for (let i = 0; i < afternoonCount; i++) {
@@ -96,7 +96,8 @@ export function buildSlotViews(
           res &&
           (res.surgeonId === currentUserId ||
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
-        const hasPrivate = res ? hasPrivateFunding(res) : false;
+        const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
+        const hasSespa = res ? reservationHasSespa(res) : false;
         views.push({
           resourceId,
           date: dateStr,
@@ -112,6 +113,7 @@ export function buildSlotViews(
               ? (res.patients ?? []).map((p) => p.name ?? p.numeroHistoria)
               : undefined,
           hasPrivate: hasPrivate || undefined,
+          hasSespa: hasSespa || undefined,
         });
       }
     });
@@ -122,9 +124,9 @@ export function buildSlotViews(
 
 /** Usuarios de demostración para el selector de acceso (modo DEMO sin contraseña). */
 export const MOCK_USERS: User[] = [
-  { id: "demo-gestor-anestesista", name: "Gestor Anestesista Demo", email: "gestor-anestesista@demo", role: "gestor-anestesista", approved: true },
+  { id: "demo-gestor-anestesista", name: "Gestor Anestesista Demo", email: "gestor-anestesista@demo", role: "gestor-anestesista", approved: true, canSespa: true },
   { id: "demo-gestor", name: "Gestor Demo", email: "gestor@demo", role: "gestor", approved: true },
-  { id: "demo-anestesista", name: "Anestesista Demo", email: "anestesista@demo", role: "anestesista", approved: true },
+  { id: "demo-anestesista", name: "Anestesista Demo", email: "anestesista@demo", role: "anestesista", approved: true, canSespa: true },
   { id: "demo-cirujano", name: "Cirujano Demo", email: "cirujano@demo", role: "cirujano", approved: true },
   { id: "demo-endoscopista", name: "Endoscopista Demo", email: "endoscopista@demo", role: "endoscopista", approved: true },
 ];

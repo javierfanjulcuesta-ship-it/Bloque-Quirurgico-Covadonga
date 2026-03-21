@@ -68,6 +68,8 @@ export async function POST(request: Request) {
     const tempPassword = generateTempPassword();
     const passwordHash = await hashPassword(tempPassword);
 
+    const canSespa = typeof body.canSespa === "boolean" ? body.canSespa : false;
+
     const dbUser = await prisma.user.create({
       data: {
         email,
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
         name,
         role: role!,
         approved: true,
+        canSespa,
       },
     });
 
@@ -85,6 +88,7 @@ export async function POST(request: Request) {
         name: dbUser.name,
         role: roleToFrontend(dbUser.role),
         approved: dbUser.approved,
+        canSespa: dbUser.canSespa,
       },
       tempPassword,
     });
@@ -113,6 +117,7 @@ export async function GET() {
         name: true,
         role: true,
         approved: true,
+        canSespa: true,
       },
     });
 
@@ -122,6 +127,7 @@ export async function GET() {
       name: u.name,
       role: roleToFrontend(u.role),
       approved: u.approved,
+      canSespa: u.canSespa,
     }));
 
     return NextResponse.json({ users });

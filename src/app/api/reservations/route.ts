@@ -82,11 +82,11 @@ export async function POST(request: Request) {
     }
     const data = parsed.data;
 
-    // Solo cirujano o endoscopista pueden crear reservas (surgeonId = usuario autenticado)
+    // Cirujano, endoscopista o gestor-anestesista pueden crear reservas (surgeonId = usuario autenticado)
     const role = session.role as string;
-    if (role !== "cirujano" && role !== "endoscopista") {
+    if (role !== "cirujano" && role !== "endoscopista" && role !== "gestor-anestesista") {
       return NextResponse.json(
-        { error: "Solo cirujanos y endoscopistas pueden crear reservas" },
+        { error: "Solo cirujanos, endoscopistas y gestores-anestesistas pueden crear reservas" },
         { status: 403 }
       );
     }

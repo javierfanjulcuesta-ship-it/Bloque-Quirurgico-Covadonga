@@ -11,11 +11,7 @@ import { getReservationsInPeriod, getUsers } from "@/lib/dataHelpers";
 import { RESOURCES } from "@/lib/constants";
 import { WeekNavigation } from "@/components/calendar/WeekNavigation";
 import type { Reservation, User } from "@/lib/types";
-
-function isPrivateFunding(entidadFinanciadora: string | undefined): boolean {
-  if (!entidadFinanciadora || !entidadFinanciadora.trim()) return false;
-  return /privad/i.test(entidadFinanciadora.trim());
-}
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
 
 export function VistaSemanal({
   storedReservations = [],
@@ -37,7 +33,7 @@ export function VistaSemanal({
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-600">
-        Toda la semana. Los pacientes de <strong>financiación privada</strong> se muestran en naranja.
+        Toda la semana. Pacientes <strong>privados</strong> en naranja. Pacientes <strong>SESPA</strong> en rosa.
       </p>
       <WeekNavigation weekStart={weekStart} onWeekChange={setWeekStart} canGoNext={true} />
       <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -90,23 +86,23 @@ function ReservationBlock({ reservation, users }: { reservation: Reservation; us
       <ul className="space-y-1">
         {reservation.patients.map((p) => {
           const privada = isPrivateFunding(p.entidadFinanciadora);
+          const sespa = isSespa(p.entidadFinanciadora);
+          const rowClass = sespa
+            ? "border border-rose-300 bg-rose-100 text-rose-900"
+            : privada
+              ? "border border-orange-300 bg-orange-100 text-orange-900"
+              : "bg-gray-50 text-gray-800";
           return (
-            <li
-              key={p.id}
-              className={`rounded px-3 py-2 text-sm ${
-                privada
-                  ? "border border-orange-300 bg-orange-100 text-orange-900"
-                  : "bg-gray-50 text-gray-800"
-              }`}
-            >
+            <li key={p.id} className={`rounded px-3 py-2 text-sm ${rowClass}`}>
               <span className="font-medium">{p.numeroHistoria}</span>
               {" – "}
               {p.procedure}
               {p.estimatedDurationMinutes ? ` (${p.estimatedDurationMinutes} min)` : ""}
               {" – "}
-              <span className={privada ? "font-semibold" : ""}>
+              <span className={privada || sespa ? "font-semibold" : ""}>
                 {p.entidadFinanciadora || "—"}
-                {privada && " (privada)"}
+                {sespa && " (SESPA)"}
+                {privada && !sespa && " (privada)"}
               </span>
             </li>
           );

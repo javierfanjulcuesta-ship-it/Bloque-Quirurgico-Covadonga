@@ -72,7 +72,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "anesthetistId obligatorio para no gestores" }, { status: 400 });
     }
 
-    const filterAnesthetist = anesthetistId || (!isGestor ? session.userId : undefined);
+    // Anestesistas solo pueden ver sus propias asignaciones
+    const filterAnesthetist = isGestor ? anesthetistId : session.userId;
 
     const where: { anesthetistId?: string; date?: { gte?: string; lte?: string } } = {};
     if (filterAnesthetist) where.anesthetistId = filterAnesthetist;
@@ -116,6 +117,62 @@ export async function PUT(request: Request) {
       const parsed = parseAssignment(a);
       if (!parsed) continue;
       toUpsert.push(parsed);
+    }
+
+    const orAssignments = toUpsert.filter((a) => a.assignmentType === "OR");
+    if (orAssignments.length > 0) {
+      const dates = [...new Set(orAssignments.map((a) => a.date))];
+      const dateMin = dates.reduce((a, b) => (a < b ? a : b));
+      const dateMax = dates.reduce((a, b) => (a > b ? a : b));
+      const dateFromObj = new Date(dateMin + "T00:00:00.000Z");
+      const dateToObj = new Date(dateMax + "T23:59:59.999Z");
+
+      const [reservationsWithPatients, anesthetists] = await Promise.all([
+        prisma.reservation.findMany({
+          where: {
+            status: { not: "CANCELLED" },
+            date: { gte: dateFromObj, lte: dateToObj },
+          },
+          include: { patients: true },
+        }),
+        prisma.user.findMany({
+          where: { id: { in: [...new Set(orAssignments.map((a) => a.anesthetistId))] } },
+          select: { id: true, canSespa: true },
+        }),
+      ]);
+
+      const canSespaByAnesthetist = new Map(anesthetists.map((u) => [u.id, !!u.canSespa]));
+
+      function isSespaInsurance(s: string | null | undefined): boolean {
+        return !!(s && typeof s === "string" && /^sespa$/i.test(s.trim()));
+      }
+
+      function slotHasSespa(dateStr: string, shift: "MORNING" | "AFTERNOON", resourceId: string): boolean {
+        const resourceIds = resourceId === FULL_SHIFT ? Array.from(VALID_RESOURCES) : [resourceId];
+        const shiftStr = shift === "MORNING" ? "morning" : "afternoon";
+        for (const r of reservationsWithPatients) {
+          const rDate = r.date.toISOString().slice(0, 10);
+          const rShift = r.shift === "MORNING" ? "morning" : "afternoon";
+          if (rDate !== dateStr || rShift !== shiftStr || !resourceIds.includes(r.resourceId)) continue;
+          const hasSespa = r.patients?.some((p) => isSespaInsurance(p.insuranceType));
+          if (hasSespa) return true;
+        }
+        return false;
+      }
+
+      for (const a of orAssignments) {
+        if (!slotHasSespa(a.date, a.shift, a.resourceId)) continue;
+        const canSespa = canSespaByAnesthetist.get(a.anesthetistId);
+        if (!canSespa) {
+          return NextResponse.json(
+            {
+              error: "Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.",
+              code: "SESPA_ANESTHETIST_REQUIRED",
+            },
+            { status: 400 }
+          );
+        }
+      }
     }
 
     await prisma.$transaction(async (tx) => {

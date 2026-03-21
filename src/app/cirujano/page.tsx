@@ -20,6 +20,7 @@ import { MiPerfil } from "@/components/MiPerfil";
 import { ContactarCoordinacion } from "@/components/ContactarCoordinacion";
 import { HistoricoView } from "@/components/HistoricoView";
 import type { Reservation, ResourceId, PatientInBlock } from "@/lib/types";
+import { hasProgrammingAccess } from "@/lib/types";
 import type { Shift } from "@/lib/types";
 import { WeekGridCalendar } from "@/components/calendar/WeekGridCalendar";
 
@@ -131,15 +132,16 @@ export default function CirujanoPage() {
       router.replace("/");
       return;
     }
-    if (user.role !== "cirujano" && user.role !== "endoscopista") {
+    if (!hasProgrammingAccess(user.role)) {
       router.replace("/calendario");
     }
   }, [user, hydrated, router]);
 
   const allowedResources = useMemo(() => {
-    if (!user || (user.role !== "cirujano" && user.role !== "endoscopista")) return [];
-    const base = RESOURCES.filter((r) => getAllowedResourcesForRole(user.role).includes(r.id));
-    if (user.role === "cirujano") {
+    if (!user || !hasProgrammingAccess(user.role)) return [];
+    const roleForResources = user.role === "gestor-anestesista" ? "cirujano" : user.role;
+    const base = RESOURCES.filter((r) => getAllowedResourcesForRole(roleForResources).includes(r.id));
+    if (roleForResources === "cirujano") {
       return [{ id: "cualquier-quirofano", label: "Cualquier quirófano" }, ...base];
     }
     return base;
@@ -164,7 +166,7 @@ export default function CirujanoPage() {
     });
     const dateStr = toISODate(selectedDateForGrid);
     const baseViews = allViews.filter((v) => v.date === dateStr && allowedResources.some((r) => r.id === v.resourceId));
-    if (!user || user.role !== "cirujano") return baseViews;
+    if (!user || (user.role !== "cirujano" && user.role !== "gestor-anestesista")) return baseViews;
     const quirofanoViews = allViews.filter((v) => v.date === dateStr && QUIRUFANO_IDS.includes(v.resourceId));
     const slotKeys = new Set<string>();
     quirofanoViews.forEach((v) => slotKeys.add(`${v.shift}-${v.slotIndex}`));
@@ -234,7 +236,7 @@ export default function CirujanoPage() {
     return list.sort((a, b) => a.date.localeCompare(b.date) || a.patient.order - b.patient.order);
   }, [reservations, user?.id]);
 
-  if (!hydrated || !user || (user.role !== "cirujano" && user.role !== "endoscopista")) {
+  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
     return null;
   }
 
@@ -323,7 +325,12 @@ export default function CirujanoPage() {
           <div>
             <h1 className="text-2xl font-bold text-[var(--ribera-navy)]">Estado del bloque</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Bloque Quirúrgico Covadonga · {user.name} · <button type="button" onClick={() => { logout(); router.replace("/"); }} className="font-medium text-[var(--ribera-red)] hover:underline">Cerrar sesión</button>
+              Bloque Quirúrgico Covadonga · {user.name}
+              {user.role === "gestor-anestesista" && (
+                <> · <button type="button" onClick={() => router.push("/calendario")} className="font-medium text-[var(--ribera-navy)] hover:underline">Ir a Calendario</button></>
+              )}
+              {" · "}
+              <button type="button" onClick={() => { logout(); router.replace("/"); }} className="font-medium text-[var(--ribera-red)] hover:underline">Cerrar sesión</button>
             </p>
           </div>
           <nav className="flex flex-wrap gap-2">

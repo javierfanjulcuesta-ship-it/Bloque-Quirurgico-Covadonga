@@ -34,6 +34,7 @@ export function SlotCell({
   const isOccupied = slot.status === "occupied";
   const isMyOccupied = isOccupied && slot.isMyReservation;
   const hasPrivate = !!slot.hasPrivate;
+  const hasSespa = !!slot.hasSespa;
   const clickable =
     onSelect &&
     !disabled &&
@@ -44,11 +45,15 @@ export function SlotCell({
       ? "slot-free hover:bg-emerald-200"
       : isReserved
         ? "slot-reserved hover:bg-amber-200"
-        : "slot-occupied";
+        : hasSespa
+          ? "slot-sespa"
+          : "slot-occupied";
 
   const tooltipParts: string[] = [];
   if (slot.surgeonName) tooltipParts.push(`Cirujano: ${slot.surgeonName}`);
   if (slot.patientNames?.length) tooltipParts.push("Pacientes:", ...slot.patientNames);
+  if (hasSespa) tooltipParts.push("Este bloque contiene pacientes SESPA");
+  if (hasPrivate) tooltipParts.push("Incluye financiación privada");
   const tooltipTitle = tooltipParts.length > 0 ? tooltipParts.join("\n") : undefined;
 
   return (
@@ -82,6 +87,9 @@ export function SlotCell({
           <span className={`font-medium ${isMyOccupied ? "text-red-800" : "text-red-800"}`}>
             {isMyOccupied ? "Sus pacientes" : "Ocupado"}
           </span>
+          {hasSespa && (
+            <span className="ml-1 inline-block rounded px-1 py-0.5 text-[9px] font-bold uppercase bg-rose-200 text-rose-800 border border-rose-300" title="Este bloque contiene pacientes SESPA">SESPA</span>
+          )}
           {isMyOccupied && (
             <span className="block text-xs text-red-700" title="Pulse para ver o editar">
               {slot.patientsCount ?? 0} paciente(s)

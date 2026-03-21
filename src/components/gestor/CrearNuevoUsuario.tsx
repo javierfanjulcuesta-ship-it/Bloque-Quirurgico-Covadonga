@@ -13,12 +13,15 @@ import type { UserRole } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { useUsers } from "@/context/UsersContext";
 
-const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "cirujano", "endoscopista"];
+const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "gestor-anestesista", "cirujano", "endoscopista"];
+
+const SESPA_ROLES: UserRole[] = ["anestesista", "gestor-anestesista"];
 
 export function CrearNuevoUsuario() {
   const [profile, setProfile] = useState<UserRole>("cirujano");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [canSespa, setCanSespa] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,7 +44,12 @@ export function CrearNuevoUsuario() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ email: trimmed, role: profile, name: name.trim() || undefined }),
+        body: JSON.stringify({
+          email: trimmed,
+          role: profile,
+          name: name.trim() || undefined,
+          canSespa: SESPA_ROLES.includes(profile) ? canSespa : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -133,6 +141,17 @@ export function CrearNuevoUsuario() {
             className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </label>
+        {SESPA_ROLES.includes(profile) && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={canSespa}
+              onChange={(e) => setCanSespa(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            <span className="text-sm text-gray-700">Puede anestesiar pacientes SESPA</span>
+          </label>
+        )}
         <div className="flex flex-col gap-2">
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
+import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
 import { hasGestorAccess } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
@@ -41,9 +42,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (password.length < 8) {
+    const pwdValidation = validatePasswordStrength(password);
+    if (!pwdValidation.valid) {
       return NextResponse.json(
-        { error: "La contraseña debe tener al menos 8 caracteres" },
+        { error: pwdValidation.error },
         { status: 400 }
       );
     }

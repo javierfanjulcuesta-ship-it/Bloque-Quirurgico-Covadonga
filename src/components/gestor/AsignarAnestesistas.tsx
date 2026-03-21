@@ -18,14 +18,11 @@ import { getAssignments, saveAssignments } from "@/lib/anesthetistAssignments";
 import { isUnavailable as isAnesthetistUnavailable } from "@/lib/storageAnesthetistUnavailability";
 import { getStoredReservations } from "@/lib/storageMensajesYNotificaciones";
 import { WeekNavigation } from "@/components/calendar/WeekNavigation";
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
 
 function isMondayOrThursday(date: Date): boolean {
   const d = date.getDay();
   return d === 1 || d === 4;
-}
-
-function isPrivateFunding(entidadFinanciadora: string | undefined): boolean {
-  return !!(entidadFinanciadora?.trim() && /privad/i.test(entidadFinanciadora.trim()));
 }
 
 /** Info de cada paciente en un turno: NHC, procedimiento, cirujano */
@@ -42,9 +39,10 @@ function getSlotPatientInfo(
   shift: Shift,
   resourceId: ResourceId,
   users: { id: string; name: string }[]
-): { patientInfo: SlotPatientInfo[]; hasPrivate: boolean } {
+): { patientInfo: SlotPatientInfo[]; hasPrivate: boolean; hasSespa: boolean } {
   const patientInfo: SlotPatientInfo[] = [];
   let hasPrivate = false;
+  let hasSespa = false;
   reservations
     .filter((r) => r.date === dateStr && r.shift === shift && r.resourceId === resourceId && r.patients?.length)
     .forEach((r) => {
@@ -56,14 +54,30 @@ function getSlotPatientInfo(
           surgeonName,
         });
         if (isPrivateFunding(p.entidadFinanciadora)) hasPrivate = true;
+        if (isSespa(p.entidadFinanciadora)) hasSespa = true;
       });
     });
-  return { patientInfo, hasPrivate };
+  return { patientInfo, hasPrivate, hasSespa };
 }
 
 
 /** Recursos OR que cuentan para el límite de 2 por turno. __full_shift__ cuenta como 1. */
 const RESOURCES_FOR_LIMIT = new Set<string>(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor", ASSIGNMENT_FULL_SHIFT]);
+
+/** Indica si un slot tiene pacientes SESPA (para recurso, full_shift o consulta). Consulta preanestesia: no aplica. */
+function slotHasSespa(
+  reservations: Reservation[],
+  dateStr: string,
+  shift: Shift,
+  slotKey: SlotKey,
+  users: { id: string; name: string }[]
+): boolean {
+  if (slotKey === "consulta-preanestesia") return false;
+  if (slotKey === ASSIGNMENT_FULL_SHIFT) {
+    return RESOURCES.some((r) => getSlotPatientInfo(reservations, dateStr, shift, r.id as ResourceId, users).hasSespa);
+  }
+  return getSlotPatientInfo(reservations, dateStr, shift, slotKey as ResourceId, users).hasSespa;
+}
 
 /** Cuenta asignaciones OR por anestesista en un (date, shift) */
 function getAnesthetistCountForSlot(
@@ -92,27 +106,32 @@ export interface AnesthetistSuggestion {
   id: string;
   name: string;
   available: boolean;
+  disabled?: boolean;
   reason?: string;
 }
 
-/** Anestesistas ordenados: primero disponibles (sin no-disponibilidad, bajo límite), luego otros */
+/** Anestesistas ordenados: primero disponibles, luego otros. Si hasSespa, solo canSespa=true son válidos. */
 function getSuggestedAnesthetists(
   dateStr: string,
   shift: Shift,
   slotKey: SlotKey,
   assignments: AnesthetistAssignment[],
-  anestList: { id: string; name: string }[]
+  anestList: { id: string; name: string; canSespa?: boolean }[],
+  hasSespa: boolean
 ): AnesthetistSuggestion[] {
   const countMap = getAnesthetistCountForSlot(assignments, dateStr, shift);
   const result: AnesthetistSuggestion[] = anestList.map((u) => {
     const isUnav = isAnesthetistUnavailable(u.id, dateStr, shift);
     const count = countMap.get(u.id) ?? 0;
     const isOverLimit = RESOURCES_FOR_LIMIT.has(slotKey) && count >= 2;
-    const available = !isUnav && !isOverLimit;
+    const needsSespa = hasSespa && !(u.canSespa === true);
+    const available = !isUnav && !isOverLimit && !needsSespa;
+    const disabled = needsSespa;
     let reason: string | undefined;
     if (isUnav) reason = "No disponibilidad solicitada";
     else if (isOverLimit) reason = "Ya tiene 2 recursos en este turno";
-    return { id: u.id, name: u.name, available, reason };
+    else if (needsSespa) reason = "No habilitado para SESPA";
+    return { id: u.id, name: u.name, available, disabled, reason };
   });
   return result.sort((a, b) => {
     if (a.available && !b.available) return -1;
@@ -134,6 +153,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
   const [unavConfirm, setUnavConfirm] = useState<{ dateStr: string; shift: Shift; slotKey: SlotKey; anesthetistId: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [sespaError, setSespaError] = useState("");
 
   const reservations = useMemo(
     () => propReservations ?? getStoredReservations(),
@@ -185,26 +206,55 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
       applyAssignment(dateStr, shift, slotKey, "");
       return;
     }
+    const hasSespa = slotHasSespa(reservations, dateStr, shift, slotKey, users);
+    const anest = anestList.find((a) => a.id === anesthetistId);
+    if (hasSespa && anest && !(anest.canSespa === true)) {
+      setSespaError("Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.");
+      return;
+    }
     if (isAnesthetistUnavailable(anesthetistId, dateStr, shift)) {
       setUnavConfirm({ dateStr, shift, slotKey, anesthetistId });
       return;
     }
+    setSespaError("");
     applyAssignment(dateStr, shift, slotKey, anesthetistId);
   };
 
+  const SESPA_ERROR_MSG = "Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.";
+
+  const validateSespaBeforeSave = (list: AnesthetistAssignment[] = assignments): boolean => {
+    for (const a of list) {
+      if (a.assignmentType !== "OR") continue;
+      const hasSespa = slotHasSespa(reservations, a.date, a.shift, a.resourceId as SlotKey, users);
+      if (!hasSespa) continue;
+      const anest = anestList.find((u) => u.id === a.anesthetistId);
+      if (!anest || !(anest.canSespa === true)) {
+        setSaveError(SESPA_ERROR_MSG);
+        return false;
+      }
+    }
+    setSaveError("");
+    return true;
+  };
+
   const handleSave = async () => {
+    setSaveError("");
     const over = getAnesthetistsOverLimit(assignments, 2);
     if (over.length > 0) {
       setAlarm({ over, pending: assignments });
       return;
     }
+    if (!validateSespaBeforeSave()) return;
     setSaving(true);
     setSaveSuccess(false);
     try {
       await saveAssignments(assignments);
       setSaveSuccess(true);
+      setSaveError("");
       setTimeout(() => setSaveSuccess(false), 4000);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar asignaciones";
+      setSaveError(msg);
       console.error(err);
     } finally {
       setSaving(false);
@@ -213,13 +263,18 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
 
   const handleConfirmAlarm = async () => {
     if (alarm?.pending) {
+      setSaveError("");
+      if (!validateSespaBeforeSave(alarm.pending)) return;
       setSaving(true);
       try {
         await saveAssignments(alarm.pending);
         setAssignments(alarm.pending);
         setSaveSuccess(true);
+        setSaveError("");
         setTimeout(() => setSaveSuccess(false), 4000);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : "Error al guardar asignaciones";
+        setSaveError(msg);
         console.error(err);
       } finally {
         setSaving(false);
@@ -290,7 +345,10 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                     const daySepTarde = dayIndex < weekDays.length - 1 ? " border-r-2 border-gray-300" : "";
                     return (
                       <Fragment key={dateStr}>
-                        <td className={`border-r border-gray-100 p-2 align-top${daySep} ${morningSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""}`}>
+                        <td className={`border-r border-gray-100 p-2 align-top${daySep} ${morningSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""} ${morningSlot.hasSespa ? "border-l-4 border-l-rose-400 bg-rose-50/50" : ""}`}>
+                          {morningSlot.hasSespa && (
+                            <p className="mb-1 text-[10px] text-rose-700 font-medium">Este bloque contiene pacientes SESPA</p>
+                          )}
                           {morningSlot.patientInfo.length > 0 && (
                             <div className="mb-2 space-y-1 rounded bg-gray-100/80 px-1.5 py-1 text-[10px] text-gray-700 leading-tight">
                               {morningSlot.patientInfo.slice(0, 3).map((p, i) => (
@@ -311,7 +369,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           >
                             <option value=""> </option>
                             {(() => {
-                              const suggested = getSuggestedAnesthetists(dateStr, "morning", res.id as SlotKey, assignments, anestList);
+                              const hasSespa = morningSlot.hasSespa;
+                              const suggested = getSuggestedAnesthetists(dateStr, "morning", res.id as SlotKey, assignments, anestList, hasSespa);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -326,7 +385,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                   {others.length > 0 && (
                                     <optgroup label="Otros">
                                       {others.map((u) => (
-                                        <option key={u.id} value={u.id} title={u.reason}>
+                                        <option key={u.id} value={u.id} disabled={u.disabled} title={u.reason}>
                                           {u.name}{u.reason ? ` (${u.reason})` : ""}
                                         </option>
                                       ))}
@@ -337,7 +396,10 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                             })()}
                           </select>
                         </td>
-                        <td className={`border-r border-gray-200 p-2 align-top${daySepTarde} ${afternoonSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""}`}>
+                        <td className={`border-r border-gray-200 p-2 align-top${daySepTarde} ${afternoonSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""} ${afternoonSlot.hasSespa ? "border-l-4 border-l-rose-400 bg-rose-50/50" : ""}`}>
+                          {afternoonSlot.hasSespa && (
+                            <p className="mb-1 text-[10px] text-rose-700 font-medium">Este bloque contiene pacientes SESPA</p>
+                          )}
                           {afternoonSlot.patientInfo.length > 0 && (
                             <div className="mb-2 space-y-1 rounded bg-gray-100/80 px-1.5 py-1 text-[10px] text-gray-700 leading-tight">
                               {afternoonSlot.patientInfo.slice(0, 3).map((p, i) => (
@@ -358,7 +420,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           >
                             <option value=""> </option>
                             {(() => {
-                              const suggested = getSuggestedAnesthetists(dateStr, "afternoon", res.id as SlotKey, assignments, anestList);
+                              const hasSespa = afternoonSlot.hasSespa;
+                              const suggested = getSuggestedAnesthetists(dateStr, "afternoon", res.id as SlotKey, assignments, anestList, hasSespa);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -373,7 +436,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                   {others.length > 0 && (
                                     <optgroup label="Otros">
                                       {others.map((u) => (
-                                        <option key={u.id} value={u.id} title={u.reason}>
+                                        <option key={u.id} value={u.id} disabled={u.disabled} title={u.reason}>
                                           {u.name}{u.reason ? ` (${u.reason})` : ""}
                                         </option>
                                       ))}
@@ -395,9 +458,12 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                   const dateStr = toISODate(d);
                   const daySep = dayIndex > 0 ? " border-l-2 border-gray-300" : "";
                   const daySepTarde = dayIndex < weekDays.length - 1 ? " border-r-2 border-gray-300" : "";
+                  const fullShiftHasSespaM = slotHasSespa(reservations, dateStr, "morning", ASSIGNMENT_FULL_SHIFT, users);
+                  const fullShiftHasSespaA = slotHasSespa(reservations, dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, users);
                   return (
                     <Fragment key={dateStr}>
-                      <td className={`border-r border-amber-100 p-2 align-top${daySep}`}>
+                      <td className={`border-r border-amber-100 p-2 align-top${daySep} ${fullShiftHasSespaM ? "border-l-4 border-l-rose-400 bg-rose-50/30" : ""}`}>
+                        {fullShiftHasSespaM && <p className="mb-1 text-[10px] text-rose-700 font-medium">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "morning", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -405,7 +471,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                         >
                           <option value=""> </option>
                           {(() => {
-                            const suggested = getSuggestedAnesthetists(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, assignments, anestList);
+                            const suggested = getSuggestedAnesthetists(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaM);
                             const available = suggested.filter((s) => s.available);
                             const others = suggested.filter((s) => !s.available);
                             return (
@@ -420,7 +486,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                 {others.length > 0 && (
                                   <optgroup label="Otros">
                                     {others.map((u) => (
-                                      <option key={u.id} value={u.id} title={u.reason}>
+                                      <option key={u.id} value={u.id} disabled={u.disabled} title={u.reason}>
                                         {u.name}{u.reason ? ` (${u.reason})` : ""}
                                       </option>
                                     ))}
@@ -431,7 +497,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           })()}
                         </select>
                       </td>
-                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde}`}>
+                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde} ${fullShiftHasSespaA ? "border-l-4 border-l-rose-400 bg-rose-50/30" : ""}`}>
+                        {fullShiftHasSespaA && <p className="mb-1 text-[10px] text-rose-700 font-medium">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -439,7 +506,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                         >
                           <option value=""> </option>
                           {(() => {
-                            const suggested = getSuggestedAnesthetists(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, assignments, anestList);
+                            const suggested = getSuggestedAnesthetists(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaA);
                             const available = suggested.filter((s) => s.available);
                             const others = suggested.filter((s) => !s.available);
                             return (
@@ -454,7 +521,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                 {others.length > 0 && (
                                   <optgroup label="Otros">
                                     {others.map((u) => (
-                                      <option key={u.id} value={u.id} title={u.reason}>
+                                      <option key={u.id} value={u.id} disabled={u.disabled} title={u.reason}>
                                         {u.name}{u.reason ? ` (${u.reason})` : ""}
                                       </option>
                                     ))}
@@ -524,7 +591,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           >
                             <option value=""> </option>
                             {(() => {
-                              const suggested = getSuggestedAnesthetists(dateStr, "morning", "consulta-preanestesia" as SlotKey, assignments, anestList);
+                              const suggested = getSuggestedAnesthetists(dateStr, "morning", "consulta-preanestesia" as SlotKey, assignments, anestList, false);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -539,7 +606,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                   {others.length > 0 && (
                                     <optgroup label="Otros">
                                       {others.map((u) => (
-                                        <option key={u.id} value={u.id} title={u.reason}>
+                                        <option key={u.id} value={u.id} disabled={u.disabled} title={u.reason}>
                                           {u.name}{u.reason ? ` (${u.reason})` : ""}
                                         </option>
                                       ))}
@@ -565,10 +632,16 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
         </div>
       </div>
 
-      <p className="mb-4 flex items-center gap-2 text-xs text-gray-500">
-        <span className="inline-block h-4 w-6 rounded border-2 border-orange-300 bg-orange-50 align-middle" />
-        Turno con paciente privado (mismo dato que en el calendario).
-      </p>
+      <div className="mb-4 flex flex-col gap-1 text-xs text-gray-500">
+        <p className="flex items-center gap-2">
+          <span className="inline-block h-4 w-6 rounded border-2 border-orange-300 bg-orange-50 align-middle" />
+          Turno con paciente privado (mismo dato que en el calendario).
+        </p>
+        <p className="flex items-center gap-2">
+          <span className="inline-block h-4 w-6 rounded border-2 border-rose-300 bg-rose-50 align-middle" />
+          Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.
+        </p>
+      </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
@@ -581,6 +654,11 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
         </button>
         {saveSuccess && (
           <span className="text-sm font-medium text-green-700">Asignaciones guardadas correctamente.</span>
+        )}
+        {(saveError || sespaError) && (
+          <p className="text-sm font-medium text-rose-700" role="alert">
+            {saveError || sespaError}
+          </p>
         )}
       </div>
 

@@ -8,7 +8,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 export const COOKIE_NAME = "bloque_session";
-const MAX_AGE = 60 * 60 * 24 * 7; // 7 días
+const MAX_AGE = 60 * 60 * 24 * 3; // 3 días (piloto: sesiones más cortas)
 
 export interface SessionPayload {
   userId: string;

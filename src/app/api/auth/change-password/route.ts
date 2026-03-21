@@ -8,8 +8,7 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword, hashPassword } from "@/lib/auth/password";
-
-const MIN_PASSWORD_LENGTH = 8;
+import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 
 export async function POST(request: Request) {
   try {
@@ -40,9 +39,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    const pwdValidation = validatePasswordStrength(newPassword);
+    if (!pwdValidation.valid) {
       return NextResponse.json(
-        { error: `La nueva contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.` },
+        { error: pwdValidation.error },
         { status: 400 }
       );
     }

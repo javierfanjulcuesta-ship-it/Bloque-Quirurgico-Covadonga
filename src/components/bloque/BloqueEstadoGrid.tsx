@@ -8,10 +8,7 @@
 import { useMemo } from "react";
 import { getWeekDays, getSlots, toISODate } from "@/lib/utils";
 import type { Reservation, ResourceId, Shift } from "@/lib/types";
-
-function isPrivateFunding(entidadFinanciadora: string | undefined): boolean {
-  return !!(entidadFinanciadora?.trim() && /privad/i.test(entidadFinanciadora.trim()));
-}
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
 
 export type CellState = "free" | "occupied-other" | "reserved-mine" | "programmed-mine";
 
@@ -94,7 +91,7 @@ export function BloqueEstadoGrid({
     return r;
   }, [morningSlots, afternoonSlots]);
 
-  const cellClass = (state: CellState, selected: boolean, hasPrivatePatient?: boolean) => {
+  const cellClass = (state: CellState, selected: boolean, hasPrivatePatient?: boolean, hasSespaPatient?: boolean) => {
     const base = "min-h-[44px] border p-1 text-xs transition " + (selected ? "ring-2 ring-[var(--ribera-red)] ring-offset-1 " : "");
     switch (state) {
       case "free":
@@ -104,7 +101,7 @@ export function BloqueEstadoGrid({
       case "reserved-mine":
         return base + "bg-amber-200 border-amber-400 cursor-pointer";
       case "programmed-mine":
-        return base + (hasPrivatePatient ? "bg-orange-100 border-orange-400 " : "bg-white border-gray-300 ") + "cursor-pointer";
+        return base + (hasPrivatePatient ? "bg-orange-100 border-orange-400 " : hasSespaPatient ? "bg-rose-50 border-rose-300 " : "bg-white border-gray-300 ") + "cursor-pointer";
       default:
         return base + "bg-gray-100";
     }
@@ -138,11 +135,12 @@ export function BloqueEstadoGrid({
                 const key = slotKey(dateStr, resourceId, shift, slotIndex);
                 const selected = selectedKeys.has(key);
                 const hasPrivatePatient = viewAs === "gestor" && info.reservation?.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora));
+                const hasSespaPatient = viewAs === "gestor" && info.reservation?.patients?.some((p) => isSespa(p.entidadFinanciadora));
                 const clickable = viewAs === "cirujano" && (info.state === "free" || info.state === "reserved-mine" || info.state === "programmed-mine");
                 return (
                   <td
                     key={dateStr}
-                    className={cellClass(info.state, selected, hasPrivatePatient)}
+                    className={cellClass(info.state, selected, hasPrivatePatient, hasSespaPatient)}
                     onClick={clickable ? () => onCellClick?.(info) : undefined}
                     role={clickable ? "button" : undefined}
                   >
@@ -151,9 +149,13 @@ export function BloqueEstadoGrid({
                     {info.state === "reserved-mine" && (viewAs === "gestor" && info.surgeonName ? info.surgeonName : "Reservado")}
                     {info.state === "programmed-mine" && info.reservation?.patients && (
                       <div className="space-y-0.5">
+                        {hasSespaPatient && (
+                          <span className="inline-block rounded px-1 py-0.5 text-[9px] font-bold uppercase bg-rose-200 text-rose-800 border border-rose-300 mr-1">SESPA</span>
+                        )}
                         {info.reservation.patients.map((p) => (
                           <div key={p.id} className="text-gray-800">
                             <span className="font-medium">{p.numeroHistoria}</span> {p.procedure} ({p.estimatedDurationMinutes}+10 min)
+                            {isSespa(p.entidadFinanciadora) && <span className="ml-1 text-[9px] font-semibold text-rose-700">SESPA</span>}
                           </div>
                         ))}
                       </div>

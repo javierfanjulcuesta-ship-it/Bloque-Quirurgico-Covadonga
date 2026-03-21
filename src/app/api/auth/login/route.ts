@@ -1,17 +1,32 @@
 /**
  * POST /api/auth/login
  * Autenticación real: email + contraseña.
+ * Rate limit: 5 intentos / 15 min por IP.
  */
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";
+import { checkLoginRateLimit, resetLoginRateLimitOnSuccess } from "@/lib/auth/rateLimit";
 import { roleToFrontend } from "@/lib/roleMapping";
 import type { User } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
+    const rateLimit = checkLoginRateLimit(request);
+    if (!rateLimit.ok) {
+      return NextResponse.json(
+        { error: "Demasiados intentos de acceso. Espere unos minutos e inténtelo de nuevo." },
+        {
+          status: 429,
+          headers: rateLimit.retryAfterSec
+            ? { "Retry-After": String(rateLimit.retryAfterSec) }
+            : undefined,
+        }
+      );
+    }
+
     const body = await request.json();
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
@@ -59,10 +74,12 @@ export async function POST(request: Request) {
       approved: user.approved,
     });
 
+    resetLoginRateLimitOnSuccess(request);
     const res = NextResponse.json({ user });
     return addSessionCookieToResponse(res, token);
   } catch (err) {
-    console.error("[auth/login]", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[auth/login]", msg);
     return NextResponse.json(
       { error: "Error interno" },
       { status: 500 }

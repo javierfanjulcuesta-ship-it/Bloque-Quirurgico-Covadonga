@@ -16,6 +16,7 @@
     "usuarios:prueba": "npx tsx scripts/seed-usuarios-prueba.ts",
     "usuarios:reset": "npx tsx scripts/reset-usuarios-prueba.ts",
     "usuarios:gestor-anestesista": "npx tsx scripts/crear-usuario-gestor-anestesista.ts",
+    "usuarios:gestor": "npx tsx scripts/crear-usuario-gestor.ts",
     "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts"
   },
   "prisma": {
