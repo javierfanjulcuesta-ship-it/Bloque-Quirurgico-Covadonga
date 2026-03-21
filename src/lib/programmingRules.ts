@@ -1,9 +1,10 @@
 /**
  * Helper para leer reglas de programación desde BD.
  * Fallback a constantes si la regla no existe en BD (migración gradual).
+ *
+ * NOTA: ProgrammingRule no existe en schema desplegado. Siempre usa fallbacks locales.
  */
 
-import { prisma } from "@/lib/db/prisma";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import {
   SCHEDULING_DEADLINE_DAY,
@@ -16,23 +17,8 @@ const SCHEDULING_DEADLINE_MINUTE = 0;
 
 export type ProgrammingRuleValue = string | number | { text: string } | unknown;
 
-/** Obtiene el valor de una regla desde BD. Fallback a constantes si no existe. */
+/** Obtiene el valor de una regla. ProgrammingRule no existe en schema → solo fallbacks. */
 export async function getProgrammingRule(key: string): Promise<ProgrammingRuleValue | null> {
-  try {
-    const rule = await prisma.programmingRule.findFirst({
-      where: { key, isActive: true },
-    });
-    if (rule?.valueJson) {
-      try {
-        return JSON.parse(rule.valueJson) as ProgrammingRuleValue;
-      } catch {
-        return rule.valueJson;
-      }
-    }
-  } catch {
-    // BD no disponible o tabla no existe
-  }
-  // Fallback a constantes
   const fallbacks: Record<string, ProgrammingRuleValue> = {
     normas_texto_completo: { text: NORMAS_PROGRAMACION_BLOQUE },
     scheduling_deadline_day: SCHEDULING_DEADLINE_DAY,

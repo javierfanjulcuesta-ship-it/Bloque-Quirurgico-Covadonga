@@ -148,7 +148,7 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     },
   });
 
-  const user = await prisma.user.findUnique({
+  const user = await prisma.user.findFirst({
     where: { email: fromEmail, approved: true },
   });
 

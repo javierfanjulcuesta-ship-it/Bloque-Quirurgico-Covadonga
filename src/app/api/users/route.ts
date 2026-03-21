@@ -1,14 +1,14 @@
 /**
- * GET /api/users - Lista de usuarios (requiere sesión).
- * POST /api/users - Crear usuario (solo gestor). Devuelve contraseña temporal.
+ * GET - Listar usuarios (user:list, solo gestores)
+ * POST - Crear usuario (user:create). Devuelve contraseña temporal.
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
+import { toAuthSession, requireAuth, requirePermission, hasPermission, hasAnyPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
-import { hasGestorAccess } from "@/lib/types";
 import type { User, UserRole } from "@/lib/types";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
@@ -33,16 +33,12 @@ function emailToDisplayName(email: string): string {
 
 export async function POST(request: Request) {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-    if (!hasGestorAccess(session.role as UserRole)) {
-      return NextResponse.json(
-        { error: "Solo el gestor puede crear usuarios" },
-        { status: 403 }
-      );
-    }
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
+
+    const denyPerm = requirePermission(session!, "user:create");
+    if (denyPerm) return denyPerm;
 
     const body = await request.json();
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -98,18 +94,35 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+/**
+ * Lista usuarios. user:list → datos completos (gestores), puede incluir inactivos si ?includeInactive=1.
+ * Sin user:list pero con booking:create o schedule:view:own → lista mínima (solo activos) para co-surgeon, display.
+ */
+export async function GET(request: Request) {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json(
-        { error: "No autenticado" },
-        { status: 401 }
-      );
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
+
+    const hasFullList = hasPermission(session!.role, "user:list");
+    const hasMinimal = hasAnyPermission(session!.role, [
+      "booking:create",
+      "booking:view:own",
+      "schedule:view:own",
+    ]);
+
+    if (!hasFullList && !hasMinimal) {
+      return NextResponse.json({ error: "No tiene permisos para listar usuarios" }, { status: 403 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const _includeInactive = hasFullList && searchParams.get("includeInactive") === "1";
+
+    // User no tiene isActive en schema desplegado. Solo filtramos por approved.
+    const where = { approved: true };
+
     const dbUsers = await prisma.user.findMany({
-      where: { approved: true },
+      where,
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -121,14 +134,26 @@ export async function GET() {
       },
     });
 
-    const users: User[] = dbUsers.map((u) => ({
-      id: u.id,
-      email: u.email,
-      name: u.name,
-      role: roleToFrontend(u.role),
-      approved: u.approved,
-      canSespa: u.canSespa,
-    }));
+    // user:list → datos completos; resto → mínimos (sin email). isActive no existe → siempre true.
+    const users = hasFullList
+      ? dbUsers.map((u) => ({
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          role: roleToFrontend(u.role),
+          approved: u.approved,
+          canSespa: u.canSespa,
+          isActive: true as boolean,
+        }))
+      : dbUsers.map((u) => ({
+          id: u.id,
+          email: "",
+          name: u.name,
+          role: roleToFrontend(u.role),
+          approved: u.approved,
+          canSespa: u.canSespa,
+          isActive: true as boolean,
+        }));
 
     return NextResponse.json({ users });
   } catch (err) {

@@ -18,7 +18,7 @@ export function ListaUsuariosGestor() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("active");
-  const [actionLoading, setActionLoading] = useState<`${string}:${string}` | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const { refresh } = useUsers();

@@ -3,6 +3,8 @@
  * - Verifica si un slot puede reservarse según BlockOpeningPlan
  * - Calcula minutos programados por recurso/turno
  * - Determina si la apertura es "justificable" (minutos >= umbral)
+ *
+ * NOTA: BlockOpeningPlan no existe en schema desplegado. canReserveSlot siempre permite reservar.
  */
 
 import { prisma } from "@/lib/db/prisma";
@@ -19,45 +21,16 @@ export type CanReserveResult =
 
 /**
  * Comprueba si un usuario normal (cirujano/endoscopista) puede reservar en un slot.
- * - CLOSED → no puede reservar
- * - URGENT_RESERVED → no puede reservar (capacidad protegida para urgencias)
- * - OPEN o sin plan → puede reservar (por defecto OPEN para compatibilidad)
+ * Modelo BlockOpeningPlan no existe en schema desplegado → siempre permite reservar.
  */
 export async function canReserveSlot(
-  dateStr: string,
-  resourceId: string,
-  shift: Shift,
+  _dateStr: string,
+  _resourceId: string,
+  _shift: Shift,
   isGestor: boolean
 ): Promise<CanReserveResult> {
   if (isGestor) return { ok: true };
-
-  const dateObj = new Date(dateStr + "T00:00:00.000Z");
-  const shiftEnum = shift === "morning" ? "MORNING" : "AFTERNOON";
-
-  const plan = await prisma.blockOpeningPlan.findUnique({
-    where: {
-      date_resourceId_shift: { date: dateObj, resourceId, shift: shiftEnum },
-    },
-  });
-
-  if (!plan) return { ok: true }; // Sin plan = OPEN por defecto
-
-  if (plan.status === "CLOSED") {
-    return {
-      ok: false,
-      reason: "block_closed",
-      message: "El recurso está cerrado para este turno. No se aceptan reservas.",
-    };
-  }
-
-  if (plan.status === "URGENT_RESERVED") {
-    return {
-      ok: false,
-      reason: "block_urgent_reserved",
-      message: "Este turno está reservado para urgencias. No se aceptan reservas normales.",
-    };
-  }
-
+  // BlockOpeningPlan no existe en schema. Tratar todos los slots como OPEN.
   return { ok: true };
 }
 
@@ -106,35 +79,12 @@ export function isBelowJustificationThreshold(
 
 /**
  * Obtiene el plan de apertura para un (date, resourceId, shift).
- * Si no existe, devuelve null (interpretado como OPEN por defecto).
+ * BlockOpeningPlan no existe en schema desplegado → siempre devuelve null.
  */
 export async function getBlockOpeningPlan(
-  dateStr: string,
-  resourceId: string,
-  shift: Shift
-) {
-  const dateObj = new Date(dateStr + "T00:00:00.000Z");
-  const shiftEnum = shift === "morning" ? "MORNING" : "AFTERNOON";
-
-  const plan = await prisma.blockOpeningPlan.findUnique({
-    where: {
-      date_resourceId_shift: { date: dateObj, resourceId, shift: shiftEnum },
-    },
-  });
-
-  if (!plan) return null;
-
-  return {
-    id: plan.id,
-    date: dateObj.toISOString().slice(0, 10),
-    shift: plan.shift === "MORNING" ? "morning" : "afternoon",
-    resourceId: plan.resourceId,
-    status: plan.status,
-    minRequiredMinutes: plan.minRequiredMinutes,
-    reservedUrgentMinutes: plan.reservedUrgentMinutes,
-    notes: plan.notes ?? undefined,
-    approvedByUserId: plan.approvedByUserId ?? undefined,
-    createdAt: plan.createdAt.toISOString(),
-    updatedAt: plan.updatedAt.toISOString(),
-  };
+  _dateStr: string,
+  _resourceId: string,
+  _shift: Shift
+): Promise<null> {
+  return null;
 }

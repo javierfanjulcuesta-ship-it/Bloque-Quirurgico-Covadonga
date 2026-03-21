@@ -1,12 +1,18 @@
 /**
- * GET /api/anesthetist-assignments - Listar asignaciones (filtros: anesthetistId, dateFrom, dateTo)
- * PUT /api/anesthetist-assignments - Guardar asignaciones en bulk (solo gestor)
+ * GET - Listar asignaciones (schedule:view:own | anesthetist:assign). Sin assign → solo propias.
+ * PUT - Guardar asignaciones (anesthetist:assign, solo gestores)
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
+import {
+  toAuthSession,
+  requireAuth,
+  requirePermission,
+  requireAnyPermission,
+  hasPermission,
+} from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
-import { hasGestorAccess } from "@/lib/types";
 
 const VALID_RESOURCES = new Set([
   "Q1",
@@ -57,23 +63,25 @@ function toFrontend(a: { id: string; date: string; shift: string; assignmentType
 
 export async function GET(request: Request) {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
+
+    const denyPerm = requireAnyPermission(session!, ["schedule:view:own", "anesthetist:assign"]);
+    if (denyPerm) return denyPerm;
 
     const { searchParams } = new URL(request.url);
     const anesthetistId = searchParams.get("anesthetistId");
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
 
-    const isGestor = hasGestorAccess(session.role as "gestor" | "gestor-anestesista");
-    if (!anesthetistId && !isGestor) {
+    const canAssign = hasPermission(session!.role, "anesthetist:assign");
+    if (!anesthetistId && !canAssign) {
       return NextResponse.json({ error: "anesthetistId obligatorio para no gestores" }, { status: 400 });
     }
 
     // Anestesistas solo pueden ver sus propias asignaciones
-    const filterAnesthetist = isGestor ? anesthetistId : session.userId;
+    const filterAnesthetist = canAssign ? anesthetistId : session!.userId;
 
     const where: { anesthetistId?: string; date?: { gte?: string; lte?: string } } = {};
     if (filterAnesthetist) where.anesthetistId = filterAnesthetist;
@@ -81,10 +89,20 @@ export async function GET(request: Request) {
       where.date = {};
       if (dateFrom) where.date.gte = dateFrom;
       if (dateTo) where.date.lte = dateTo;
+      // Límite: max 93 días
+      if (dateFrom && dateTo) {
+        const from = new Date(dateFrom);
+        const to = new Date(dateTo);
+        const diffDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
+        if (diffDays < 0 || diffDays > 93) {
+          return NextResponse.json({ error: "Rango máximo 93 días" }, { status: 400 });
+        }
+      }
     }
 
     const list = await prisma.anesthetistAssignment.findMany({
       where,
+      select: { id: true, date: true, shift: true, assignmentType: true, resourceId: true, anesthetistId: true },
       orderBy: [{ date: "asc" }, { shift: "asc" }, { assignmentType: "asc" }, { resourceId: "asc" }],
     });
 
@@ -99,14 +117,12 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
 
-    if (!hasGestorAccess(session.role as "gestor" | "gestor-anestesista")) {
-      return NextResponse.json({ error: "Solo gestores pueden guardar asignaciones" }, { status: 403 });
-    }
+    const denyPerm = requirePermission(session!, "anesthetist:assign");
+    if (denyPerm) return denyPerm;
 
     const body = await request.json();
     const assignments = Array.isArray(body.assignments) ? body.assignments : [];
@@ -117,6 +133,23 @@ export async function PUT(request: Request) {
       const parsed = parseAssignment(a);
       if (!parsed) continue;
       toUpsert.push(parsed);
+    }
+
+    // Validar que los anesthetistId sean usuarios ANESTESISTA/GESTOR_ANESTESISTA (User no tiene isActive en schema)
+    const distinctAnesthetistIds = [...new Set(toUpsert.map((a) => a.anesthetistId))];
+    const anesthetists = await prisma.user.findMany({
+      where: { id: { in: distinctAnesthetistIds } },
+      select: { id: true, role: true },
+    });
+    const validRoles = new Set(["ANESTESISTA", "GESTOR_ANESTESISTA"]);
+    for (const aid of distinctAnesthetistIds) {
+      const u = anesthetists.find((a) => a.id === aid);
+      if (!u || !validRoles.has(u.role)) {
+        return NextResponse.json(
+          { error: "Solo se pueden asignar anestesistas o gestores-anestesistas activos a los turnos." },
+          { status: 400 }
+        );
+      }
     }
 
     const orAssignments = toUpsert.filter((a) => a.assignmentType === "OR");
