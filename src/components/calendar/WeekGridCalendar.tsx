@@ -17,6 +17,8 @@ interface WeekGridCalendarProps {
   onSelectDay: (date: Date) => void;
   selectedDate?: Date | null;
   isDayDisabled?: (date: Date) => boolean;
+  /** Clases extra por día (ej. para marcar no disponibilidad) */
+  getDayClassName?: (date: Date) => string;
 }
 
 export function WeekGridCalendar({
@@ -25,6 +27,7 @@ export function WeekGridCalendar({
   onSelectDay,
   selectedDate = null,
   isDayDisabled,
+  getDayClassName,
 }: WeekGridCalendarProps) {
   const periodMonday = useMemo(() => getWeekStart(periodStart), [periodStart.getTime()]);
   const grid = useMemo(() => getCalendarGridWeeks(periodMonday, NUM_WEEKS), [periodMonday.getTime()]);
@@ -68,13 +71,14 @@ export function WeekGridCalendar({
             const selected = isSelected(cell);
             const isToday = toISODate(cell) === todayIso;
             const isCurrentMonth = cell.getMonth() === new Date().getMonth();
+            const extraClass = getDayClassName?.(cell) ?? "";
             return (
               <button
                 key={`${wi}-${di}`}
                 type="button"
                 onClick={() => !disabled && onSelectDay(new Date(cell))}
                 disabled={disabled}
-                className={`h-9 w-9 rounded ${!isCurrentMonth ? "text-gray-300" : "text-gray-800"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:bg-[var(--ribera-red)]/10"} ${selected ? "bg-[var(--ribera-red)] text-white" : ""} ${isToday && !selected ? "ring-1 ring-[var(--ribera-red)]" : ""}`}
+                className={`h-9 w-9 rounded ${!isCurrentMonth ? "text-gray-300" : "text-gray-800"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:bg-[var(--ribera-red)]/10"} ${selected ? "bg-[var(--ribera-red)] text-white" : ""} ${isToday && !selected ? "ring-1 ring-[var(--ribera-red)]" : ""} ${extraClass}`}
               >
                 {cell.getDate()}
               </button>

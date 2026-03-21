@@ -2,12 +2,15 @@
 
 /**
  * Mi perfil: igual para cirujano, endoscopista, anestesista y gestor.
- * Foto, nombre, apellidos, correo, teléfono y especialidad son opcionales.
+ * Foto, nombre, apellidos, correo, teléfono, especialidad.
+ * Cambio de contraseña solo cuando modoDemo=false.
  */
 
 import { useState, useEffect, useRef } from "react";
 import type { User } from "@/lib/types";
 import { getProfile, setProfile } from "@/lib/storagePerfiles";
+import { isValidEmail } from "@/lib/validation";
+import { modoDemo } from "@/lib/config";
 
 interface MiPerfilProps {
   user: User;
@@ -22,7 +25,16 @@ export function MiPerfil({ user, onSaved }: MiPerfilProps) {
   const [telefono, setTelefono] = useState("");
   const [especialidad, setEspecialidad] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   useEffect(() => {
     const p = getProfile(user.id);
@@ -51,18 +63,78 @@ export function MiPerfil({ user, onSaved }: MiPerfilProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setProfileError(null);
+    const emailTrim = email.trim();
+    if (emailTrim && !isValidEmail(emailTrim)) {
+      setProfileError("Correo no válido.");
+      return;
+    }
+    setSaving(true);
     setProfile({
       userId: user.id,
       photoDataUrl: photoDataUrl || undefined,
       nombre: nombre.trim(),
       apellidos: apellidos.trim(),
-      email: email.trim(),
+      email: emailTrim,
       telefono: telefono.trim(),
       especialidad: especialidad.trim(),
       completedAt: new Date().toISOString(),
     });
     setSaved(true);
+    setSaving(false);
     onSaved?.();
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(false);
+
+    if (!newPassword.trim()) {
+      setPasswordError("La nueva contraseña es obligatoria.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError("La nueva contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("La nueva contraseña y la confirmación no coinciden.");
+      return;
+    }
+    if (!currentPassword) {
+      setPasswordError("La contraseña actual es obligatoria.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+
+      if (!res.ok) {
+        setPasswordError(data.error ?? "Error al cambiar la contraseña.");
+        return;
+      }
+
+      setPasswordSuccess(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch {
+      setPasswordError("Error de conexión. Inténtelo de nuevo.");
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   return (
@@ -145,11 +217,63 @@ export function MiPerfil({ user, onSaved }: MiPerfilProps) {
             </label>
           </div>
         </div>
+        {profileError && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{profileError}</p>}
         {saved && <p className="rounded-lg bg-green-50 p-2 text-sm text-green-800">Perfil guardado correctamente.</p>}
-        <button type="submit" className="btn-ribera-primary">
-          Guardar perfil
+        <button type="submit" disabled={saving} className="btn-ribera-primary disabled:cursor-not-allowed disabled:opacity-60">
+          {saving ? "Guardando…" : "Guardar perfil"}
         </button>
       </form>
+
+      {!modoDemo && (
+        <section className="mt-8 border-t border-gray-200 pt-6">
+          <h3 className="mb-3 text-lg font-semibold text-[var(--ribera-navy)]">Cambiar contraseña</h3>
+          <form onSubmit={handleChangePassword} className="space-y-4 max-w-md">
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-700">Contraseña actual</span>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
+                autoComplete="current-password"
+                disabled={passwordSaving}
+              />
+            </label>
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-700">Nueva contraseña</span>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
+                autoComplete="new-password"
+                disabled={passwordSaving}
+                minLength={8}
+              />
+            </label>
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-700">Confirmar nueva contraseña</span>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
+                autoComplete="new-password"
+                disabled={passwordSaving}
+              />
+            </label>
+            {passwordError && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700" role="alert">{passwordError}</p>}
+            {passwordSuccess && <p className="rounded-lg bg-green-50 p-2 text-sm text-green-800">Contraseña cambiada correctamente.</p>}
+            <button
+              type="submit"
+              disabled={passwordSaving}
+              className="rounded-lg bg-[var(--ribera-navy)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--ribera-navy)]/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {passwordSaving ? "Guardando…" : "Cambiar contraseña"}
+            </button>
+          </form>
+        </section>
+      )}
     </div>
   );
 }

@@ -5,6 +5,9 @@
 
 import type { ResourceId, TimeSlot, UserRole } from "./types";
 
+/** IDs de quirófanos (Q1, Q2, Q3) para la opción "Cualquier quirófano" */
+export const QUIRUFANO_IDS: ResourceId[] = ["Q1", "Q2", "Q3"];
+
 /** Recursos del bloque: 3 quirófanos + procedimientos menores + técnicas del dolor */
 export const RESOURCES: { id: ResourceId; label: string }[] = [
   { id: "Q1", label: "Q1" },
@@ -56,13 +59,32 @@ export const NOTIFICATION_DAY = 3;
 /** Minutos extra por procedimiento: limpieza, anestesia y colocación (norma: solo 10 min por procedimiento) */
 export const TRANSITION_MINUTES_PER_PROCEDURE = 10;
 
-/** Recursos que puede reservar cada rol: cirujano solo Q1–Q3; endoscopista solo procedimientos menores y técnicas del dolor */
+/** Identificadores de puntos de seguridad (orden de ejecución: checkpoint antes de revisión) */
+export type SafetyCheckpointId = "checkpoint" | "revision";
+
+/** Puntos de seguridad en orden: checkpoint → revisión */
+export const PUNTOS_DE_SEGURIDAD: { id: SafetyCheckpointId; label: string }[] = [
+  { id: "checkpoint", label: "Checkpoint" },
+  { id: "revision", label: "Revisión" },
+];
+
+/** Recursos que puede reservar cada rol: cirujano cualquier recurso; endoscopista solo procedimientos menores y técnicas del dolor */
 export function getAllowedResourcesForRole(role: UserRole): ResourceId[] {
   if (role === "endoscopista") {
     return ["procedimientos-menores", "tecnicas-dolor"];
   }
   if (role === "cirujano") {
-    return ["Q1", "Q2", "Q3"];
+    return ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"];
   }
   return ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"];
 }
+
+/** Opciones de solicitud de recursos para el cirujano al programar pacientes */
+export const SOLICITUD_RECURSOS_OPTIONS = [
+  { id: "rayo", label: "Rayo" },
+  { id: "mesa-mano", label: "Mesa de mano" },
+  { id: "posicionamiento-cadera", label: "Posicionamiento de cadera" },
+  { id: "caja-instrumental-ptc-ptr", label: "Caja instrumental PTC/PTR" },
+  { id: "mesa-hombro", label: "Mesa de hombro" },
+  { id: "ninguno", label: "Ninguno de ellos" },
+] as const;

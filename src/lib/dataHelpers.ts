@@ -46,6 +46,9 @@ export function buildSlotViews(
   const getSurgeonName = (surgeonId: string) =>
     users.find((u) => u.id === surgeonId)?.name;
 
+  const hasPrivateFunding = (r: { patients?: Array<{ entidadFinanciadora?: string }> }) =>
+    r.patients?.some((p) => !!(p.entidadFinanciadora?.trim() && /privad/i.test(p.entidadFinanciadora))) ?? false;
+
   days.forEach((date) => {
     const dateStr = toISODate(date);
     resourceIds.forEach((resourceId) => {
@@ -62,20 +65,22 @@ export function buildSlotViews(
           res &&
           (res.surgeonId === currentUserId ||
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
+        const hasPrivate = res ? hasPrivateFunding(res) : false;
         views.push({
           resourceId,
           date: dateStr,
           shift: "morning",
           slotIndex: i,
-          status: res ? (isMine && res.patients.length === 0 ? "reserved" : "occupied") : "free",
+          status: res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : "free",
           reservationId: res?.id,
           isMyReservation: !!isMine,
           surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,
-          patientsCount: res ? res.patients.length : undefined,
+          patientsCount: res ? (res.patients?.length ?? 0) : undefined,
           patientNames:
             asGestor && res
-              ? res.patients.map((p) => p.name ?? p.numeroHistoria)
+              ? (res.patients ?? []).map((p) => p.name ?? p.numeroHistoria)
               : undefined,
+          hasPrivate: hasPrivate || undefined,
         });
       }
       for (let i = 0; i < afternoonCount; i++) {
@@ -91,20 +96,22 @@ export function buildSlotViews(
           res &&
           (res.surgeonId === currentUserId ||
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
+        const hasPrivate = res ? hasPrivateFunding(res) : false;
         views.push({
           resourceId,
           date: dateStr,
           shift: "afternoon",
           slotIndex: i,
-          status: res ? (isMine && res.patients.length === 0 ? "reserved" : "occupied") : "free",
+          status: res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : "free",
           reservationId: res?.id,
           isMyReservation: !!isMine,
           surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,
-          patientsCount: res ? res.patients.length : undefined,
+          patientsCount: res ? (res.patients?.length ?? 0) : undefined,
           patientNames:
             asGestor && res
-              ? res.patients.map((p) => p.name ?? p.numeroHistoria)
+              ? (res.patients ?? []).map((p) => p.name ?? p.numeroHistoria)
               : undefined,
+          hasPrivate: hasPrivate || undefined,
         });
       }
     });
@@ -113,15 +120,13 @@ export function buildSlotViews(
   return views;
 }
 
-/** Usuarios de ejemplo para demo y login. Incluye gestor con contraseña inicial (ver passwords.ts). */
+/** Usuarios de demostración para el selector de acceso (modo DEMO sin contraseña). */
 export const MOCK_USERS: User[] = [
-  { id: "u-gestor", name: "Javier Fanjul Cuesta", email: "javier.fanjul.cuesta@gmail.com", role: "gestor-anestesista", approved: true },
-  { id: "u1", name: "Dra. María García", email: "maria.garcia@hospital.local", role: "cirujano", approved: true },
-  { id: "u2", name: "Dr. Juan López", email: "juan.lopez@hospital.local", role: "cirujano", approved: true },
-  // Usuarios de prueba para ver el display según perfil (contraseña en blanco)
-  { id: "u-cirujano-prueba", name: "Cirujano Prueba", email: "cirujano@prueba", role: "cirujano", approved: true },
-  { id: "u-anestesista-prueba", name: "Anestesista Prueba", email: "anestesista@prueba", role: "anestesista", approved: true },
-  { id: "u-gestor-prueba", name: "Gestor Prueba", email: "gestor@prueba", role: "gestor", approved: true },
+  { id: "demo-gestor-anestesista", name: "Gestor Anestesista Demo", email: "gestor-anestesista@demo", role: "gestor-anestesista", approved: true },
+  { id: "demo-gestor", name: "Gestor Demo", email: "gestor@demo", role: "gestor", approved: true },
+  { id: "demo-anestesista", name: "Anestesista Demo", email: "anestesista@demo", role: "anestesista", approved: true },
+  { id: "demo-cirujano", name: "Cirujano Demo", email: "cirujano@demo", role: "cirujano", approved: true },
+  { id: "demo-endoscopista", name: "Endoscopista Demo", email: "endoscopista@demo", role: "endoscopista", approved: true },
 ];
 
 function normalizedName(name: string): string {
@@ -140,9 +145,13 @@ export function findUserByEmailOrUsername(users: User[], input: string): User | 
   return undefined;
 }
 
+import { modoDemo } from "./config";
+import { getUsersCache } from "./usersCache";
+
 export function getUsers(extraUsers: User[] = []): User[] {
+  const base = modoDemo ? MOCK_USERS : getUsersCache();
   const byId = new Map<string, User>();
-  MOCK_USERS.forEach((u) => byId.set(u.id, u));
+  base.forEach((u) => byId.set(u.id, u));
   extraUsers.forEach((u) => byId.set(u.id, u));
   return Array.from(byId.values());
 }

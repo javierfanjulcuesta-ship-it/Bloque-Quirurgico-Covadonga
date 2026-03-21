@@ -42,7 +42,7 @@ export function VistaSemanal({
       <WeekNavigation weekStart={weekStart} onWeekChange={setWeekStart} canGoNext={true} />
       <div className="rounded-lg border border-gray-200 bg-white p-4">
         {reservations.length === 0 ? (
-          <p className="text-gray-500">No hay reservas en esta semana.</p>
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-6 text-center text-gray-500">No hay reservas en esta semana.</p>
         ) : (
           <div className="space-y-6">
             {weekDays.map((day) => {
@@ -60,7 +60,7 @@ export function VistaSemanal({
                   </div>
                   <div className="divide-y divide-gray-100">
                     {dayReservations.length === 0 ? (
-                      <p className="p-4 text-sm text-gray-400">Sin reservas</p>
+                      <p className="p-4 text-sm text-gray-400">Ninguna reserva este día</p>
                     ) : (
                       dayReservations.map((res) => (
                         <ReservationBlock key={res.id} reservation={res} users={users} />

@@ -1,0 +1,203 @@
+// Prisma schema - Bloque Quirúrgico Covadonga
+// PostgreSQL para producción y desarrollo piloto.
+// Para desarrollo local sin Postgres: use DATABASE_URL de Neon/Supabase (gratis).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  GESTOR
+  ANESTESISTA
+  CIRUJANO
+  ENDOSCOPISTA
+  GESTOR_ANESTESISTA
+}
+
+enum Shift {
+  MORNING
+  AFTERNOON
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  RELEASED
+  CANCELLED
+}
+
+model User {
+  id                     String                    @id @default(cuid())
+  email                  String                    @unique
+  passwordHash           String
+  name                   String
+  role                   UserRole
+  approved               Boolean                   @default(false)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  reservations           Reservation[]             @relation("SurgeonReservations")
+  anesthetistAssignments  AnesthetistAssignment[]
+}
+
+enum ReservationOrigin {
+  APP
+  EMAIL
+  GESTOR
+}
+
+model Reservation {
+  id                 String              @id @default(cuid())
+  date               DateTime
+  resourceId         String
+  shift              Shift
+  slotIndex          Int
+  surgeonId         String
+  status            ReservationStatus  @default(PENDING)
+  anesthetistId     String?
+  origin            ReservationOrigin   @default(APP)
+  createdByUserId   String?             // Quién creó (gestor puede crear en nombre de otro)
+  updatedByUserId   String?             // Quién modificó por última vez
+  releasedAt        DateTime?
+  cancelledAt       DateTime?
+  releaseReason     String?
+  cancellationReason String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  surgeon           User               @relation("SurgeonReservations", fields: [surgeonId], references: [id])
+  patients          PatientInBlock[]
+  events            ReservationEvent[]
+
+  @@unique([date, resourceId, shift, slotIndex])
+}
+
+enum ReservationEventType {
+  RESERVATION_CREATED
+  RESERVATION_CREATED_FROM_EMAIL
+  RESERVATION_UPDATED
+  RESERVATION_CANCELLED
+  RESERVATION_RELEASED
+  RESERVATION_REJECTED_CONFLICT
+}
+
+model ReservationEvent {
+  id            String              @id @default(cuid())
+  reservationId String?
+  eventType     ReservationEventType
+  actorUserId   String?
+  origin        String?             // "app" | "email" | "gestor" en el momento del evento
+  detailsJson   String?             // JSON con contexto (slot, motivo, etc.)
+  createdAt     DateTime            @default(now())
+
+  reservation   Reservation?        @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@index([reservationId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+/** Tipo de asignación: quirófano (OR) o consulta preanestesia */
+enum AssignmentType {
+  OR
+  PREANESTHESIA
+}
+
+/** Asignación de anestesista a un turno. Un turno = 1 (quirófano o preanestesia). */
+model AnesthetistAssignment {
+  id              String         @id @default(cuid())
+  date            String         // YYYY-MM-DD
+  shift           Shift          // MORNING | AFTERNOON
+  assignmentType  AssignmentType @default(OR)  // OR = quirófano, PREANESTHESIA = consulta
+  resourceId      String         // Q1, Q2... o "__preanestesia__" / "__full_shift__"
+  anesthetistId   String
+
+  anesthetist     User           @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
+
+  @@unique([date, shift, assignmentType, resourceId])
+  @@index([anesthetistId])
+  @@index([date])
+}
+
+model PatientInBlock {
+  id                       String      @id @default(cuid())
+  reservationId            String
+  historyNumber            String
+  fullName                 String?
+  procedure                String
+  estimatedDurationMinutes Int
+  anesthesiaType           String
+  insuranceType            String
+  admissionType            String?
+  orderIndex               Int
+  notes                    String?
+  solicitudRecursos        String?
+
+  reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+}
+
+// --- Integración Outlook / Microsoft 365 (buzón gestor jfanjul@riberacare.com) ---
+
+enum EmailClassification {
+  RESERVATION
+  GENERAL
+  ACCESS_REQUEST
+  UNKNOWN
+}
+
+enum EmailProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+model EmailMessage {
+  id                String              @id @default(cuid())
+  externalId        String              @unique // ID del mensaje en Outlook (evitar duplicados)
+  fromEmail         String
+  fromName          String?
+  subject           String
+  bodyPlain         String?
+  bodySummary       String?             // Primeros ~500 caracteres para listados
+  bodyHtml          String?
+  receivedAt        DateTime
+  classification    EmailClassification @default(UNKNOWN)
+  processingStatus  EmailProcessingStatus @default(PENDING)
+  resultMessage     String?             // Mensaje de resultado (para trazabilidad y respuesta)
+  senderUserId      String?             // Usuario de la app si el remitente está registrado
+  reservationId     String?             // Reserva creada desde este correo (si aplica)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  processingLogs    EmailProcessingLog[]
+}
+
+/** Mensajes de contacto desde pantalla de acceso (usuarios sin cuenta). Piloto real. */
+model ContactMessage {
+  id        String   @id @default(cuid())
+  fromName  String
+  fromEmail String
+  subject   String?
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model EmailProcessingLog {
+  id            String   @id @default(cuid())
+  emailMessageId String
+  action        String   // "classified", "parsed", "reservation_created", "reply_sent", "error"
+  details       String?  // JSON o texto con detalles
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+
+  emailMessage  EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@index([emailMessageId])
+}

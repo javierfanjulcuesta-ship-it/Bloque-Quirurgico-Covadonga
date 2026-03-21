@@ -77,6 +77,9 @@ export interface Reservation {
 /** Ingreso o ambulatorio */
 export type AdmissionType = "ingreso" | "ambulatorio";
 
+/** Valor de solicitud de recursos (Rayo, Mesa de mano, etc.) */
+export type SolicitudRecursosId = "rayo" | "mesa-mano" | "posicionamiento-cadera" | "caja-instrumental-ptc-ptr" | "mesa-hombro" | "ninguno";
+
 /** Paciente dentro de un bloque reservado */
 export interface PatientInBlock {
   id: string;
@@ -89,6 +92,8 @@ export interface PatientInBlock {
   admissionType?: AdmissionType;
   notes: string;
   order: number;
+  /** Solicitud de recursos: Rayo, Mesa de mano, Posicionamiento de cadera, etc. */
+  solicitudRecursos?: SolicitudRecursosId;
 }
 
 /** Perfil extendido del usuario (foto, apellidos, teléfono, especialidad). Rellenado en primer acceso. */
@@ -115,6 +120,10 @@ export interface SlotView {
   surgeonName?: string;
   patientsCount?: number;
   patientNames?: string[];
+  /** true si algún paciente tiene financiación privada */
+  hasPrivate?: boolean;
+  /** true si el anestesista actual está asignado a este slot */
+  assignedToAnesthetist?: boolean;
 }
 
 /** Indisponibilidad del anestesista */
@@ -144,16 +153,28 @@ export interface AnesthetizedSurgery {
   procedure?: string;
 }
 
-/** Tipo de hueco en la asignación */
+/** Tipo de hueco en la asignación (legacy) */
 export type AssignmentSlotType = "consulta-preanestesia" | ResourceId;
 
-/** Asignación de anestesista a un hueco */
+/** Tipo de asignación: OR = quirófano, PREANESTHESIA = consulta */
+export type AssignmentType = "OR" | "PREANESTHESIA";
+
+/** Sentineles para resourceId */
+export const ASSIGNMENT_PREANESTHESIA = "__preanestesia__";
+export const ASSIGNMENT_FULL_SHIFT = "__full_shift__";
+
+/** Asignación de anestesista a un turno */
 export interface AnesthetistAssignment {
   id: string;
   date: string;
   shift: Shift;
-  slotType: AssignmentSlotType;
+  /** OR = quirófano, PREANESTHESIA = consulta */
+  assignmentType: AssignmentType;
+  /** Recurso (Q1, Q2...) o __full_shift__ (turno completo) o __preanestesia__ */
+  resourceId: string;
   anesthetistId: string;
+  /** Legacy: equivale a resourceId si OR, o "consulta-preanestesia" si PREANESTHESIA */
+  slotType?: AssignmentSlotType;
 }
 
 /** Mensaje al gestor */

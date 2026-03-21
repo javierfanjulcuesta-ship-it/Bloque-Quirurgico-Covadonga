@@ -1,0 +1,189 @@
+/**
+ * API de reservas. Llamadas directas al backend.
+ */
+
+import type { Reservation, PatientInBlock } from "@/lib/types";
+import type { ResourceId, Shift } from "@/lib/types";
+
+export interface ApiReservation {
+  id: string;
+  date: string;
+  resourceId: string;
+  shift: string;
+  slotIndex: number;
+  surgeonId: string;
+  status: string;
+  anesthetistId?: string;
+  createdAt: string;
+  patients: ApiPatient[];
+}
+
+export interface ApiPatient {
+  id: string;
+  historyNumber: string;
+  fullName?: string;
+  procedure: string;
+  estimatedDurationMinutes: number;
+  anesthesiaType: string;
+  insuranceType: string;
+  admissionType?: string;
+  orderIndex: number;
+  notes?: string;
+  solicitudRecursos?: string;
+}
+
+export interface CreateReservationPayload {
+  date: string;
+  resourceId: string;
+  shift: string;
+  slotIndex: number;
+  patients?: ApiPatientInput[];
+}
+
+export interface ApiPatientInput {
+  historyNumber: string;
+  fullName?: string;
+  procedure: string;
+  estimatedDurationMinutes: number;
+  anesthesiaType: string;
+  insuranceType: string;
+  admissionType?: string;
+  orderIndex: number;
+  notes?: string;
+  solicitudRecursos?: string;
+}
+
+export interface FetchReservationsFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  resourceId?: string;
+}
+
+/** Convierte reserva de API al formato del frontend */
+export function mapReservationFromApi(api: ApiReservation): Reservation {
+  return {
+    id: api.id,
+    date: api.date,
+    resourceId: api.resourceId as ResourceId,
+    shift: (api.shift === "MORNING" ? "morning" : "afternoon") as Shift,
+    slotIndex: api.slotIndex,
+    surgeonId: api.surgeonId,
+    status: (api.status.toLowerCase() as Reservation["status"]) || "pending",
+    anesthetistId: api.anesthetistId,
+    createdAt: api.createdAt,
+    patients: api.patients.map(mapPatientFromApi),
+  };
+}
+
+/** Convierte paciente de API al formato del frontend */
+export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
+  return {
+    id: api.id,
+    name: api.fullName,
+    numeroHistoria: api.historyNumber,
+    procedure: api.procedure,
+    estimatedDurationMinutes: api.estimatedDurationMinutes,
+    anesthesiaType: api.anesthesiaType,
+    entidadFinanciadora: api.insuranceType,
+    admissionType: (api.admissionType as PatientInBlock["admissionType"]) ?? "ambulatorio",
+    notes: api.notes ?? "",
+    order: api.orderIndex,
+    solicitudRecursos: api.solicitudRecursos as PatientInBlock["solicitudRecursos"],
+  };
+}
+
+/** Convierte reserva del frontend al payload de la API (para crear) */
+export function mapReservationToApi(r: {
+  date: string;
+  resourceId: string;
+  shift: string;
+  slotIndex: number;
+  patients: Omit<PatientInBlock, "id" | "order">[];
+}): CreateReservationPayload {
+  return {
+    date: r.date,
+    resourceId: r.resourceId,
+    shift: r.shift,
+    slotIndex: r.slotIndex,
+    patients: r.patients.map((p, i) => mapPatientToApi({ ...p, order: i })),
+  };
+}
+
+/** Convierte paciente del frontend al formato de la API */
+export function mapPatientToApi(p: Omit<PatientInBlock, "id" | "order"> & { order?: number }): ApiPatientInput {
+  return {
+    historyNumber: p.numeroHistoria,
+    fullName: p.name,
+    procedure: p.procedure,
+    estimatedDurationMinutes: p.estimatedDurationMinutes,
+    anesthesiaType: p.anesthesiaType,
+    insuranceType: p.entidadFinanciadora,
+    admissionType: p.admissionType ?? "ambulatorio",
+    orderIndex: p.order ?? 0,
+    notes: p.notes ?? "",
+    solicitudRecursos: p.solicitudRecursos,
+  };
+}
+
+export class ReservationsApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string
+  ) {
+    super(message);
+    this.name = "ReservationsApiError";
+  }
+}
+
+export async function fetchReservations(filters?: FetchReservationsFilters): Promise<Reservation[]> {
+  const params = new URLSearchParams();
+  if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom);
+  if (filters?.dateTo) params.set("dateTo", filters.dateTo);
+  if (filters?.resourceId) params.set("resourceId", filters.resourceId);
+  const qs = params.toString();
+  const url = `/api/reservations${qs ? `?${qs}` : ""}`;
+
+  const res = await fetch(url, { credentials: "same-origin" });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError("No tiene permiso para ver reservas.", 403);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al cargar reservas", res.status);
+  }
+
+  const list = (data as { reservations: ApiReservation[] }).reservations ?? [];
+  return list.map(mapReservationFromApi);
+}
+
+export async function createReservation(payload: CreateReservationPayload): Promise<Reservation> {
+  const body = {
+    date: payload.date,
+    resourceId: payload.resourceId,
+    shift: payload.shift,
+    slotIndex: payload.slotIndex,
+    patients: (payload.patients ?? []).map((p) => ({
+      ...p,
+      orderIndex: p.orderIndex ?? 0,
+    })),
+  };
+
+  const res = await fetch("/api/reservations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError("Solo cirujanos y endoscopistas pueden crear reservas.", 403);
+    if (res.status === 409) throw new ReservationsApiError((data as { error?: string }).error ?? "El hueco ya está ocupado.", 409);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear la reserva", res.status);
+  }
+
+  const reservation = (data as { reservation: ApiReservation }).reservation;
+  return mapReservationFromApi(reservation);
+}

@@ -31,16 +31,20 @@ export function SlotCell({
 }: SlotCellProps) {
   const isFree = slot.status === "free";
   const isReserved = slot.status === "reserved";
-  const isMyOccupied = slot.status === "occupied" && slot.isMyReservation;
+  const isOccupied = slot.status === "occupied";
+  const isMyOccupied = isOccupied && slot.isMyReservation;
+  const hasPrivate = !!slot.hasPrivate;
   const clickable =
     onSelect &&
     !disabled &&
     (isFree || isReserved || isMyOccupied);
-  const styleClass = isFree
-    ? "slot-free hover:bg-emerald-200"
-    : isReserved
-      ? "slot-reserved hover:bg-amber-200"
-      : "slot-occupied";
+  const styleClass = hasPrivate
+    ? "slot-private"
+    : isFree
+      ? "slot-free hover:bg-emerald-200"
+      : isReserved
+        ? "slot-reserved hover:bg-amber-200"
+        : "slot-occupied";
 
   const tooltipParts: string[] = [];
   if (slot.surgeonName) tooltipParts.push(`Cirujano: ${slot.surgeonName}`);
@@ -73,7 +77,7 @@ export function SlotCell({
           Reservado
         </span>
       )}
-      {slot.status === "occupied" && (
+      {isOccupied && (
         <>
           <span className={`font-medium ${isMyOccupied ? "text-red-800" : "text-red-800"}`}>
             {isMyOccupied ? "Sus pacientes" : "Ocupado"}

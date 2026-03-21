@@ -13,7 +13,8 @@
   --ribera-gray-light: #f1f5f9;
   --slot-free: #d1fae5;
   --slot-reserved: #fef3c7;
-  --slot-occupied: #fecaca;
+  --slot-occupied: #f1f5f9;
+  --slot-private: #fed7aa;
 }
 
 @theme inline {
@@ -89,7 +90,12 @@ body {
 
 .slot-occupied {
   background-color: var(--slot-occupied);
-  border: 1px solid #fca5a5;
+  border: 1px solid #cbd5e1;
+}
+
+.slot-private {
+  background-color: var(--slot-private);
+  border: 1px solid #fdba74;
 }
 
 /* Utilidades de color Ribera (para uso con Tailwind o en línea) */

@@ -21,14 +21,17 @@ export function ContactarCoordinacion({ user }: ContactarCoordinacionProps) {
   const [contactSent, setContactSent] = useState(false);
   const [openedMail, setOpenedMail] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setContactError(null);
+    setSubmitting(true);
     const subject = contactSubject.trim() || "Mensaje desde la aplicación – Bloque Quirúrgico";
     const body = contactBody.trim();
     if (!body) {
-      setContactError("Escriba el mensaje.");
+      setContactError("El mensaje es obligatorio.");
+      setSubmitting(false);
       return;
     }
     addMessageToGestor({
@@ -66,13 +69,14 @@ ${body}`;
     setOpenedMail(openedMail);
     setContactSubject("");
     setContactBody("");
+    setSubmitting(false);
   };
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6">
-      <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Contactar a la coordinación</h2>
+      <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Contactar coordinación</h2>
       <p className="mb-4 text-sm text-gray-600">
-        Envíe un mensaje a todos los gestores del bloque quirúrgico. Recibirán una notificación en la aplicación.
+        Los gestores recibirán una notificación en la aplicación.
       </p>
       {contactSent ? (
         <div className="rounded-lg bg-green-50 p-4 text-green-800">
@@ -111,8 +115,10 @@ ${body}`;
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2"
             />
           </label>
-          {contactError && <p className="text-sm text-red-600">{contactError}</p>}
-          <button type="submit" className="btn-ribera-primary">Enviar a los gestores</button>
+          {contactError && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{contactError}</p>}
+          <button type="submit" disabled={submitting} className="btn-ribera-primary disabled:cursor-not-allowed disabled:opacity-60">
+            {submitting ? "Enviando…" : "Enviar a los gestores"}
+          </button>
         </form>
       )}
     </div>

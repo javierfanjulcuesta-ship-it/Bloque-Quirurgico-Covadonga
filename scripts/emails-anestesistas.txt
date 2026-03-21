@@ -1,0 +1,5 @@
+# Lista de correos de anestesistas
+# Un correo por línea. Las líneas que empiezan con # se ignoran.
+# Ejemplo:
+# ana.martinez@hospital.es
+# carlos.ruiz@hospital.es

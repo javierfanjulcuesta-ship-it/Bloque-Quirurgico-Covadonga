@@ -1,0 +1,5 @@
+# Lista de correos de cirujanos
+# Un correo por línea. Las líneas que empiezan con # se ignoran.
+# Ejemplo:
+# juan.garcia@hospital.es
+# maria.lopez@hospital.es

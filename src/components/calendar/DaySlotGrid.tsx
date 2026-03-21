@@ -16,7 +16,7 @@ function slotViewKey(v: SlotView): string {
 interface DaySlotGridProps {
   date: Date;
   dateLabel: string;
-  allowedResources: { id: SlotView["resourceId"]; label: string }[];
+  allowedResources: { id: string; label: string }[];
   slotViews: SlotView[];
   onSlotSelect?: (slot: SlotView) => void;
   selectedSlotKeys?: Set<string>;
@@ -35,7 +35,7 @@ export function DaySlotGrid({
   const afternoonSlots = getSlots("afternoon");
 
   const getSlotView = (
-    resourceId: SlotView["resourceId"],
+    resourceId: string,
     shift: Shift,
     slotIndex: number
   ): SlotView | undefined =>
@@ -68,6 +68,7 @@ export function DaySlotGrid({
                 onSelect={onSlotSelect}
                 compact={true}
                 selected={selectedSlotKeys?.has(slotViewKey(view))}
+                assignedToMe={view.assignedToAnesthetist}
               />
             </td>
           );
@@ -114,8 +115,9 @@ export function DaySlotGrid({
       </div>
       <p className="border-t border-gray-100 px-4 py-2 text-xs text-gray-500">
         <span className="mr-2 inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-emerald-200 bg-[var(--slot-free)]" /> Libre</span>
-        <span className="mr-2 inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-amber-300 bg-[var(--slot-reserved)]" /> Reservado (su reserva)</span>
-        <span className="inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-red-200 bg-[var(--slot-occupied)]" /> Ocupado / Sus pacientes</span>. Pulse en libre para reservar; en reservado o en sus pacientes para programar o ver datos.
+        <span className="mr-2 inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-amber-300 bg-[var(--slot-reserved)]" /> Reservado (sin pacientes)</span>
+        <span className="mr-2 inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-slate-200 bg-[var(--slot-occupied)]" /> Ocupado (con pacientes)</span>
+        <span className="inline-block"><span className="inline-block h-3 w-10 align-middle rounded border border-orange-300 bg-[var(--slot-private)]" /> Privado</span>
       </p>
     </div>
   );

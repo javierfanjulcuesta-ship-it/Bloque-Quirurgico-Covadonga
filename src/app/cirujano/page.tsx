@@ -9,9 +9,9 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { getWeekStart, toISODate, getSlotDurationMinutes, isNextWeekReserveClosed } from "@/lib/utils";
-import { getStoredReservations, addOrUpdateStoredReservation } from "@/lib/storageMensajesYNotificaciones";
+import { getReservations, createReservationEntry, ReservationsApiError } from "@/lib/reservations";
 import { getAllowedResourcesForRole } from "@/lib/constants";
-import { RESOURCES } from "@/lib/constants";
+import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
 import { ProgramarPacientesModal, type SlotSelection } from "@/components/cirujano/ProgramarPacientesModal";
 import { DaySlotGrid } from "@/components/calendar/DaySlotGrid";
@@ -27,9 +27,66 @@ function slotKey(date: string, resourceId: string, shift: string, slotIndex: num
   return `${date}__${resourceId}__${shift}__${slotIndex}`;
 }
 
+/** Comprueba si un quirófano tiene un slot libre */
+function isSlotFreeInRoom(
+  rid: ResourceId,
+  date: string,
+  shift: Shift,
+  slotIndex: number,
+  reservations: Reservation[]
+): boolean {
+  return !reservations.some(
+    (r) =>
+      r.resourceId === rid &&
+      r.date === date &&
+      r.shift === shift &&
+      r.slotIndex === slotIndex &&
+      r.status !== "cancelled"
+  );
+}
+
+/**
+ * Resuelve los slots seleccionados intentando que todos los de quirófano queden en el mismo.
+ * Si hay "cualquier-quirofano", busca un quirófano que tenga TODOS los huecos libres.
+ * Slots de procedimientos-menores/tecnicas-dolor se mantienen.
+ * @returns Map slotKey -> resourceId, o null si no hay ningún quirófano con todos los huecos libres
+ */
+function resolveSlotsToSameRoom(
+  slots: { date: string; resourceId: string; shift: Shift; slotIndex: number }[],
+  reservations: Reservation[]
+): { resolved: Map<string, ResourceId> } | null {
+  const quirófanoSlots = slots.filter(
+    (s) => s.resourceId === "cualquier-quirofano" || QUIRUFANO_IDS.includes(s.resourceId as ResourceId)
+  );
+  const otrosSlots = slots.filter((s) => !QUIRUFANO_IDS.includes(s.resourceId as ResourceId) && s.resourceId !== "cualquier-quirofano");
+
+  const resolved = new Map<string, ResourceId>();
+  otrosSlots.forEach((s) => resolved.set(`${s.date}-${s.shift}-${s.slotIndex}`, s.resourceId as ResourceId));
+
+  if (quirófanoSlots.length === 0) return { resolved };
+
+  const conCualquier = quirófanoSlots.filter((s) => s.resourceId === "cualquier-quirofano");
+  const conSala = quirófanoSlots.filter((s) => s.resourceId !== "cualquier-quirofano");
+
+  const salasDistintas = new Set(conSala.map((s) => s.resourceId));
+  if (salasDistintas.size > 1) return null;
+
+  const candidatos = salasDistintas.size === 1 ? [Array.from(salasDistintas)[0] as ResourceId] : [...QUIRUFANO_IDS];
+
+  for (const rid of candidatos) {
+    const allFree = quirófanoSlots.every((s) => isSlotFreeInRoom(rid, s.date, s.shift, s.slotIndex, reservations));
+    if (allFree) {
+      quirófanoSlots.forEach((s) => resolved.set(`${s.date}-${s.shift}-${s.slotIndex}`, rid));
+      return { resolved };
+    }
+  }
+
+  return null;
+}
+
 export default function CirujanoPage() {
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, hydrated } = useAuth();
   const [tab, setTab] = useState<"bloque" | "pacientes" | "perfil" | "coordinacion" | "historico">("bloque");
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
   const [calendarPeriodStart, setCalendarPeriodStart] = useState(() => getWeekStart(new Date()));
@@ -38,16 +95,38 @@ export default function CirujanoPage() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [showProgramarModal, setShowProgramarModal] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [errorNotification, setErrorNotification] = useState<string | null>(null);
+  const [reservationsLoading, setReservationsLoading] = useState(false);
+  const [savingReservations, setSavingReservations] = useState(false);
 
-  const refreshReservations = useCallback(() => {
-    setReservations(getStoredReservations());
-  }, []);
+  const refreshReservations = useCallback(async () => {
+    setReservationsLoading(true);
+    setErrorNotification(null);
+    try {
+      const from = new Date(weekStart);
+      from.setDate(from.getDate() - 7);
+      const to = new Date(weekStart);
+      to.setDate(to.getDate() + 35);
+      const list = await getReservations({
+        dateFrom: toISODate(from),
+        dateTo: toISODate(to),
+      });
+      setReservations(list);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al cargar reservas";
+      setErrorNotification(msg);
+      setReservations([]);
+    } finally {
+      setReservationsLoading(false);
+    }
+  }, [weekStart]);
 
   useEffect(() => {
     refreshReservations();
   }, [refreshReservations]);
 
   useEffect(() => {
+    if (!hydrated) return;
     if (!user) {
       router.replace("/");
       return;
@@ -55,12 +134,16 @@ export default function CirujanoPage() {
     if (user.role !== "cirujano" && user.role !== "endoscopista") {
       router.replace("/calendario");
     }
-  }, [user, router]);
+  }, [user, hydrated, router]);
 
-  const allowedResources = useMemo(
-    () => (user && (user.role === "cirujano" || user.role === "endoscopista") ? RESOURCES.filter((r) => getAllowedResourcesForRole(user.role).includes(r.id)) : []),
-    [user?.role]
-  );
+  const allowedResources = useMemo(() => {
+    if (!user || (user.role !== "cirujano" && user.role !== "endoscopista")) return [];
+    const base = RESOURCES.filter((r) => getAllowedResourcesForRole(user.role).includes(r.id));
+    if (user.role === "cirujano") {
+      return [{ id: "cualquier-quirofano", label: "Cualquier quirófano" }, ...base];
+    }
+    return base;
+  }, [user?.role]);
   const handleSlotSelect = (slot: SlotView) => {
     const key = slotKey(slot.date, slot.resourceId, slot.shift, slot.slotIndex);
     setSelectedKeys((prev) => {
@@ -71,7 +154,7 @@ export default function CirujanoPage() {
     });
   };
 
-  /** SlotViews del día seleccionado (columnas = recursos, filas = rangos horarios) */
+  /** SlotViews del día seleccionado (columnas = salas, filas = rangos horarios). Incluye "Cualquier quirófano" para cirujano. */
   const slotViewsForSelectedDay = useMemo(() => {
     if (!selectedDateForGrid) return [];
     const weekStartForDay = getWeekStart(selectedDateForGrid);
@@ -80,8 +163,33 @@ export default function CirujanoPage() {
       users: getUsers(),
     });
     const dateStr = toISODate(selectedDateForGrid);
-    return allViews.filter((v) => v.date === dateStr && allowedResources.some((r) => r.id === v.resourceId));
-  }, [selectedDateForGrid, reservations, user?.id, allowedResources]);
+    const baseViews = allViews.filter((v) => v.date === dateStr && allowedResources.some((r) => r.id === v.resourceId));
+    if (!user || user.role !== "cirujano") return baseViews;
+    const quirofanoViews = allViews.filter((v) => v.date === dateStr && QUIRUFANO_IDS.includes(v.resourceId));
+    const slotKeys = new Set<string>();
+    quirofanoViews.forEach((v) => slotKeys.add(`${v.shift}-${v.slotIndex}`));
+    const virtualViews: SlotView[] = [];
+    slotKeys.forEach((key) => {
+      const [shift, slotIndexStr] = key.split("-");
+      const slotIndex = parseInt(slotIndexStr ?? "0", 10);
+      const anyFree = QUIRUFANO_IDS.some((rid) => {
+        const v = quirofanoViews.find((x) => x.resourceId === rid && x.shift === shift && x.slotIndex === slotIndex);
+        return v?.status === "free";
+      });
+      if (anyFree) {
+        virtualViews.push({
+          resourceId: "cualquier-quirofano" as ResourceId,
+          date: dateStr,
+          shift: shift as Shift,
+          slotIndex,
+          status: "free",
+          reservationId: undefined,
+          isMyReservation: false,
+        });
+      }
+    });
+    return [...virtualViews, ...baseViews];
+  }, [selectedDateForGrid, reservations, user?.id, user?.role, allowedResources]);
 
   /** Claves seleccionadas en formato DaySlotGrid (resourceId-date-shift-slotIndex) */
   const selectedSlotKeysForDay = useMemo(() => {
@@ -126,72 +234,86 @@ export default function CirujanoPage() {
     return list.sort((a, b) => a.date.localeCompare(b.date) || a.patient.order - b.patient.order);
   }, [reservations, user?.id]);
 
-  if (!user || (user.role !== "cirujano" && user.role !== "endoscopista")) {
+  if (!hydrated || !user || (user.role !== "cirujano" && user.role !== "endoscopista")) {
     return null;
   }
 
-  const handleSoloReservar = () => {
+  const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;
     if (selectedSlots.some((s) => isNextWeekReserveClosed(s.date))) return;
-    const now = new Date().toISOString();
-    selectedSlots.forEach((slot) => {
-      const res: Reservation = {
-        id: `res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        resourceId: slot.resourceId as ResourceId,
-        date: slot.date,
-        shift: slot.shift,
-        slotIndex: slot.slotIndex,
-        surgeonId: user.id,
-        patients: [],
-        status: "pending",
-        createdAt: now,
-      };
-      addOrUpdateStoredReservation(res);
-    });
-    setSelectedKeys(new Set());
-    refreshReservations();
-    setNotification("Reserva realizada. Los huecos quedan reservados a su nombre.");
-    setTimeout(() => setNotification(null), 4000);
+    const result = resolveSlotsToSameRoom(selectedSlots, reservations);
+    if (!result) {
+      setNotification(null);
+      setErrorNotification("No hay ningún quirófano con todos los huecos seleccionados libres. Seleccione huecos en el mismo quirófano o elija otra combinación.");
+      setTimeout(() => setErrorNotification(null), 6000);
+      return;
+    }
+    setSavingReservations(true);
+    setErrorNotification(null);
+    try {
+      for (const slot of selectedSlots) {
+        const resolvedId = result.resolved.get(`${slot.date}-${slot.shift}-${slot.slotIndex}`) ?? (slot.resourceId as ResourceId);
+        await createReservationEntry({ date: slot.date, resourceId: resolvedId, shift: slot.shift, slotIndex: slot.slotIndex, surgeonId: user.id, patients: [] });
+      }
+      setSelectedKeys(new Set());
+      await refreshReservations();
+      setNotification("Reserva realizada. Los huecos quedan reservados a su nombre.");
+      setTimeout(() => setNotification(null), 4000);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al crear la reserva";
+      setErrorNotification(msg);
+      setTimeout(() => setErrorNotification(null), 6000);
+    } finally {
+      setSavingReservations(false);
+    }
   };
 
-  const handleProgramarSave = (patients: Omit<PatientInBlock, "id" | "order">[], coSurgeonIds?: string[]) => {
+  const handleProgramarSave = async (patients: Omit<PatientInBlock, "id" | "order">[], coSurgeonIds?: string[]) => {
     if (selectedSlots.length === 0) return;
-    const now = new Date().toISOString();
-    const patientsWithId: PatientInBlock[] = patients.map((p, i) => ({
+    const result = resolveSlotsToSameRoom(selectedSlots, reservations);
+    if (!result) {
+      setNotification(null);
+      setErrorNotification("No hay ningún quirófano con todos los huecos seleccionados libres. Seleccione huecos en el mismo quirófano o elija otra combinación.");
+      setTimeout(() => setErrorNotification(null), 6000);
+      return;
+    }
+    const patientsWithOrder = patients.map((p, i) => ({
       ...p,
-      id: `pat-${Date.now()}-${i}`,
-      order: i,
-      admissionType: p.admissionType ?? "ambulatorio",
+      admissionType: p.admissionType ?? "ambulatorio" as const,
+      solicitudRecursos: p.solicitudRecursos,
     }));
-    const totalPatientMinutes = patientsWithId.reduce(
+    const totalPatientMinutes = patientsWithOrder.reduce(
       (s, p) => s + p.estimatedDurationMinutes + 10,
       0
     );
     if (totalPatientMinutes > totalReservedMinutes) {
-      setNotification("El tiempo total de los pacientes supera el tiempo reservado. No se ha guardado.");
-      setTimeout(() => setNotification(null), 5000);
+      setNotification(null);
+      setErrorNotification("El tiempo total de los pacientes supera el tiempo reservado. No se ha guardado.");
+      setTimeout(() => setErrorNotification(null), 5000);
       return;
     }
-    selectedSlots.forEach((slot, idx) => {
-      const res: Reservation = {
-        id: `res-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
-        resourceId: slot.resourceId as ResourceId,
-        date: slot.date,
-        shift: slot.shift,
-        slotIndex: slot.slotIndex,
-        surgeonId: user.id,
-        coSurgeonIds,
-        patients: idx === 0 ? patientsWithId : [],
-        status: "pending",
-        createdAt: now,
-      };
-      addOrUpdateStoredReservation(res);
-    });
-    setSelectedKeys(new Set());
-    setShowProgramarModal(false);
-    refreshReservations();
-    setNotification("Pacientes programados correctamente.");
-    setTimeout(() => setNotification(null), 4000);
+    setSavingReservations(true);
+    setErrorNotification(null);
+    try {
+      for (let idx = 0; idx < selectedSlots.length; idx++) {
+        const slot = selectedSlots[idx]!;
+        const resolvedId = result.resolved.get(`${slot.date}-${slot.shift}-${slot.slotIndex}`) ?? (slot.resourceId as ResourceId);
+        const slotPatients = idx === 0 ? patientsWithOrder : [];
+        await createReservationEntry({ date: slot.date, resourceId: resolvedId, shift: slot.shift, slotIndex: slot.slotIndex, surgeonId: user.id, patients: slotPatients });
+      }
+      setSelectedKeys(new Set());
+      setShowProgramarModal(false);
+      await refreshReservations();
+      setNotification("Pacientes programados correctamente.");
+      setTimeout(() => setNotification(null), 4000);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al programar pacientes";
+      setErrorNotification(msg);
+      setTimeout(() => setErrorNotification(null), 6000);
+      throw err; // rethrow para que el modal no cierre
+    } finally {
+      setSavingReservations(false);
+    }
   };
 
   return (
@@ -199,29 +321,25 @@ export default function CirujanoPage() {
       <div className="mx-auto max-w-7xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 pb-4">
           <div>
-            <h1 className="text-2xl font-bold text-[var(--ribera-navy)]">Bloque Quirúrgico</h1>
+            <h1 className="text-2xl font-bold text-[var(--ribera-navy)]">Estado del bloque</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Conectado como {user.name}
-              {" · "}
-              <button type="button" onClick={() => { logout(); router.replace("/"); }} className="font-medium text-[var(--ribera-red)] hover:underline">
-                Cerrar sesión
-              </button>
+              Bloque Quirúrgico Covadonga · {user.name} · <button type="button" onClick={() => { logout(); router.replace("/"); }} className="font-medium text-[var(--ribera-red)] hover:underline">Cerrar sesión</button>
             </p>
           </div>
-          <nav className="flex gap-2">
+          <nav className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setTab("bloque")}
               className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "bloque" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
             >
-              Estado actual del bloque quirúrgico
+              Reservar / programar
             </button>
             <button
               type="button"
               onClick={() => setTab("pacientes")}
               className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "pacientes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
             >
-              Mis pacientes programados
+              Mis pacientes
             </button>
             <button
               type="button"
@@ -247,8 +365,18 @@ export default function CirujanoPage() {
           </nav>
         </header>
 
+        {reservationsLoading && tab === "bloque" && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-2 text-sm text-gray-600" role="status">
+            Cargando reservas…
+          </div>
+        )}
+        {errorNotification && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+            {errorNotification}
+          </div>
+        )}
         {notification && (
-          <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800" role="status" aria-live="polite">
             {notification}
           </div>
         )}
@@ -263,19 +391,19 @@ export default function CirujanoPage() {
 
         {tab === "pacientes" && (
           <section className="rounded-xl border border-gray-200 bg-white p-6">
-            <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes programados</h2>
+            <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes</h2>
             <p className="mb-4 text-sm text-gray-600">
-              Listado de pacientes que ya tiene programados en sus reservas de quirófano.
+              Pacientes programados en sus reservas.
             </p>
             {misPacientesProgramados.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">Aún no tiene pacientes programados. Reserve huecos y use &quot;Reservar y programar pacientes&quot; para añadirlos.</p>
+              <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">Aún no tiene pacientes programados. En la pestaña <strong>Reservar / programar</strong>, elija huecos en el calendario y pulse <strong>Reservar y programar pacientes</strong> para añadirlos.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Fecha</th>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Recurso</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Sala</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Turno</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Paciente / Nº historia</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Procedimiento</th>
@@ -314,7 +442,7 @@ export default function CirujanoPage() {
         {tab === "bloque" && (
           <>
             <p className="text-sm text-gray-600">
-              Seleccione una fecha en el calendario para ver el estado de reserva de los quirófanos.
+              Elija un día y los huecos para reservar o programar pacientes.
             </p>
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
               <div className="shrink-0 max-w-[280px]">
@@ -336,39 +464,37 @@ export default function CirujanoPage() {
                         Para esta semana (a partir del jueves) solo puede <strong>programar pacientes directamente</strong> en huecos libres; no puede reservar huecos vacíos.
                       </div>
                     )}
-                    <div className="rounded-lg border border-gray-200 bg-white p-3 mb-4">
-                      <p className="text-sm text-gray-600">
-                        <span className="inline-block h-4 w-4 rounded bg-emerald-100 border border-emerald-300 align-middle" /> Libre
-                        {" · "}
-                        <span className="inline-block h-4 w-4 rounded bg-red-100 border border-red-300 align-middle" /> Ocupado por otro
-                        {" · "}
-                        <span className="inline-block h-4 w-4 rounded bg-amber-200 border border-amber-400 align-middle" /> Reservado por usted
-                        {" · "}
-                        <span className="inline-block h-4 w-4 rounded bg-white border border-gray-300 align-middle" /> Sus pacientes programados
+                    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2">
+                      <p className="text-xs text-gray-600">
+                        <span className="inline-block h-3.5 w-3.5 rounded border border-emerald-300 bg-emerald-100 align-middle" /> Libre
+                        <span className="mx-2">·</span>
+                        <span className="inline-block h-3.5 w-3.5 rounded border border-red-300 bg-red-100 align-middle" /> Ocupado
+                        <span className="mx-2">·</span>
+                        <span className="inline-block h-3.5 w-3.5 rounded border border-amber-400 bg-amber-200 align-middle" /> Reservado por usted
+                        <span className="mx-2">·</span>
+                        <span className="inline-block h-3.5 w-3.5 rounded border border-gray-300 bg-white align-middle" /> Con pacientes
                       </p>
                     </div>
 
                     {selectedKeys.size > 0 && (
-                      <div className="flex flex-wrap items-center gap-4 rounded-lg border-2 border-[var(--ribera-red)] bg-ribera-red-pale p-4 mb-4">
-                        <span className="font-medium text-gray-800">
-                          Ha seleccionado {selectedKeys.size} hueco(s). Tiempo total: {totalReservedMinutes} min.
+                      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ribera-red)]/30 bg-ribera-red-pale p-4">
+                        <span className="text-sm font-medium text-gray-800">
+                          {selectedKeys.size} hueco(s) · {totalReservedMinutes} min
                         </span>
-                        {hasClosedWeekSlot && (
-                          <span className="text-sm text-amber-800">
-                            Para la semana seleccionada solo puede programar pacientes (no reservar huecos vacíos).
-                          </span>
-                        )}
+                        <button type="button" onClick={() => setShowProgramarModal(true)} className="btn-ribera-primary" disabled={savingReservations}>
+                          Reservar y programar pacientes
+                        </button>
                         {!hasClosedWeekSlot && (
-                          <button type="button" onClick={handleSoloReservar} className="btn-ribera-outline">
+                          <button type="button" onClick={handleSoloReservar} className="btn-ribera-outline" disabled={savingReservations}>
                             Solo reservar
                           </button>
                         )}
-                        <button type="button" onClick={() => setShowProgramarModal(true)} className="btn-ribera-primary">
-                          Reservar y programar pacientes
+                        <button type="button" onClick={() => setSelectedKeys(new Set())} className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                          Cancelar
                         </button>
-                        <button type="button" onClick={() => setSelectedKeys(new Set())} className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                          Cancelar selección
-                        </button>
+                        {hasClosedWeekSlot && (
+                          <span className="text-xs text-amber-800">Solo programar pacientes en esta semana.</span>
+                        )}
                       </div>
                     )}
 
@@ -382,9 +508,10 @@ export default function CirujanoPage() {
                     />
                   </>
                 ) : (
-                  <p className="py-8 text-center text-gray-500 rounded-lg border border-gray-200 bg-white">
-                    Elija un día en el calendario de la izquierda para ver el estado de reserva.
-                  </p>
+                  <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-white py-12 text-center">
+                    <p className="text-sm font-medium text-gray-600">Elija un día</p>
+                    <p className="mt-1 text-xs text-gray-500">Seleccione una fecha en el calendario para reservar o programar.</p>
+                  </div>
                 )}
               </div>
             </div>
@@ -398,6 +525,7 @@ export default function CirujanoPage() {
         currentUserId={user.id}
         onSave={handleProgramarSave}
         onClose={() => setShowProgramarModal(false)}
+        saving={savingReservations}
       />
       )}
     </div>

@@ -83,7 +83,7 @@ export function HistoricoView({ user, reservations: propReservations }: Historic
       {isCirujanoOrEndoscopista && (
         <>
           {items.length === 0 ? (
-            <p className="text-gray-500">No hay procedimientos en el periodo seleccionado.</p>
+            <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">No hay procedimientos en el periodo seleccionado.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-sm">
@@ -106,7 +106,7 @@ export function HistoricoView({ user, reservations: propReservations }: Historic
                         <td className="p-2">
                           {r.patients.length === 0
                             ? "—"
-                            : r.patients.map((p) => `${p.historyNumber ?? ""} ${p.procedure ?? ""}`.trim() || "—").join("; ")}
+                            : r.patients.map((p) => `${p.numeroHistoria ?? ""} ${p.procedure ?? ""}`.trim() || "—").join("; ")}
                         </td>
                       </tr>
                     ))}

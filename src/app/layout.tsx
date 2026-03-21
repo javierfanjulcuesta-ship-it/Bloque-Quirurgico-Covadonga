@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { UsersProvider } from "@/context/UsersContext";
 
 const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-ribera-sans",
@@ -29,7 +30,9 @@ export default function RootLayout({
     <html lang="es" className={plusJakarta.variable}>
       <body className="min-h-screen bg-gray-50 font-sans antialiased">
         <AuthProvider>
-          {children}
+          <UsersProvider>
+            {children}
+          </UsersProvider>
         </AuthProvider>
       </body>
     </html>
