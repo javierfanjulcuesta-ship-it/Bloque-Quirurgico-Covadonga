@@ -11,8 +11,8 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Bloque Quirúrgico Covadonga | Grupo Ribera",
-  description: "Gestión del bloque quirúrgico - Grupo Ribera",
+  title: "Gestión de Bloque Quirúrgico",
+  description: "Gestión del bloque quirúrgico",
 };
 
 export const viewport: Viewport = {

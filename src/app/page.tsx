@@ -182,8 +182,10 @@ export default function HomePage() {
         </div>
       )}
       <div className="card-ribera w-full max-w-md p-8">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Grupo Ribera{modoDemo ? " · DEMO" : ""}</p>
-        <h1 className="mb-1 text-2xl font-bold tracking-tight text-[var(--ribera-navy)]">Bloque Quirúrgico Covadonga</h1>
+        {modoDemo && (
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">DEMO</p>
+        )}
+        <h1 className="mb-1 text-2xl font-bold tracking-tight text-[var(--ribera-navy)]">Gestión de Bloque Quirúrgico</h1>
         {modoDemo ? (
           <>
         <p className="mb-4 text-sm text-gray-600">Seleccione un usuario y pulse <strong>Entrar en modo DEMO</strong>. Sin contraseñas.</p>
