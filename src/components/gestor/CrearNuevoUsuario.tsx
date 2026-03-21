@@ -2,8 +2,9 @@
 
 /**
  * Pestaña del gestor: crear nuevo usuario.
- * Crea el usuario en la BD y envía la invitación vía outlookService (jfanjul@riberacare.com).
+ * Crea el usuario en la BD y envía la invitación (SMTP/Graph).
  * Si el servicio de correo no está disponible, abre mailto como fallback.
+ * La lista de usuarios está en la pestaña "Gestión de usuarios".
  */
 
 import { useState } from "react";
@@ -53,7 +54,12 @@ export function CrearNuevoUsuario() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Error al crear usuario");
+        const msg = data.error ?? "Error al crear usuario";
+        setError(
+          res.status === 409 && msg.includes("email")
+            ? "Ya existe un usuario con ese correo. Puede reactivar la cuenta o reenviar la invitación desde Gestión de usuarios."
+            : msg
+        );
         return;
       }
       const { tempPassword } = data;
@@ -101,12 +107,13 @@ export function CrearNuevoUsuario() {
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-6">
-      <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Crear nuevo usuario</h2>
-      <p className="mb-4 text-sm text-gray-600">
-        Seleccione el perfil, correo y nombre. Se creará el usuario en el sistema y se abrirá su cliente de correo con la invitación y la contraseña temporal.
-      </p>
+      <div>
+          <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Crear nuevo usuario</h2>
+          <p className="mb-4 text-sm text-gray-600">
+            Seleccione el perfil, correo y nombre. Se creará el usuario en el sistema y se abrirá su cliente de correo con la invitación y la contraseña temporal.
+          </p>
 
-      <div className="flex flex-col gap-4 max-w-md">
+          <div className="flex flex-col gap-4 max-w-md">
         <label>
           <span className="block text-sm font-medium text-gray-700 mb-1">Perfil del nuevo usuario</span>
           <select
@@ -168,6 +175,7 @@ export function CrearNuevoUsuario() {
             Usuario creado. La invitación se ha enviado desde el buzón de coordinación (o se ha abierto su cliente de correo como alternativa).
           </p>
         )}
+          </div>
       </div>
     </section>
   );

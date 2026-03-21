@@ -10,10 +10,12 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { roleLabel, hasGestorAccess } from "@/lib/types";
+import { hasPermission } from "@/lib/auth/permissions";
 import { getAllowedResourcesForRole, RESOURCES } from "@/lib/constants";
 import { ASSIGNMENT_FULL_SHIFT } from "@/lib/types";
 import { getWeekStart, getWeekDays, toISODate } from "@/lib/utils";
 import { getStoredReservations, getMessagesToGestor } from "@/lib/storageMensajesYNotificaciones";
+import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getReservations, ReservationsApiError } from "@/lib/reservations";
 import { getAssignments } from "@/lib/anesthetistAssignments";
 import { buildSlotViews, getUsers } from "@/lib/dataHelpers";
@@ -27,7 +29,10 @@ import { MiPerfil } from "@/components/MiPerfil";
 import { ContactarCoordinacion } from "@/components/ContactarCoordinacion";
 import { HistoricoView } from "@/components/HistoricoView";
 import { CrearNuevoUsuario } from "@/components/gestor/CrearNuevoUsuario";
+import { ListaUsuariosGestor } from "@/components/gestor/ListaUsuariosGestor";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
+import { GestionarApertura } from "@/components/gestor/GestionarApertura";
+import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
 import { SolicitarNoDisponibilidad } from "@/components/anestesista/SolicitarNoDisponibilidad";
@@ -39,7 +44,7 @@ const RESERVATIONS_STORAGE_KEY = "bloque_quirurgico_reservations";
 export default function CalendarioPage() {
   const router = useRouter();
   const { user, logout, hydrated } = useAuth();
-  type TabId = "calendario" | "perfil" | "coordinacion" | "crear-usuario" | "asignar-anestesistas" | "mensajes" | "consulta-preanestesia" | "mi-programacion" | "solicitar-no-disponibilidad" | "historico";
+  type TabId = "calendario" | "perfil" | "coordinacion" | "gestion-usuarios" | "asignar-anestesistas" | "gestionar-apertura" | "normas" | "mensajes" | "consulta-preanestesia" | "mi-programacion" | "solicitar-no-disponibilidad" | "historico";
   const [viewTab, setViewTab] = useState<TabId>("calendario");
   const isAnestesista = user ? hasAnesthetistAccess(user.role) : false;
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
@@ -51,6 +56,7 @@ export default function CalendarioPage() {
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
+  const [blockPlans, setBlockPlans] = useState<import("@/lib/types").BlockOpeningPlan[]>([]);
 
   const refreshContactMessages = useCallback(async () => {
     if (modoDemo) return;
@@ -101,6 +107,27 @@ export default function CalendarioPage() {
   useEffect(() => {
     refreshReservations();
   }, [refreshReservations]);
+
+  const refreshBlockPlans = useCallback(async () => {
+    if (modoDemo) return;
+    try {
+      const from = new Date(calendarPeriodStart);
+      from.setDate(from.getDate() - 7);
+      const to = new Date(calendarPeriodStart);
+      to.setDate(to.getDate() + 5 * 7 + 6);
+      const plans = await fetchBlockPlans({
+        dateFrom: toISODate(from),
+        dateTo: toISODate(to),
+      });
+      setBlockPlans(plans);
+    } catch {
+      setBlockPlans([]);
+    }
+  }, [modoDemo, calendarPeriodStart]);
+
+  useEffect(() => {
+    refreshBlockPlans();
+  }, [refreshBlockPlans]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -163,6 +190,8 @@ export default function CalendarioPage() {
   };
 
   const isGestor = user ? hasGestorAccess(user.role) : false;
+  const canManageUsers = user ? hasPermission(user.role, "user:create") : false;
+  const canListUsers = user ? hasPermission(user.role, "user:list") : false;
   const allowedResourceIds = user ? getAllowedResourcesForRole(user.role) : undefined;
 
   const slotViews = useMemo(
@@ -171,8 +200,10 @@ export default function CalendarioPage() {
         asGestor: isGestor,
         currentUserId: user?.id,
         users: getUsers(),
+        blockPlans,
+        asGestorForBlocks: isGestor,
       }),
-    [weekStart, reservations, isGestor, user?.id]
+    [weekStart, reservations, isGestor, user?.id, blockPlans]
   );
 
   /** Vista del día seleccionado: columnas = recursos, filas = rangos (gestor/anestesista) */
@@ -185,6 +216,8 @@ export default function CalendarioPage() {
     const weekStartForDay = getWeekStart(selectedDateForGrid);
     const allViews = buildSlotViews(weekStartForDay, reservations, {
       asGestor: true,
+      blockPlans,
+      asGestorForBlocks: isGestor,
       currentUserId: user?.id,
       users: getUsers(),
     });
@@ -208,7 +241,7 @@ export default function CalendarioPage() {
       }));
     }
     return views;
-  }, [selectedDateForGrid, reservations, user?.id, isGestor, isAnestesista, allowedResources, anesthetistAssignments]);
+  }, [selectedDateForGrid, reservations, user?.id, isGestor, isAnestesista, allowedResources, anesthetistAssignments, blockPlans]);
 
   /** Pacientes programados de la semana se asignan automáticamente a la consulta de preanestesia (lun y jue, mañana). */
   const preanesthesiaAssignedByDate = useMemo(() => {
@@ -247,22 +280,34 @@ export default function CalendarioPage() {
                 <button type="button" onClick={() => setViewTab("calendario")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "calendario" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                   Calendario
                 </button>
-                {user?.role === "gestor-anestesista" && (
+                {hasAnesthetistAccess(user?.role ?? "") && isGestor && (
                   <button type="button" onClick={() => router.push("/cirujano")} className="rounded-lg px-4 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">
                     Reservar / programar
                   </button>
                 )}
-                {isGestor && (
+                {(isGestor || canManageUsers) && (
                   <>
                     <button type="button" onClick={() => setViewTab("mensajes")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "mensajes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                       Mensajes
                     </button>
-                    <button type="button" onClick={() => setViewTab("crear-usuario")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "crear-usuario" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Crear nuevo usuario
+                    {(canListUsers || canManageUsers) && (
+                    <button type="button" onClick={() => setViewTab("gestion-usuarios")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "gestion-usuarios" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+                      Gestión de usuarios
                     </button>
+                    )}
+                    {isGestor && (
+                    <>
                     <button type="button" onClick={() => setViewTab("asignar-anestesistas")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "asignar-anestesistas" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
                       Asignar anestesistas
                     </button>
+                    <button type="button" onClick={() => setViewTab("gestionar-apertura")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "gestionar-apertura" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+                      Apertura bloque
+                    </button>
+                    <button type="button" onClick={() => setViewTab("normas")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "normas" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+                      Normas
+                    </button>
+                    </>
+                    )}
                   </>
                 )}
                 {isAnestesista && (
@@ -324,12 +369,35 @@ export default function CalendarioPage() {
           <ValoracionPreanestesia reservations={reservations} />
         )}
 
-        {user && isGestor && viewTab === "crear-usuario" && (
-          <CrearNuevoUsuario />
+        {user && (canListUsers || canManageUsers) && viewTab === "gestion-usuarios" && (
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+            {canManageUsers && (
+              <div className="min-w-0 shrink-0 lg:w-[380px]">
+                <CrearNuevoUsuario />
+              </div>
+            )}
+            {canListUsers && (
+              <section className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white p-6">
+                <h2 className="mb-1 text-xl font-bold text-[var(--ribera-navy)]">Gestión de usuarios</h2>
+                <p className="mb-4 text-sm text-gray-600">
+                  Listar, desactivar, reactivar y reenviar invitaciones
+                </p>
+                <ListaUsuariosGestor />
+              </section>
+            )}
+          </div>
         )}
 
         {user && isGestor && viewTab === "asignar-anestesistas" && (
           <AsignarAnestesistas reservations={reservations} />
+        )}
+
+        {user && isGestor && viewTab === "gestionar-apertura" && (
+          <GestionarApertura reservations={reservations} />
+        )}
+
+        {user && isGestor && viewTab === "normas" && (
+          <NormasGestorView />
         )}
 
         {user && isGestor && viewTab === "mensajes" && (
