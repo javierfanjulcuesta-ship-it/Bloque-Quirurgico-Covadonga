@@ -9,7 +9,9 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission, requireAnyPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { RESOURCES } from "@/lib/constants";
-import type { BlockOpeningStatus } from "@/lib/types";
+
+/** Fallback local: BlockOpeningStatus no existe en types.ts de este proyecto */
+type BlockOpeningStatus = "OPEN" | "CLOSED" | "URGENT_RESERVED";
 
 const VALID_RESOURCE_IDS = new Set(RESOURCES.map((r) => r.id));
 
