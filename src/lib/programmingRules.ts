@@ -7,10 +7,12 @@ import { prisma } from "@/lib/db/prisma";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import {
   SCHEDULING_DEADLINE_DAY,
-  SCHEDULING_DEADLINE_HOUR,
-  SCHEDULING_DEADLINE_MINUTE,
   TRANSITION_MINUTES_PER_PROCEDURE,
 } from "./constants";
+
+/** Fallbacks locales: no existen en constants.ts de este proyecto. Cierre jueves 00:00 */
+const SCHEDULING_DEADLINE_HOUR = 0;
+const SCHEDULING_DEADLINE_MINUTE = 0;
 
 export type ProgrammingRuleValue = string | number | { text: string } | unknown;
 
