@@ -25,8 +25,6 @@ Mediante esta herramienta podréis consultar el calendario del bloque y reservar
 
 - Los pacientes programados se asignan automáticamente a la consulta de preanestesia disponible (lunes y jueves por la mañana).
 
-- **Uso del tiempo reservado:** si el tiempo reservado por un cirujano o endoscopista durante 3 semanas consecutivas es liberado por falta de pacientes programados en más de un 50% durante las dos semanas siguientes, dicho profesional solo podrá programar pacientes directamente en huecos libres y no podrá realizar nuevas reservas de huecos hasta que la coordinación revise su situación.
-
 - **Contacto con la coordinación:** en el perfil de la aplicación está la sección "Contactar al gestor" para enviar un mensaje (asunto y texto). El mensaje queda registrado. Cualquier duda o incidencia puede resolverse así de forma ágil.
 
 La primera vez que accedáis al sistema se os pedirá completar algunos datos básicos de contacto; es un paso rápido que nos permite mantener una comunicación fluida ante incidencias o cambios en la programación.

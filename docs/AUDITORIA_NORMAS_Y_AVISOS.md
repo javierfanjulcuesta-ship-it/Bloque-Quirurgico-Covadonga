@@ -34,8 +34,7 @@
 5. Primeros tramos mañana/tarde: reserva mínima 1h 30min.
 6. +10 min por procedimiento (limpieza/anestesia).
 7. Pacientes asignados a consulta preanestesia (lun/jue mañana).
-8. Uso del tiempo reservado: 3 semanas liberadas >50% → solo programar en huecos libres.
-9. Contacto: "Contactar al gestor" en la app.
+8. Contacto: "Contactar al gestor" en la app.
 
 ---
 
