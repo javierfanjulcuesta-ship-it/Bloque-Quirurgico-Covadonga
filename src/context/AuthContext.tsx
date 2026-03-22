@@ -54,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     if (modoDemo) {
       const stored = getStoredUser();
       const users = getUsers();
@@ -72,14 +73,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetch("/api/auth/session", { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        if (cancelled) return;
         if (data?.user) {
-          setUserState(data.user);
+          const u = data.user;
+          if (u?.id && u?.email && u?.role) {
+            setUserState(u);
+            setStoredUser(u);
+          } else {
+            setUserState(null);
+          }
         } else {
           setUserState(null);
         }
       })
-      .catch(() => setUserState(null))
-      .finally(() => setHydrated(true));
+      .catch(() => { if (!cancelled) setUserState(null); })
+      .finally(() => { if (!cancelled) setHydrated(true); });
+    return () => { cancelled = true; };
   }, []);
 
   const login = useCallback((u: User) => {
@@ -99,7 +108,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!res.ok) {
         return { ok: false, error: data.error ?? "Error al iniciar sesión" };
       }
-      setUserState(data.user);
+      if (data.user) {
+        setUserState(data.user);
+        setStoredUser(data.user);
+      }
       return { ok: true, user: data.user };
     } catch (err) {
       return { ok: false, error: "Error de conexión" };
@@ -109,15 +121,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     if (!modoDemo) {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    } else {
-      setStoredUser(null);
     }
+    setStoredUser(null);
     setUserState(null);
   }, []);
 
   const setUser = useCallback((u: User | null) => {
     setUserState(u);
-    if (modoDemo) setStoredUser(u);
+    setStoredUser(u);
   }, []);
 
   return (

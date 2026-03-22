@@ -6,7 +6,7 @@
  * REAL: login con email + contraseña.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { getUsers } from "@/lib/dataHelpers";
@@ -38,6 +38,13 @@ export default function HomePage() {
 
   const demoUsers = getUsers();
   const hasNoDemoUsers = demoUsers.length === 0;
+
+  useEffect(() => {
+    if (!authUser || !router) return;
+    const r = authUser.role;
+    if (r === "cirujano" || r === "endoscopista") router.replace("/cirujano");
+    else router.replace("/calendario");
+  }, [authUser, router]);
 
   const goToPanel = () => {
     if (!authUser) return;
@@ -301,11 +308,6 @@ export default function HomePage() {
             </button>
             <p className="mt-4 text-center text-sm text-gray-500">
               Si no tiene cuenta, contacte con la coordinación del bloque quirúrgico.
-            </p>
-            <p className="mt-2 text-center">
-              <a href="/api/auth/debug-session" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-600 underline">
-                Diagnóstico sesión (temporal)
-              </a>
             </p>
           </form>
         )}

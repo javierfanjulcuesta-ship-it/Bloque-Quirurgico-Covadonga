@@ -15,7 +15,6 @@ import type { User } from "@/lib/types";
 export async function GET() {
   try {
     const session = await getSessionFromCookie();
-    console.log("[AUTH-DIAG] SESSION-ROUTE: resultado=" + (session ? "ok" : "401_sin_sesion"));
     if (!session) {
       return NextResponse.json(
         { error: "No autenticado" },
