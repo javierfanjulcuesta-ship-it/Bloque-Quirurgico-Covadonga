@@ -58,7 +58,14 @@ function getCookieOptions(maxAge = MAX_AGE) {
 
 /** Adjunta la cookie de sesión a una NextResponse (recomendado en route handlers). */
 export function addSessionCookieToResponse(response: NextResponse, token: string): NextResponse {
-  response.cookies.set(COOKIE_NAME, token, getCookieOptions());
+  const opts = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production" || process.env.VERCEL === "1",
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: MAX_AGE,
+  };
+  response.cookies.set(COOKIE_NAME, token, opts);
   return response;
 }
 
@@ -70,7 +77,9 @@ export async function setSessionCookie(token: string): Promise<void> {
 
 export async function getSessionFromCookie(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
+  const cookie = cookieStore.get(COOKIE_NAME);
+  console.log("[auth/session] COOKIE RECIBIDA", cookie ? `${COOKIE_NAME}=${cookie.value?.slice(0, 20)}...` : "undefined");
+  const token = cookie?.value;
   if (!token) return null;
   return verifySession(token);
 }

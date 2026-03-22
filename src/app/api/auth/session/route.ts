@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { roleToFrontend } from "@/lib/roleMapping";

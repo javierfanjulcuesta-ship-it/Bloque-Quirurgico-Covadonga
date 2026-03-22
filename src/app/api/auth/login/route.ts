@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";
@@ -85,6 +86,7 @@ export async function POST(request: Request) {
     });
 
     resetLoginRateLimitOnSuccess(request);
+    console.log("[auth/login] SET COOKIE", token ? `${token.slice(0, 20)}...` : "empty");
     const res = NextResponse.json({ user });
     return addSessionCookieToResponse(res, token);
   } catch (err) {
