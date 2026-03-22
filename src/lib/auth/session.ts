@@ -45,24 +45,27 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
   }
 }
 
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  maxAge: MAX_AGE,
-  path: "/",
-};
+function getCookieOptions(maxAge = MAX_AGE) {
+  const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: "lax" as const,
+    maxAge,
+    path: "/",
+  };
+}
 
 /** Adjunta la cookie de sesión a una NextResponse (recomendado en route handlers). */
 export function addSessionCookieToResponse(response: NextResponse, token: string): NextResponse {
-  response.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
+  response.cookies.set(COOKIE_NAME, token, getCookieOptions());
   return response;
 }
 
 /** @deprecated Usar addSessionCookieToResponse para garantizar que la cookie se envíe. */
 export async function setSessionCookie(token: string): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, token, COOKIE_OPTIONS);
+  cookieStore.set(COOKIE_NAME, token, getCookieOptions());
 }
 
 export async function getSessionFromCookie(): Promise<SessionPayload | null> {
@@ -74,5 +77,5 @@ export async function getSessionFromCookie(): Promise<SessionPayload | null> {
 
 export async function removeSessionCookie(): Promise<void> {
   const cookieStore = await cookies();
-  cookieStore.delete(COOKIE_NAME);
+  cookieStore.set(COOKIE_NAME, "", { ...getCookieOptions(0), maxAge: 0 });
 }

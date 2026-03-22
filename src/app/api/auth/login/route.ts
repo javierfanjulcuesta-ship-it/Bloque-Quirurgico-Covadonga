@@ -5,6 +5,8 @@
  */
 
 import { NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";

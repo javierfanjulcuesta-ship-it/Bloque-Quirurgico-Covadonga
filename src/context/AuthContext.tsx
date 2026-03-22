@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    fetch("/api/auth/session", { credentials: "same-origin" })
+    fetch("/api/auth/session", { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.user) {
