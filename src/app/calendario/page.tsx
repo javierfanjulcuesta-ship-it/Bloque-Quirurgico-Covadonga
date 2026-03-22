@@ -56,7 +56,7 @@ export default function CalendarioPage() {
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
-  const [blockPlans, setBlockPlans] = useState<import("@/lib/types").BlockOpeningPlan[]>([]);
+  const [blockPlans, setBlockPlans] = useState<any[]>([]);
 
   const refreshContactMessages = useCallback(async () => {
     if (modoDemo) return;
