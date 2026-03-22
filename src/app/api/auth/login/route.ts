@@ -86,9 +86,11 @@ export async function POST(request: Request) {
     });
 
     resetLoginRateLimitOnSuccess(request);
-    console.log("[auth/login] SET COOKIE", token ? `${token.slice(0, 20)}...` : "empty");
     const res = NextResponse.json({ user });
-    return addSessionCookieToResponse(res, token);
+    const out = addSessionCookieToResponse(res, token);
+    const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+    console.log("[AUTH-DIAG] LOGIN: intentando setear cookie | nombre=bloque_session | opts={httpOnly:true,secure:" + isProd + ",sameSite:lax,path:/} | tokenPrefijo=" + (token ? token.slice(0, 12) + "..." : "vacio"));
+    return out;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[auth/login]", msg);

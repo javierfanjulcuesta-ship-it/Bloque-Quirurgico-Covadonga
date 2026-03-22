@@ -78,8 +78,9 @@ export async function setSessionCookie(token: string): Promise<void> {
 export async function getSessionFromCookie(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
   const cookie = cookieStore.get(COOKIE_NAME);
-  console.log("[auth/session] COOKIE RECIBIDA", cookie ? `${COOKIE_NAME}=${cookie.value?.slice(0, 20)}...` : "undefined");
   const token = cookie?.value;
+  const llega = !!token;
+  console.log("[AUTH-DIAG] SESSION: cookie_llega=" + llega + " | nombre=" + COOKIE_NAME + " | tokenPresente=" + (token ? "si_prefijo=" + token.slice(0, 12) + "..." : "no"));
   if (!token) return null;
   return verifySession(token);
 }
