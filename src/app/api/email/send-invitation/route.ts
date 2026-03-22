@@ -9,7 +9,6 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import type { UserRole } from "@/lib/types";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
-import { getNormasTextoCompleto } from "@/lib/programmingRules";
 import { getAppUrl } from "@/lib/appUrl";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
@@ -48,17 +47,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const normasTexto = ["cirujano", "endoscopista"].includes(role)
-      ? await getNormasTextoCompleto()
-      : undefined;
-
     await sendNewUserInvitationEmail({
       toEmail,
       role: role as UserRole,
       recipientName: recipientName || undefined,
       accessLink: appUrl,
       initialPassword,
-      normasTexto,
     });
 
     return NextResponse.json({ ok: true });
