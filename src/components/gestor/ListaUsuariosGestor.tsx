@@ -21,6 +21,7 @@ export function ListaUsuariosGestor() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [passwordShown, setPasswordShown] = useState<{ userId: string; password: string } | null>(null);
   const { refresh } = useUsers();
 
   const load = useCallback(async () => {
@@ -91,6 +92,7 @@ export function ListaUsuariosGestor() {
   const handleResendInvitation = async (user: User) => {
     setActionError(null);
     setActionSuccess(null);
+    setPasswordShown(null);
     setActionLoading(loadingKey(user.id, "resend"));
     try {
       const res = await fetch(`/api/users/${user.id}/resend-invitation`, {
@@ -106,6 +108,28 @@ export function ListaUsuariosGestor() {
       setTimeout(() => setActionSuccess(null), 4000);
       await load();
       refresh();
+    } catch {
+      setActionError("Error de conexión");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRegeneratePassword = async (user: User) => {
+    setActionError(null);
+    setActionSuccess(null);
+    setActionLoading(loadingKey(user.id, "regenpw"));
+    try {
+      const res = await fetch(`/api/users/${user.id}/regenerate-password`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setActionError(data.error ?? "Error al regenerar contraseña");
+        return;
+      }
+      setPasswordShown({ userId: user.id, password: data.tempPassword ?? "" });
     } catch {
       setActionError("Error de conexión");
     } finally {
@@ -205,7 +229,7 @@ export function ListaUsuariosGestor() {
                       {isActionLoading(u.id, "reactivate") ? "…" : "Reactivar"}
                     </button>
                   ) : (
-                    <div className="flex flex-wrap justify-end gap-1">
+                    <div className="flex flex-wrap justify-end items-center gap-1">
                       <button
                         type="button"
                         onClick={() => handleResendInvitation(u)}
@@ -215,6 +239,34 @@ export function ListaUsuariosGestor() {
                       >
                         {isActionLoading(u.id, "resend") ? "…" : "Reenviar invitación"}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRegeneratePassword(u)}
+                        disabled={!!actionLoading}
+                        className="rounded border border-gray-500 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        title="Regenerar y ver contraseña (usuarios de prueba)"
+                      >
+                        {isActionLoading(u.id, "regenpw") ? "…" : "Regenerar contraseña"}
+                      </button>
+                      {passwordShown?.userId === u.id && (
+                        <>
+                          <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-xs">{passwordShown.password}</code>
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard?.writeText(passwordShown.password)}
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            Copiar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPasswordShown(null)}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Ocultar
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleDeactivate(u)}

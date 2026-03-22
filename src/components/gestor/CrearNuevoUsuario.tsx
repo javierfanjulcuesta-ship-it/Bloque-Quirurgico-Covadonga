@@ -26,6 +26,7 @@ export function CrearNuevoUsuario() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [fallbackContent, setFallbackContent] = useState<{ to: string; subject: string; body: string } | null>(null);
   const { refresh } = useUsers();
 
   const handleEnviar = async () => {
@@ -87,22 +88,19 @@ export function CrearNuevoUsuario() {
           return;
         }
         if (emailRes.status === 503) {
-          const errData = await emailRes.json().catch(() => ({}));
-          setError(
-            (errData as { error?: string }).error ??
-              "Configure NEXT_PUBLIC_APP_URL en Vercel para enviar invitaciones automáticas. Como alternativa, se abrirá su cliente de correo."
-          );
-          setLoading(false);
-          return;
+          setError("");
         }
       } catch {
         /* fallback a mailto */
       }
 
       const subject = getEmailSubject(profile);
-      const body = getEmailBody(profile, { accessLink, initialPassword: tempPassword });
+      const body = getEmailBody(profile, { accessLink, initialPassword: tempPassword, recipientName });
       const mailto = buildMailtoLink(trimmed, subject, body);
-      window.open(mailto, "_blank");
+      const opened = window.open(mailto, "_blank");
+      if (!opened || opened.closed) {
+        setFallbackContent({ to: trimmed, subject, body });
+      }
       setSent(true);
       setEmail("");
       setName("");
@@ -180,9 +178,26 @@ export function CrearNuevoUsuario() {
           </button>
         </div>
         {sent && (
-          <p className="text-sm text-green-700">
-            Usuario creado. La invitación se ha enviado desde el buzón de coordinación (o se ha abierto su cliente de correo como alternativa).
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm text-green-700">
+              Usuario creado. {fallbackContent
+                ? "Si no se abrió el correo, copie el mensaje:"
+                : "La invitación se ha enviado desde el buzón de coordinación (o se ha abierto su cliente de correo como alternativa)."}
+            </p>
+            {fallbackContent && (
+              <button
+                type="button"
+                onClick={() => {
+                  const text = `Para: ${fallbackContent.to}\nAsunto: ${fallbackContent.subject}\n\n${fallbackContent.body}`;
+                  navigator.clipboard?.writeText(text);
+                  setFallbackContent(null);
+                }}
+                className="rounded border border-amber-600 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Copiar invitación al portapapeles
+              </button>
+            )}
+          </div>
         )}
           </div>
       </div>

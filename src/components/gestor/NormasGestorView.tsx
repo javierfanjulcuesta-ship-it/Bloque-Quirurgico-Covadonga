@@ -3,9 +3,11 @@
 /**
  * Pestaña Normas para GESTOR/GESTOR_ANESTESISTA.
  * Listado de reglas editables con formulario básico.
+ * Si la API falla, muestra normas estáticas como fallback (nunca "no disponible").
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 
 interface ProgrammingRuleFull {
   id: string;
@@ -103,7 +105,10 @@ export function NormasGestorView() {
     return (
       <section className="rounded-xl border border-gray-200 bg-white p-6">
         <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Normas de programación</h2>
-        <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</p>
+        <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          Las reglas editables no están disponibles temporalmente ({error}). A continuación las normas estáticas de referencia:
+        </p>
+        <pre className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 font-sans text-sm text-gray-700">{NORMAS_PROGRAMACION_BLOQUE}</pre>
       </section>
     );
   }
