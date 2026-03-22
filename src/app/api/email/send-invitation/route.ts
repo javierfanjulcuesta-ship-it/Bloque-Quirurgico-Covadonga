@@ -36,15 +36,20 @@ export async function POST(request: Request) {
       );
     }
 
+    const bodyAccessLink = typeof body.accessLink === "string" ? body.accessLink.trim() : "";
     let appUrl: string;
     try {
       appUrl = getAppUrl();
     } catch (e) {
       console.error("[email send-invitation] URL no configurada:", e instanceof Error ? e.message : e);
-      return NextResponse.json(
-        { error: "La URL de la aplicación no está configurada. Configure NEXT_PUBLIC_APP_URL o NEXTAUTH_URL en Vercel." },
-        { status: 503 }
-      );
+      if (bodyAccessLink && bodyAccessLink.startsWith("https://")) {
+        appUrl = bodyAccessLink.replace(/\/$/, "");
+      } else {
+        return NextResponse.json(
+          { error: "La URL de la aplicación no está configurada. Configure NEXT_PUBLIC_APP_URL o NEXTAUTH_URL en Vercel." },
+          { status: 503 }
+        );
+      }
     }
 
     await sendNewUserInvitationEmail({

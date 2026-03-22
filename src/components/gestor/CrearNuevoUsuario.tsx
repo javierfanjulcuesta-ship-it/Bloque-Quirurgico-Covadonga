@@ -86,6 +86,15 @@ export function CrearNuevoUsuario() {
           refresh();
           return;
         }
+        if (emailRes.status === 503) {
+          const errData = await emailRes.json().catch(() => ({}));
+          setError(
+            (errData as { error?: string }).error ??
+              "Configure NEXT_PUBLIC_APP_URL en Vercel para enviar invitaciones automáticas. Como alternativa, se abrirá su cliente de correo."
+          );
+          setLoading(false);
+          return;
+        }
       } catch {
         /* fallback a mailto */
       }
