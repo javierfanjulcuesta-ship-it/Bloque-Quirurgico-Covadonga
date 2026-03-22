@@ -41,6 +41,7 @@ export async function POST(request: Request) {
     if (denyPerm) return denyPerm;
 
     const body = await request.json();
+    console.log("[USERS] REQUEST BODY", body);
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const roleInput = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
     const role = roleToPrisma(roleInput);
@@ -66,6 +67,7 @@ export async function POST(request: Request) {
 
     const canSespa = typeof body.canSespa === "boolean" ? body.canSespa : false;
 
+    console.log("[USERS] creando usuario", { email, role });
     const dbUser = await prisma.user.create({
       data: {
         email,
@@ -89,8 +91,12 @@ export async function POST(request: Request) {
       tempPassword,
     });
   } catch (err) {
-    console.error("[users POST]", err);
-    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[USERS] ERROR", err);
+    return NextResponse.json(
+      { error: msg },
+      { status: 500 }
+    );
   }
 }
 
