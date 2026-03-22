@@ -302,6 +302,11 @@ export default function HomePage() {
             <p className="mt-4 text-center text-sm text-gray-500">
               Si no tiene cuenta, contacte con la coordinación del bloque quirúrgico.
             </p>
+            <p className="mt-2 text-center">
+              <a href="/api/auth/debug-session" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-600 underline">
+                Diagnóstico sesión (temporal)
+              </a>
+            </p>
           </form>
         )}
       </div>
