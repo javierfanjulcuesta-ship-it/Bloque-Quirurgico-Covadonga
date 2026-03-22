@@ -41,10 +41,15 @@ export async function POST(request: Request) {
     if (denyPerm) return denyPerm;
 
     const body = await request.json();
+    console.log("[USERS] BODY", body);
+
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const roleInput = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
     const role = roleToPrisma(roleInput);
-    const name = typeof body.name === "string" ? body.name.trim() : emailToDisplayName(email);
+    const rawName = typeof body.name === "string" ? body.name.trim() : "";
+    const name = rawName || emailToDisplayName(email) || "Usuario";
+
+    console.log("[USERS] creando", { email, role, name: name.slice(0, 20) + (name.length > 20 ? "…" : "") });
 
     if (!email || !role) {
       return NextResponse.json(
@@ -92,8 +97,18 @@ export async function POST(request: Request) {
       tempPassword,
     });
   } catch (err) {
-    console.error("[users POST]", err);
-    return NextResponse.json({ error: "Error al crear usuario" }, { status: 500 });
+    let msg = "Error interno";
+    if (err instanceof Error) {
+      msg = err.message;
+      const prismaErr = err as { code?: string; meta?: unknown };
+      if (prismaErr.code === "P2002") msg = "Ya existe un usuario con ese email";
+      else if (prismaErr.code === "P2003") msg = "Referencia inválida en la base de datos";
+    }
+    console.error("[USERS] ERROR", err);
+    return NextResponse.json(
+      { error: msg },
+      { status: 500 }
+    );
   }
 }
 
@@ -158,9 +173,10 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ users });
   } catch (err) {
-    console.error("[users]", err);
+    const msg = err instanceof Error ? err.message : "Error interno";
+    console.error("[USERS GET]", err);
     return NextResponse.json(
-      { error: "Error interno" },
+      { error: msg },
       { status: 500 }
     );
   }
