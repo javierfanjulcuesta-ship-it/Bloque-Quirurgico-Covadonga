@@ -39,7 +39,6 @@ model User {
   role                   UserRole
   approved               Boolean                   @default(false)
   canSespa               Boolean                   @default(false)
-  isActive               Boolean                   @default(true)
   deletedAt              DateTime?
   deletedByUserId        String?
   deletionReason         String?                   @db.Text

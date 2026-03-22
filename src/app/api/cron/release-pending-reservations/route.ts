@@ -72,7 +72,7 @@ export async function POST() {
     }));
 
     const cirujanos = await prisma.user.findMany({
-      where: { role: "CIRUJANO", approved: true, isActive: true },
+      where: { role: "CIRUJANO", approved: true },
       select: { email: true },
     });
     const recipientEmails = cirujanos
