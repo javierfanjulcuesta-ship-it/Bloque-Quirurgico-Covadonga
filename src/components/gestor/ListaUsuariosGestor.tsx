@@ -10,6 +10,7 @@ import { roleLabel } from "@/lib/types";
 import type { User } from "@/lib/types";
 import { fetchUsers } from "@/lib/api/users";
 import { useUsers } from "@/context/UsersContext";
+import { getEmailSubject, getEmailBody, buildMailtoLink } from "@/lib/emailsNuevoUsuario";
 
 type Filter = "all" | "active" | "inactive";
 
@@ -22,6 +23,7 @@ export function ListaUsuariosGestor() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [passwordShown, setPasswordShown] = useState<{ userId: string; password: string } | null>(null);
+  const [fallbackInvitation, setFallbackInvitation] = useState<{ userId: string; subject: string; body: string } | null>(null);
   const { refresh } = useUsers();
 
   const load = useCallback(async () => {
@@ -93,6 +95,7 @@ export function ListaUsuariosGestor() {
     setActionError(null);
     setActionSuccess(null);
     setPasswordShown(null);
+    setFallbackInvitation(null);
     setActionLoading(loadingKey(user.id, "resend"));
     try {
       const res = await fetch(`/api/users/${user.id}/resend-invitation`, {
@@ -100,14 +103,37 @@ export function ListaUsuariosGestor() {
         credentials: "same-origin",
       });
       const data = await res.json();
-      if (!res.ok) {
-        setActionError(data.error ?? "Error al reenviar invitación");
+      if (res.ok) {
+        setActionSuccess("Invitación reenviada correctamente.");
+        setTimeout(() => setActionSuccess(null), 4000);
+        await load();
+        refresh();
         return;
       }
-      setActionSuccess("Invitación reenviada correctamente.");
-      setTimeout(() => setActionSuccess(null), 4000);
-      await load();
-      refresh();
+      setActionError(null);
+      const pwRes = await fetch(`/api/users/${user.id}/regenerate-password`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const pwData = await pwRes.json();
+      if (!pwRes.ok || !pwData.tempPassword) {
+        setActionError(data.error ?? "Error al reenviar invitación. Use «Regenerar contraseña» para obtener la contraseña.");
+        return;
+      }
+      const accessLink = typeof window !== "undefined" ? window.location.origin : "";
+      const subject = getEmailSubject(user.role);
+      const body = getEmailBody(user.role, {
+        recipientName: user.name,
+        accessLink,
+        initialPassword: pwData.tempPassword,
+      });
+      const mailto = buildMailtoLink(user.email, subject, body);
+      const opened = window.open(mailto, "_blank");
+      if (!opened || opened.closed) {
+        setFallbackInvitation({ userId: user.id, subject, body });
+      }
+      setActionSuccess("Nueva contraseña generada. Se ha abierto el correo (o use Copiar invitación).");
+      setTimeout(() => setActionSuccess(null), 6000);
     } catch {
       setActionError("Error de conexión");
     } finally {
@@ -266,6 +292,19 @@ export function ListaUsuariosGestor() {
                             Ocultar
                           </button>
                         </>
+                      )}
+                      {fallbackInvitation?.userId === u.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = `Para: ${u.email}\nAsunto: ${fallbackInvitation.subject}\n\n${fallbackInvitation.body}`;
+                            navigator.clipboard?.writeText(text);
+                            setFallbackInvitation(null);
+                          }}
+                          className="rounded border border-amber-600 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                        >
+                          Copiar invitación
+                        </button>
                       )}
                       <button
                         type="button"
