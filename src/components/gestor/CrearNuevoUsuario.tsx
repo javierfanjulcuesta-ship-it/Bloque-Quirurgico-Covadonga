@@ -2,13 +2,11 @@
 
 /**
  * Pestaña del gestor: crear nuevo usuario.
- * Crea el usuario en la BD y envía la invitación (SMTP/Graph).
- * Si el servicio de correo no está disponible, abre mailto como fallback.
- * La lista de usuarios está en la pestaña "Gestión de usuarios".
+ * Crea el usuario en la BD y envía la invitación por email REAL (SMTP/Graph).
+ * Sin mailto: si el envío falla, se muestra error claro.
  */
 
 import { useState } from "react";
-import { getEmailSubject, getEmailBody, buildMailtoLink } from "@/lib/emailsNuevoUsuario";
 import { roleLabel } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
@@ -26,7 +24,6 @@ export function CrearNuevoUsuario() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [fallbackContent, setFallbackContent] = useState<{ to: string; subject: string; body: string } | null>(null);
   const { refresh } = useUsers();
 
   const handleEnviar = async () => {
@@ -67,40 +64,29 @@ export function CrearNuevoUsuario() {
       const accessLink = typeof window !== "undefined" ? window.location.origin : "";
       const recipientName = name.trim() || undefined;
 
-      try {
-        const emailRes = await fetch("/api/email/send-invitation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            toEmail: trimmed,
-            role: profile,
-            recipientName,
-            accessLink,
-            initialPassword: tempPassword,
-          }),
-        });
-        if (emailRes.ok) {
-          setSent(true);
-          setEmail("");
-          setName("");
-          refresh();
-          return;
-        }
-        if (emailRes.status === 503) {
-          setError("");
-        }
-      } catch {
-        /* fallback a mailto */
+      const emailRes = await fetch("/api/email/send-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          toEmail: trimmed,
+          role: profile,
+          recipientName,
+          accessLink,
+          initialPassword: tempPassword,
+        }),
+      });
+      const emailData = await emailRes.json().catch(() => ({}));
+      if (!emailRes.ok) {
+        const msg = (emailData.error as string) ?? "No se pudo enviar el email";
+        setError(
+          emailRes.status === 503
+            ? "Configure NEXT_PUBLIC_APP_URL y SMTP_USER/SMTP_PASS en Vercel para enviar invitaciones."
+            : msg
+        );
+        return;
       }
 
-      const subject = getEmailSubject(profile);
-      const body = getEmailBody(profile, { accessLink, initialPassword: tempPassword, recipientName });
-      const mailto = buildMailtoLink(trimmed, subject, body);
-      const opened = window.open(mailto, "_blank");
-      if (!opened || opened.closed) {
-        setFallbackContent({ to: trimmed, subject, body });
-      }
       setSent(true);
       setEmail("");
       setName("");
@@ -117,7 +103,7 @@ export function CrearNuevoUsuario() {
       <div>
           <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Crear nuevo usuario</h2>
           <p className="mb-4 text-sm text-gray-600">
-            Seleccione el perfil, correo y nombre. Se creará el usuario en el sistema y se abrirá su cliente de correo con la invitación y la contraseña temporal.
+            Seleccione el perfil, correo y nombre. Se creará el usuario en el sistema y se enviará un correo real con la invitación y la contraseña temporal.
           </p>
 
           <div className="flex flex-col gap-4 max-w-md">
@@ -178,26 +164,9 @@ export function CrearNuevoUsuario() {
           </button>
         </div>
         {sent && (
-          <div className="space-y-2">
-            <p className="text-sm text-green-700">
-              Usuario creado. {fallbackContent
-                ? "Si no se abrió el correo, copie el mensaje:"
-                : "La invitación se ha enviado desde el buzón de coordinación (o se ha abierto su cliente de correo como alternativa)."}
-            </p>
-            {fallbackContent && (
-              <button
-                type="button"
-                onClick={() => {
-                  const text = `Para: ${fallbackContent.to}\nAsunto: ${fallbackContent.subject}\n\n${fallbackContent.body}`;
-                  navigator.clipboard?.writeText(text);
-                  setFallbackContent(null);
-                }}
-                className="rounded border border-amber-600 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
-              >
-                Copiar invitación al portapapeles
-              </button>
-            )}
-          </div>
+          <p className="text-sm text-green-700">
+            Usuario creado y email enviado correctamente.
+          </p>
         )}
           </div>
       </div>
