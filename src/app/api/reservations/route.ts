@@ -1,6 +1,6 @@
 /**
  * API de reservas.
- * GET: listar reservas con filtros.
+ * GET: listar reservas con filtros. Sanitiza por rol (cirujano/endoscopista no ven pacientes ajenos).
  * POST: crear reserva (reservar hueco).
  */
 
@@ -43,6 +43,12 @@ const RESERVATION_SELECT = {
   },
 } as const;
 
+/** Gestor, gestor-anestesista y anestesista ven todo con detalle. Cirujano/endoscopista solo propios con detalle. */
+function hasFullReservationView(role: string): boolean {
+  const r = role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
+  return r === "gestor" || r === "gestor-anestesista" || r === "anestesista";
+}
+
 export async function GET(request: Request) {
   const session = toAuthSession(await getSessionFromCookie());
   const denyAuth = requireAuth(session);
@@ -76,7 +82,21 @@ export async function GET(request: Request) {
     orderBy: [{ date: "asc" }, { shift: "asc" }, { slotIndex: "asc" }],
   });
 
-  const reservations = list.map((r) => toApiReservation(r as Parameters<typeof toApiReservation>[0]));
+  const fullView = hasFullReservationView(session!.role);
+  const myId = session!.userId;
+
+  const reservations = list.map((r) => {
+    const api = toApiReservation(r as Parameters<typeof toApiReservation>[0]);
+    if (fullView) return api;
+    const isMine = r.surgeonId === myId || r.createdByUserId === myId;
+    if (isMine) return api;
+    return {
+      ...api,
+      surgeonId: "[otro]",
+      patients: [],
+    };
+  });
+
   return NextResponse.json({ reservations });
 }
 

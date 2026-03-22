@@ -49,7 +49,7 @@ export function buildSlotViews(
   const afternoonCount = getSlots("afternoon").length;
 
   const getSurgeonName = (surgeonId: string) =>
-    users.find((u) => u.id === surgeonId)?.name;
+    surgeonId === "[otro]" ? "Otro cirujano" : users.find((u) => u.id === surgeonId)?.name;
 
   /** Plan para (date, resourceId, shift): si CLOSED o URGENT_RESERVED, bloquea para no-gestores */
   const getBlockReason = (dateStr: string, resourceId: string, shift: "morning" | "afternoon") => {
