@@ -12,7 +12,6 @@ import { hashPassword } from "@/lib/auth/password";
 import { roleToFrontend } from "@/lib/roleMapping";
 import { getAppUrl } from "@/lib/appUrl";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
-import { getNormasTextoCompleto } from "@/lib/programmingRules";
 import { logUserAuditEvent } from "@/lib/userAudit";
 
 const TEMP_PASSWORD_LENGTH = 10;
@@ -64,18 +63,13 @@ export async function POST(
     });
 
     const role = roleToFrontend(user.role);
-    const normasTexto = ["CIRUJANO", "ENDOSCOPISTA"].includes(user.role)
-      ? await getNormasTextoCompleto()
-      : undefined;
 
     await sendNewUserInvitationEmail({
       toEmail: user.email,
       role,
       recipientName: user.name || undefined,
-      invitedByName: session?.name,
       accessLink: appUrl,
       initialPassword: tempPassword,
-      normasTexto,
     });
 
     await logUserAuditEvent({
