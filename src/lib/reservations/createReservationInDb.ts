@@ -46,19 +46,67 @@ export async function createReservationInDb(
       resourceId,
       shift: shiftEnum,
       slotIndex,
-      status: { not: "CANCELLED" },
     },
   });
 
-  if (existing) {
-    return {
-      ok: false,
-      error: "slot_occupied",
-      message: "El hueco ya está ocupado",
-    };
-  }
-
   const actorUserId = options?.actorUserId ?? surgeonId;
+  const hasPatients = (patients?.length ?? 0) > 0;
+
+  if (existing) {
+    if (existing.status === "PENDING" || existing.status === "CONFIRMED") {
+      return {
+        ok: false,
+        error: "slot_occupied",
+        message: "El hueco ya está ocupado",
+      };
+    }
+    if (existing.status === "CANCELLED" || existing.status === "RELEASED") {
+      await prisma.$transaction(async (tx) => {
+        await tx.patientInBlock.deleteMany({ where: { reservationId: existing.id } });
+        await tx.reservation.update({
+          where: { id: existing.id },
+          data: {
+            surgeonId,
+            status: hasPatients ? "CONFIRMED" : "PENDING",
+            origin: originPrisma,
+            createdByUserId: actorUserId,
+            updatedByUserId: actorUserId,
+            cancelledAt: null,
+            cancellationReason: null,
+            releasedAt: null,
+            releaseReason: null,
+          },
+        });
+        for (let i = 0; i < patients.length; i++) {
+          const p = patients[i]!;
+          await tx.patientInBlock.create({
+            data: {
+              reservationId: existing.id,
+              historyNumber: p.historyNumber,
+              fullName: p.fullName ?? null,
+              procedure: p.procedure,
+              estimatedDurationMinutes: p.estimatedDurationMinutes,
+              anesthesiaType: p.anesthesiaType,
+              insuranceType: p.insuranceType,
+              admissionType: p.admissionType ?? null,
+              orderIndex: p.orderIndex ?? i,
+              notes: p.notes ?? null,
+              solicitudRecursos: p.solicitudRecursos ?? null,
+            },
+          });
+        }
+      });
+      const eventType = origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED";
+      await logReservationEvent({
+        eventType,
+        reservationId: existing.id,
+        actorUserId,
+        origin: origin.toLowerCase() as "app" | "email" | "gestor",
+        detailsJson: { date, resourceId, shift, slotIndex, reusedFrom: existing.status },
+      });
+      return { ok: true, reservationId: existing.id };
+    }
+  }
 
   const reservation = await prisma.reservation.create({
     data: {
@@ -67,7 +115,7 @@ export async function createReservationInDb(
       shift: shiftEnum,
       slotIndex,
       surgeonId,
-      status: "PENDING",
+      status: hasPatients ? "CONFIRMED" : "PENDING",
       origin: originPrisma,
       createdByUserId: actorUserId,
       patients: {

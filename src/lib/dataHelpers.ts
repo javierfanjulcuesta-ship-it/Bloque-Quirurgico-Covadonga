@@ -3,7 +3,7 @@
  * No duplica la lógica de la V1; es la fuente única en V2.
  */
 
-import type { Reservation, SlotView, User } from "./types";
+import type { Reservation, SlotView, User, BlockOpeningPlan } from "./types";
 import { RESOURCES } from "./constants";
 import { getWeekDays, getSlots, toISODate } from "./utils";
 import { isPrivateFunding, reservationHasSespa } from "./patientInsurance";
@@ -26,6 +26,10 @@ export interface BuildSlotViewsOptions {
   currentUserId?: string;
   /** Lista de usuarios para resolver surgeonName */
   users?: User[];
+  /** Planes de apertura: slots con CLOSED/URGENT_RESERVED no son reservables por cirujanos */
+  blockPlans?: BlockOpeningPlan[];
+  /** Si es gestor, los slots bloqueados siguen siendo reservables (gestor puede abrir excepciones) */
+  asGestorForBlocks?: boolean;
 }
 
 /**
@@ -37,7 +41,7 @@ export function buildSlotViews(
   reservations: Reservation[],
   options: BuildSlotViewsOptions = {}
 ): SlotView[] {
-  const { asGestor = false, currentUserId, users = [] } = options;
+  const { asGestor = false, currentUserId, users = [], blockPlans = [], asGestorForBlocks = false } = options;
   const days = getWeekDays(weekStart);
   const views: SlotView[] = [];
   const resourceIds = RESOURCES.map((r) => r.id);
@@ -46,6 +50,18 @@ export function buildSlotViews(
 
   const getSurgeonName = (surgeonId: string) =>
     users.find((u) => u.id === surgeonId)?.name;
+
+  /** Plan para (date, resourceId, shift): si CLOSED o URGENT_RESERVED, bloquea para no-gestores */
+  const getBlockReason = (dateStr: string, resourceId: string, shift: "morning" | "afternoon") => {
+    if (asGestorForBlocks) return undefined;
+    const plan = blockPlans.find(
+      (p) => p.date === dateStr && p.resourceId === resourceId && p.shift === shift
+    );
+    if (plan && (plan.status === "CLOSED" || plan.status === "URGENT_RESERVED")) {
+      return plan.status as "CLOSED" | "URGENT_RESERVED";
+    }
+    return undefined;
+  };
 
   days.forEach((date) => {
     const dateStr = toISODate(date);
@@ -65,12 +81,15 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
+        const blockReason = getBlockReason(dateStr, resourceId, "morning");
+        const baseStatus = res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
           date: dateStr,
           shift: "morning",
           slotIndex: i,
-          status: res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : "free",
+          status: baseStatus,
+          blockReason: blockReason,
           reservationId: res?.id,
           isMyReservation: !!isMine,
           surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,
@@ -98,12 +117,15 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
+        const blockReason = getBlockReason(dateStr, resourceId, "afternoon");
+        const baseStatus = res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
           date: dateStr,
           shift: "afternoon",
           slotIndex: i,
-          status: res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : "free",
+          status: baseStatus,
+          blockReason: blockReason,
           reservationId: res?.id,
           isMyReservation: !!isMine,
           surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,

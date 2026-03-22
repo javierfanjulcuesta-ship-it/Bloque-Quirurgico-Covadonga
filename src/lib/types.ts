@@ -5,26 +5,50 @@
 /** Perfiles de usuario del sistema (gestor-anestesista = visión gestor y anestesista; endoscopista = reserva solo procedimientos menores / técnicas del dolor) */
 export type UserRole = "cirujano" | "anestesista" | "gestor" | "gestor-anestesista" | "endoscopista";
 
-/** Indica si el rol tiene acceso al área de gestión */
-export function hasGestorAccess(role: UserRole): boolean {
-  return role === "gestor" || role === "gestor-anestesista";
+/** Estado del plan de apertura de un recurso/turno */
+export type BlockOpeningStatus = "OPEN" | "CLOSED" | "URGENT_RESERVED";
+
+/** Plan de apertura del bloque: un registro por (date, resourceId, shift) */
+export interface BlockOpeningPlan {
+  id: string;
+  date: string;
+  shift: Shift;
+  resourceId: ResourceId;
+  status: BlockOpeningStatus;
+  minRequiredMinutes: number;
+  reservedUrgentMinutes: number;
+  notes?: string;
+  approvedByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-/** Indica si el rol tiene acceso al área de anestesista */
-export function hasAnesthetistAccess(role: UserRole): boolean {
-  return role === "anestesista" || role === "gestor-anestesista";
+/** Indica si el rol tiene acceso al área de gestión. Acepta variaciones de formato. */
+export function hasGestorAccess(role: UserRole | string): boolean {
+  const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
+  return r === "gestor" || r === "gestor-anestesista";
 }
 
-/** Etiqueta para mostrar el rol */
-export function roleLabel(role: UserRole): string {
-  if (role === "gestor-anestesista") return "Gestor/Anestesista";
-  if (role === "endoscopista") return "Endoscopista/otros";
-  return role === "cirujano" ? "Cirujano" : role === "anestesista" ? "Anestesista" : "Gestor";
+/** Indica si el rol tiene acceso al área de anestesista. Acepta variaciones de formato. */
+export function hasAnesthetistAccess(role: UserRole | string): boolean {
+  const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
+  return r === "anestesista" || r === "gestor-anestesista";
 }
 
-/** Roles que usan la pantalla de programación (calendario, reservas, etc.) */
-export function hasProgrammingAccess(role: UserRole): boolean {
-  return role === "cirujano" || role === "endoscopista" || role === "gestor-anestesista";
+/** Etiqueta para mostrar el rol. Acepta variaciones de formato. */
+export function roleLabel(role: UserRole | string): string {
+  const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
+  if (r === "gestor-anestesista") return "Gestor/Anestesista";
+  if (r === "endoscopista") return "Endoscopista/otros";
+  if (r === "cirujano") return "Cirujano";
+  if (r === "anestesista") return "Anestesista";
+  return "Gestor";
+}
+
+/** Roles que usan la pantalla de programación (calendario, reservas, etc.). Acepta variaciones de formato. */
+export function hasProgrammingAccess(role: UserRole | string): boolean {
+  const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
+  return r === "cirujano" || r === "endoscopista" || r === "gestor-anestesista";
 }
 
 /** Recursos del bloque: quirófanos Q1–Q3, sala de procedimientos menores, zona de técnicas del dolor */
@@ -38,8 +62,8 @@ export type ResourceId =
 /** Turno: mañana o tarde */
 export type Shift = "morning" | "afternoon";
 
-/** Estado de un hueco: libre, reservado por el usuario (sin pacientes) u ocupado */
-export type SlotStatus = "free" | "reserved" | "occupied";
+/** Estado de un hueco: libre, reservado por el usuario (sin pacientes), ocupado o bloqueado (CLOSED/URGENT) */
+export type SlotStatus = "free" | "reserved" | "occupied" | "blocked";
 
 /** Usuario del sistema */
 export interface User {
@@ -50,6 +74,8 @@ export interface User {
   approved: boolean;
   /** true = puede anestesiar pacientes SESPA */
   canSespa?: boolean;
+  /** false = desactivado, no puede hacer login */
+  isActive?: boolean;
 }
 
 /** Tramo horario (hueco) dentro de un turno */
@@ -71,7 +97,7 @@ export interface Reservation {
   surgeonId: string;
   coSurgeonIds?: string[];
   patients: PatientInBlock[];
-  status: "pending" | "confirmed" | "cancelled";
+  status: "pending" | "confirmed" | "cancelled" | "released";
   anesthetistId?: string;
   createdAt: string;
 }
@@ -128,6 +154,8 @@ export interface SlotView {
   hasSespa?: boolean;
   /** true si el anestesista actual está asignado a este slot */
   assignedToAnesthetist?: boolean;
+  /** Razón por la que el slot está bloqueado (no reservable): CLOSED | URGENT_RESERVED */
+  blockReason?: "CLOSED" | "URGENT_RESERVED";
 }
 
 /** Indisponibilidad del anestesista */

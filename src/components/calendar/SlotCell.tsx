@@ -32,24 +32,31 @@ export function SlotCell({
   const isFree = slot.status === "free";
   const isReserved = slot.status === "reserved";
   const isOccupied = slot.status === "occupied";
+  const isBlocked = slot.status === "blocked";
   const isMyOccupied = isOccupied && slot.isMyReservation;
   const hasPrivate = !!slot.hasPrivate;
   const hasSespa = !!slot.hasSespa;
   const clickable =
     onSelect &&
     !disabled &&
+    !isBlocked &&
     (isFree || isReserved || isMyOccupied);
-  const styleClass = hasPrivate
-    ? "slot-private"
-    : isFree
-      ? "slot-free hover:bg-emerald-200"
-      : isReserved
-        ? "slot-reserved hover:bg-amber-200"
-        : hasSespa
-          ? "slot-sespa"
-          : "slot-occupied";
+  const styleClass = isBlocked
+    ? "slot-blocked bg-gray-200 border-gray-400 text-gray-600 cursor-not-allowed"
+    : hasPrivate
+      ? "slot-private"
+      : isFree
+        ? "slot-free hover:bg-emerald-200"
+        : isReserved
+          ? "slot-reserved hover:bg-amber-200"
+          : hasSespa
+            ? "slot-sespa"
+            : "slot-occupied";
 
   const tooltipParts: string[] = [];
+  if (isBlocked) {
+    tooltipParts.push(slot.blockReason === "URGENT_RESERVED" ? "Reservado para urgencias" : "Cerrado");
+  }
   if (slot.surgeonName) tooltipParts.push(`Cirujano: ${slot.surgeonName}`);
   if (slot.patientNames?.length) tooltipParts.push("Pacientes:", ...slot.patientNames);
   if (hasSespa) tooltipParts.push("Este bloque contiene pacientes SESPA");
@@ -66,7 +73,7 @@ export function SlotCell({
         ${styleClass}
         ${clickable ? "cursor-pointer" : ""}
         ${disabled ? "cursor-not-allowed opacity-60" : ""}
-        ${compact ? "p-1 text-xs" : "p-2 text-sm"}
+        ${compact ? "p-2 min-h-[44px] min-w-[44px] text-sm sm:p-1 sm:min-h-0 sm:min-w-0 sm:text-xs" : "p-2 text-sm"}
         ${selected ? "ring-2 ring-offset-1 ring-[var(--ribera-red)]" : ""}
         ${assignedToMe ? "ring-2 ring-amber-500 ring-offset-1 border-amber-300 bg-amber-50/80" : ""}
       `}
@@ -75,6 +82,11 @@ export function SlotCell({
         <div className="mb-1 border-b border-current/20 pb-1 text-xs font-semibold opacity-90">
           {timeLabel}
         </div>
+      )}
+      {isBlocked && (
+        <span className="font-medium" title={slot.blockReason === "URGENT_RESERVED" ? "Reservado para urgencias" : "Cerrado"}>
+          {slot.blockReason === "URGENT_RESERVED" ? "Urgencias" : "Cerrado"}
+        </span>
       )}
       {isFree && <span className="font-medium text-emerald-800">Libre</span>}
       {isReserved && (

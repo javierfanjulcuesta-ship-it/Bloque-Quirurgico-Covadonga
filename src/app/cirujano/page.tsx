@@ -8,10 +8,12 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { getWeekStart, toISODate, getSlotDurationMinutes, isNextWeekReserveClosed } from "@/lib/utils";
-import { getReservations, createReservationEntry, ReservationsApiError } from "@/lib/reservations";
+import { getWeekStart, toISODate, getSlotDurationMinutes, isNextWeekReserveClosed, isReservationRetentionStillAllowed } from "@/lib/utils";
+import { getReservations, createReservationEntry, cancelPatient, ReservationsApiError } from "@/lib/reservations";
+import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
+import { modoDemo } from "@/lib/config";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
 import { ProgramarPacientesModal, type SlotSelection } from "@/components/cirujano/ProgramarPacientesModal";
 import { DaySlotGrid } from "@/components/calendar/DaySlotGrid";
@@ -19,8 +21,11 @@ import type { SlotView } from "@/lib/types";
 import { MiPerfil } from "@/components/MiPerfil";
 import { ContactarCoordinacion } from "@/components/ContactarCoordinacion";
 import { HistoricoView } from "@/components/HistoricoView";
+import { NormasProgramacionView } from "@/components/cirujano/NormasProgramacionView";
+import { UltimasLiberacionesView } from "@/components/cirujano/UltimasLiberacionesView";
 import type { Reservation, ResourceId, PatientInBlock } from "@/lib/types";
-import { hasProgrammingAccess } from "@/lib/types";
+import { hasProgrammingAccess, hasGestorAccess, hasAnesthetistAccess } from "@/lib/types";
+import { hasPermission } from "@/lib/auth";
 import type { Shift } from "@/lib/types";
 import { WeekGridCalendar } from "@/components/calendar/WeekGridCalendar";
 
@@ -46,15 +51,28 @@ function isSlotFreeInRoom(
   );
 }
 
+/** Indica si un recurso está bloqueado (CLOSED/URGENT_RESERVED) para un (date, shift) */
+function isResourceBlocked(
+  date: string,
+  shift: Shift,
+  resourceId: string,
+  blockPlans: { date: string; shift: string; resourceId: string; status: string }[] | import("@/lib/types").BlockOpeningPlan[]
+): boolean {
+  const shiftStr = shift === "morning" ? "morning" : "afternoon";
+  const plan = blockPlans.find((p) => p.date === date && p.shift === shiftStr && p.resourceId === resourceId);
+  return !!plan && (plan.status === "CLOSED" || plan.status === "URGENT_RESERVED");
+}
+
 /**
  * Resuelve los slots seleccionados intentando que todos los de quirófano queden en el mismo.
- * Si hay "cualquier-quirofano", busca un quirófano que tenga TODOS los huecos libres.
+ * Si hay "cualquier-quirofano", busca un quirófano que tenga TODOS los huecos libres y no bloqueado.
  * Slots de procedimientos-menores/tecnicas-dolor se mantienen.
  * @returns Map slotKey -> resourceId, o null si no hay ningún quirófano con todos los huecos libres
  */
 function resolveSlotsToSameRoom(
   slots: { date: string; resourceId: string; shift: Shift; slotIndex: number }[],
-  reservations: Reservation[]
+  reservations: Reservation[],
+  blockPlans: { date: string; shift: string; resourceId: string; status: string }[] = []
 ): { resolved: Map<string, ResourceId> } | null {
   const quirófanoSlots = slots.filter(
     (s) => s.resourceId === "cualquier-quirofano" || QUIRUFANO_IDS.includes(s.resourceId as ResourceId)
@@ -75,6 +93,8 @@ function resolveSlotsToSameRoom(
   const candidatos = salasDistintas.size === 1 ? [Array.from(salasDistintas)[0] as ResourceId] : [...QUIRUFANO_IDS];
 
   for (const rid of candidatos) {
+    const anyBlocked = quirófanoSlots.some((s) => isResourceBlocked(s.date, s.shift, rid, blockPlans));
+    if (anyBlocked) continue;
     const allFree = quirófanoSlots.every((s) => isSlotFreeInRoom(rid, s.date, s.shift, s.slotIndex, reservations));
     if (allFree) {
       quirófanoSlots.forEach((s) => resolved.set(`${s.date}-${s.shift}-${s.slotIndex}`, rid));
@@ -88,7 +108,7 @@ function resolveSlotsToSameRoom(
 export default function CirujanoPage() {
   const router = useRouter();
   const { user, logout, hydrated } = useAuth();
-  const [tab, setTab] = useState<"bloque" | "pacientes" | "perfil" | "coordinacion" | "historico">("bloque");
+  const [tab, setTab] = useState<"bloque" | "pacientes" | "perfil" | "coordinacion" | "historico" | "normas" | "liberaciones">("bloque");
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
   const [calendarPeriodStart, setCalendarPeriodStart] = useState(() => getWeekStart(new Date()));
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
@@ -99,6 +119,16 @@ export default function CirujanoPage() {
   const [errorNotification, setErrorNotification] = useState<string | null>(null);
   const [reservationsLoading, setReservationsLoading] = useState(false);
   const [savingReservations, setSavingReservations] = useState(false);
+  const [blockPlans, setBlockPlans] = useState<import("@/lib/types").BlockOpeningPlan[]>([]);
+  const [cancelConfirm, setCancelConfirm] = useState<{
+    reservationId: string;
+    patientId: string;
+    patientLabel: string;
+    date: string;
+    isLastPatient: boolean;
+    retentionAllowed: boolean;
+  } | null>(null);
+  const [cancellingPatient, setCancellingPatient] = useState(false);
 
   const refreshReservations = useCallback(async () => {
     setReservationsLoading(true);
@@ -126,6 +156,27 @@ export default function CirujanoPage() {
     refreshReservations();
   }, [refreshReservations]);
 
+  const refreshBlockPlans = useCallback(async () => {
+    if (modoDemo) return;
+    try {
+      const from = new Date(weekStart);
+      from.setDate(from.getDate() - 7);
+      const to = new Date(weekStart);
+      to.setDate(to.getDate() + 35);
+      const plans = await fetchBlockPlans({
+        dateFrom: toISODate(from),
+        dateTo: toISODate(to),
+      });
+      setBlockPlans(plans);
+    } catch {
+      setBlockPlans([]);
+    }
+  }, [weekStart]);
+
+  useEffect(() => {
+    refreshBlockPlans();
+  }, [refreshBlockPlans]);
+
   useEffect(() => {
     if (!hydrated) return;
     if (!user) {
@@ -137,15 +188,16 @@ export default function CirujanoPage() {
     }
   }, [user, hydrated, router]);
 
+  const isGestorAnestesista = user ? hasGestorAccess(user.role) && hasAnesthetistAccess(user.role) : false;
   const allowedResources = useMemo(() => {
     if (!user || !hasProgrammingAccess(user.role)) return [];
-    const roleForResources = user.role === "gestor-anestesista" ? "cirujano" : user.role;
+    const roleForResources = isGestorAnestesista ? "cirujano" : user.role;
     const base = RESOURCES.filter((r) => getAllowedResourcesForRole(roleForResources).includes(r.id));
     if (roleForResources === "cirujano") {
       return [{ id: "cualquier-quirofano", label: "Cualquier quirófano" }, ...base];
     }
     return base;
-  }, [user?.role]);
+  }, [user, isGestorAnestesista]);
   const handleSlotSelect = (slot: SlotView) => {
     const key = slotKey(slot.date, slot.resourceId, slot.shift, slot.slotIndex);
     setSelectedKeys((prev) => {
@@ -160,13 +212,16 @@ export default function CirujanoPage() {
   const slotViewsForSelectedDay = useMemo(() => {
     if (!selectedDateForGrid) return [];
     const weekStartForDay = getWeekStart(selectedDateForGrid);
+    const isGestorForBlocks = isGestorAnestesista;
     const allViews = buildSlotViews(weekStartForDay, reservations, {
       currentUserId: user?.id,
       users: getUsers(),
+      blockPlans,
+      asGestorForBlocks: isGestorForBlocks,
     });
     const dateStr = toISODate(selectedDateForGrid);
     const baseViews = allViews.filter((v) => v.date === dateStr && allowedResources.some((r) => r.id === v.resourceId));
-    if (!user || (user.role !== "cirujano" && user.role !== "gestor-anestesista")) return baseViews;
+    if (!user || !hasProgrammingAccess(user.role)) return baseViews;
     const quirofanoViews = allViews.filter((v) => v.date === dateStr && QUIRUFANO_IDS.includes(v.resourceId));
     const slotKeys = new Set<string>();
     quirofanoViews.forEach((v) => slotKeys.add(`${v.shift}-${v.slotIndex}`));
@@ -191,7 +246,7 @@ export default function CirujanoPage() {
       }
     });
     return [...virtualViews, ...baseViews];
-  }, [selectedDateForGrid, reservations, user?.id, user?.role, allowedResources]);
+  }, [selectedDateForGrid, reservations, user, allowedResources, blockPlans, isGestorAnestesista]);
 
   /** Claves seleccionadas en formato DaySlotGrid (resourceId-date-shift-slotIndex) */
   const selectedSlotKeysForDay = useMemo(() => {
@@ -215,6 +270,34 @@ export default function CirujanoPage() {
   }, [selectedKeys]);
 
   const totalReservedMinutes = selectedSlots.reduce((s, x) => s + x.durationMinutes, 0);
+
+  const canCancelPatient = !modoDemo && user && hasPermission(user.role, "patient:cancel");
+
+  const handleConfirmCancelPatient = async () => {
+    if (!cancelConfirm || cancellingPatient) return;
+    setCancellingPatient(true);
+    setErrorNotification(null);
+    setNotification(null);
+    try {
+      const result = await cancelPatient(cancelConfirm.reservationId, cancelConfirm.patientId);
+      setCancelConfirm(null);
+      await refreshReservations();
+      if (result.slotOutcome === "retained") {
+        setNotification("Paciente cancelado. El hueco se mantiene reservado a su nombre para que pueda programar otro paciente.");
+      } else if (result.slotOutcome === "released") {
+        setNotification("Paciente cancelado. Al haber pasado el cierre del jueves, el hueco ha pasado a la bolsa común y ya no está reservado.");
+      } else {
+        setNotification("Paciente cancelado correctamente.");
+      }
+      setTimeout(() => setNotification(null), 5000);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al cancelar";
+      setErrorNotification(msg);
+      setTimeout(() => setErrorNotification(null), 6000);
+    } finally {
+      setCancellingPatient(false);
+    }
+  };
 
   /** Si alguna ranura seleccionada es de la semana siguiente (cerrada a reserva desde el jueves): solo programar, no "Solo reservar" */
   const hasClosedWeekSlot = useMemo(
@@ -243,7 +326,7 @@ export default function CirujanoPage() {
   const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;
     if (selectedSlots.some((s) => isNextWeekReserveClosed(s.date))) return;
-    const result = resolveSlotsToSameRoom(selectedSlots, reservations);
+    const result = resolveSlotsToSameRoom(selectedSlots, reservations, blockPlans);
     if (!result) {
       setNotification(null);
       setErrorNotification("No hay ningún quirófano con todos los huecos seleccionados libres. Seleccione huecos en el mismo quirófano o elija otra combinación.");
@@ -272,7 +355,7 @@ export default function CirujanoPage() {
 
   const handleProgramarSave = async (patients: Omit<PatientInBlock, "id" | "order">[], coSurgeonIds?: string[]) => {
     if (selectedSlots.length === 0) return;
-    const result = resolveSlotsToSameRoom(selectedSlots, reservations);
+    const result = resolveSlotsToSameRoom(selectedSlots, reservations, blockPlans);
     if (!result) {
       setNotification(null);
       setErrorNotification("No hay ningún quirófano con todos los huecos seleccionados libres. Seleccione huecos en el mismo quirófano o elija otra combinación.");
@@ -326,14 +409,24 @@ export default function CirujanoPage() {
             <h1 className="text-2xl font-bold text-[var(--ribera-navy)]">Estado del bloque</h1>
             <p className="mt-1 text-sm text-gray-600">
               Bloque Quirúrgico Covadonga · {user.name}
-              {user.role === "gestor-anestesista" && (
+              {isGestorAnestesista && (
                 <> · <button type="button" onClick={() => router.push("/calendario")} className="font-medium text-[var(--ribera-navy)] hover:underline">Ir a Calendario</button></>
               )}
               {" · "}
               <button type="button" onClick={() => { logout(); router.replace("/"); }} className="font-medium text-[var(--ribera-red)] hover:underline">Cerrar sesión</button>
             </p>
           </div>
-          <nav className="flex flex-wrap gap-2">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 sm:overflow-visible">
+            <nav className="flex gap-2 flex-nowrap sm:flex-wrap pb-2 sm:pb-0 [&_button]:shrink-0">
+            {isGestorAnestesista && (
+              <button
+                type="button"
+                onClick={() => router.push("/calendario")}
+                className="rounded-lg border-2 border-[var(--ribera-navy)] px-4 py-2 text-sm font-medium text-[var(--ribera-navy)] hover:bg-[var(--ribera-navy)]/10"
+              >
+                ← Calendario
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setTab("bloque")}
@@ -357,6 +450,20 @@ export default function CirujanoPage() {
             </button>
             <button
               type="button"
+              onClick={() => setTab("normas")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "normas" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
+            >
+              Normas de programación
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("liberaciones")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "liberaciones" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
+            >
+              Últimas liberaciones
+            </button>
+            <button
+              type="button"
               onClick={() => setTab("coordinacion")}
               className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === "coordinacion" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
             >
@@ -369,7 +476,8 @@ export default function CirujanoPage() {
             >
               Mi perfil
             </button>
-          </nav>
+            </nav>
+          </div>
         </header>
 
         {reservationsLoading && tab === "bloque" && (
@@ -396,6 +504,14 @@ export default function CirujanoPage() {
           <ContactarCoordinacion user={user} />
         )}
 
+        {tab === "normas" && (
+          <NormasProgramacionView />
+        )}
+
+        {tab === "liberaciones" && (
+          <UltimasLiberacionesView onGoToReservar={() => setTab("bloque")} />
+        )}
+
         {tab === "pacientes" && (
           <section className="rounded-xl border border-gray-200 bg-white p-6">
             <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes</h2>
@@ -417,24 +533,49 @@ export default function CirujanoPage() {
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Duración</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Anestesia</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Entidad</th>
+                      {canCancelPatient && <th className="px-3 py-2 text-left font-semibold text-gray-700">Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient }) => (
-                      <tr key={`${date}-${resourceLabel}-${shift}-${patient.id}`} className="border-b border-gray-100 hover:bg-gray-50/50">
-                        <td className="px-3 py-2 text-gray-800">{new Date(date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</td>
-                        <td className="px-3 py-2 text-gray-800">{resourceLabel}</td>
-                        <td className="px-3 py-2 text-gray-800">{shift === "morning" ? "Mañana" : "Tarde"}</td>
-                        <td className="px-3 py-2">
-                          <span className="font-medium text-gray-800">{patient.name || "—"}</span>
-                          <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
-                        </td>
-                        <td className="px-3 py-2 text-gray-700">{patient.procedure}</td>
-                        <td className="px-3 py-2 text-gray-700">{patient.estimatedDurationMinutes} min</td>
-                        <td className="px-3 py-2 text-gray-700">{patient.anesthesiaType}</td>
-                        <td className="px-3 py-2 text-gray-700">{patient.entidadFinanciadora}</td>
-                      </tr>
-                    ))}
+                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient, reservationId }) => {
+                      const isLastPatient = misPacientesProgramados.filter((p) => p.reservationId === reservationId).length === 1;
+                      const retentionAllowed = isReservationRetentionStillAllowed(date);
+                      return (
+                        <tr key={`${date}-${resourceLabel}-${shift}-${patient.id}`} className="border-b border-gray-100 hover:bg-gray-50/50">
+                          <td className="px-3 py-2 text-gray-800">{new Date(date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</td>
+                          <td className="px-3 py-2 text-gray-800">{resourceLabel}</td>
+                          <td className="px-3 py-2 text-gray-800">{shift === "morning" ? "Mañana" : "Tarde"}</td>
+                          <td className="px-3 py-2">
+                            <span className="font-medium text-gray-800">{patient.name || "—"}</span>
+                            <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
+                          </td>
+                          <td className="px-3 py-2 text-gray-700">{patient.procedure}</td>
+                          <td className="px-3 py-2 text-gray-700">{patient.estimatedDurationMinutes} min</td>
+                          <td className="px-3 py-2 text-gray-700">{patient.anesthesiaType}</td>
+                          <td className="px-3 py-2 text-gray-700">{patient.entidadFinanciadora}</td>
+                          {canCancelPatient && (
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCancelConfirm({
+                                    reservationId,
+                                    patientId: patient.id,
+                                    patientLabel: `${patient.name || patient.numeroHistoria || "Paciente"} (${patient.numeroHistoria || "—"})`,
+                                    date,
+                                    isLastPatient,
+                                    retentionAllowed,
+                                  })
+                                }
+                                className="rounded border border-amber-400 bg-amber-50 min-h-10 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                              >
+                                Cancelar
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -525,6 +666,41 @@ export default function CirujanoPage() {
           </>
         )}
       </div>
+
+      {cancelConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title">
+          <div className="mx-4 max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+            <h3 id="cancel-dialog-title" className="mb-2 text-lg font-semibold text-gray-800">Cancelar paciente</h3>
+            <p className="mb-3 text-sm text-gray-600">
+              ¿Confirmar la cancelación de <strong>{cancelConfirm.patientLabel}</strong>?
+            </p>
+            {cancelConfirm.isLastPatient && (
+              <div className={`mb-4 rounded-lg border p-3 text-sm ${cancelConfirm.retentionAllowed ? "border-sky-200 bg-sky-50 text-sky-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                {cancelConfirm.retentionAllowed
+                  ? "Al ser el último paciente del hueco, el hueco se mantendrá reservado a su nombre para que pueda programar otro paciente."
+                  : "Al ser el último paciente y haber pasado el cierre del jueves, el hueco pasará a la bolsa común y quedará disponible para otros."}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelConfirm(null)}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancelPatient}
+                disabled={cancellingPatient}
+                className="rounded-lg border border-amber-500 bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+              >
+                {cancellingPatient ? "Cancelando…" : "Confirmar cancelación"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showProgramarModal && selectedSlots.length > 0 && (
 <ProgramarPacientesModal

@@ -187,3 +187,84 @@ export async function createReservation(payload: CreateReservationPayload): Prom
   const reservation = (data as { reservation: ApiReservation }).reservation;
   return mapReservationFromApi(reservation);
 }
+
+async function patchReservation(id: string, path: string, body: unknown): Promise<Reservation> {
+  const res = await fetch(`/api/reservations/${id}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
+    if (res.status === 404) throw new ReservationsApiError((data as { error?: string }).error ?? "No encontrado.", 404);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al actualizar", res.status);
+  }
+
+  const reservation = (data as { reservation: ApiReservation }).reservation;
+  return mapReservationFromApi(reservation);
+}
+
+/** Añadir pacientes a reserva existente (hueco reservado). */
+export async function addPatientsToReservation(
+  reservationId: string,
+  patients: ApiPatientInput[]
+): Promise<Reservation> {
+  return patchReservation(reservationId, "", {
+    patients: patients.map((p, i) => ({ ...p, orderIndex: p.orderIndex ?? i })),
+  });
+}
+
+/** Actualizar datos de un paciente en la reserva. */
+export async function updateReservationPatient(
+  reservationId: string,
+  patientId: string,
+  updates: Partial<Omit<ApiPatient, "id" | "orderIndex">> & { orderIndex?: number }
+): Promise<Reservation> {
+  return patchReservation(reservationId, "/patient", { patientId, ...updates });
+}
+
+/** Resultado de cancelar un paciente. slotOutcome indica qué pasa con el hueco cuando era el último. */
+export interface CancelPatientResult {
+  reservation: Reservation;
+  slotOutcome: "retained" | "released" | null;
+}
+
+/** Cancelar un paciente de la reserva (elimina al paciente, deja hueco libre o bolsa común si era el último). */
+export async function cancelReservationPatient(
+  reservationId: string,
+  patientId: string,
+  reason?: string
+): Promise<CancelPatientResult> {
+  const res = await fetch(`/api/reservations/${reservationId}/patient/cancel`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ patientId, reason }),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
+    if (res.status === 404) throw new ReservationsApiError((data as { error?: string }).error ?? "No encontrado.", 404);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al cancelar", res.status);
+  }
+
+  const typed = data as { reservation: ApiReservation; slotOutcome?: "retained" | "released" | null };
+  return {
+    reservation: mapReservationFromApi(typed.reservation),
+    slotOutcome: typed.slotOutcome ?? null,
+  };
+}
+
+/** Cancelar reserva completa. */
+export async function cancelReservation(
+  reservationId: string,
+  reason?: string
+): Promise<Reservation> {
+  return patchReservation(reservationId, "/cancel", { reason });
+}

@@ -80,18 +80,7 @@ export function canScheduleWeek(weekStart: Date): boolean {
   return d.getTime() <= maxDate.getTime();
 }
 
-export function isNextWeekReserveClosed(slotDateIso: string): boolean {
-  const now = new Date();
-  const currentWeekStart = getWeekStart(now);
-  const thursday = new Date(currentWeekStart);
-  thursday.setDate(currentWeekStart.getDate() + 3);
-  thursday.setHours(0, 0, 0, 0);
-  if (now < thursday) return false;
-  const nextWeekStart = new Date(currentWeekStart);
-  nextWeekStart.setDate(currentWeekStart.getDate() + 7);
-  const slotWeekStart = getWeekStart(new Date(slotDateIso + "T12:00:00"));
-  return slotWeekStart.getTime() === nextWeekStart.getTime();
-}
+export { isNextWeekReserveClosed, isReservationRetentionStillAllowed } from "./schedulingDeadline";
 
 export function canReserveOnDate(date: Date, festivos?: string[], asGestor?: boolean): boolean {
   const d = new Date(date);

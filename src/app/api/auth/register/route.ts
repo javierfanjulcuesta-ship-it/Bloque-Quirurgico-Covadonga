@@ -6,27 +6,23 @@
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
+import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
-import { hasGestorAccess } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
 
 export async function POST(request: Request) {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-    if (!hasGestorAccess(session.role as UserRole)) {
-      return NextResponse.json(
-        { error: "Solo el gestor puede crear usuarios" },
-        { status: 403 }
-      );
-    }
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
+
+    const denyPerm = requirePermission(session!, "user:create");
+    if (denyPerm) return denyPerm;
 
     const body = await request.json();
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";

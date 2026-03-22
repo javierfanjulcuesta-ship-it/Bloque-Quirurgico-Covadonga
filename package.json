@@ -17,7 +17,8 @@
     "usuarios:reset": "npx tsx scripts/reset-usuarios-prueba.ts",
     "usuarios:gestor-anestesista": "npx tsx scripts/crear-usuario-gestor-anestesista.ts",
     "usuarios:gestor": "npx tsx scripts/crear-usuario-gestor.ts",
-    "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts"
+    "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts",
+    "rules:seed": "npx tsx scripts/seed-programming-rules.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
@@ -29,6 +30,7 @@
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.6",
     "next": "16.1.6",
+    "nodemailer": "^8.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "zod": "^3.23.8"
@@ -37,6 +39,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

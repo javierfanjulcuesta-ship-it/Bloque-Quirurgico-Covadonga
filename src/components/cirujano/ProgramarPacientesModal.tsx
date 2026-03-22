@@ -9,6 +9,7 @@ import type { PatientInBlock, AdmissionType, SolicitudRecursosId } from "@/lib/t
 import { TRANSITION_MINUTES_PER_PROCEDURE, SOLICITUD_RECURSOS_OPTIONS } from "@/lib/constants";
 import type { Shift } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
+import { hasProgrammingAccess } from "@/lib/types";
 
 export interface SlotSelection {
   date: string;
@@ -47,7 +48,7 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
     () =>
       getUsers().filter(
         (u) =>
-          (u.role === "cirujano" || u.role === "endoscopista" || u.role === "gestor-anestesista") &&
+          hasProgrammingAccess(u.role) &&
           u.id !== currentUserId &&
           u.approved
       ),

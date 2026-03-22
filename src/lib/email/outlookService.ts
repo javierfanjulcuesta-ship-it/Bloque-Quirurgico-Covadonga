@@ -7,27 +7,43 @@
 
 import type { UserRole } from "@/lib/types";
 import { GESTOR_EMAIL } from "@/lib/config";
-import { getEmailSubject, getEmailBody } from "@/lib/emailsNuevoUsuario";
+import { buildInvitationEmail } from "@/lib/email/invitationEmail";
 import { getRecordatorioMiercolesSubject, getRecordatorioMiercolesBody } from "@/lib/emailsNuevoUsuario";
 import { getPacienteNoAptoSubject, getPacienteNoAptoBody } from "@/lib/emailsNuevoUsuario";
+import { buildReleaseNotificationEmail } from "./releaseNotificationEmail";
+import type { ReleasedSlotInfo } from "./releaseNotificationEmail";
 import { createMockOutlookAdapter } from "./outlookAdapter";
 import { createGraphOutlookAdapter, isGraphConfigured } from "./graphOutlookAdapter";
+import { createGmailAdapter, isSmtpConfigured } from "./gmailAdapter";
 import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
 import type { InboxMessage, EmailClassification, ParsedReservationEmail } from "./types";
 
 let _adapter: Awaited<ReturnType<typeof createMockOutlookAdapter>> | null = null;
-let _adapterMode: "graph" | "mock" = "mock";
+let _adapterMode: "smtp" | "graph" | "mock" = "mock";
 
 async function getAdapter() {
   if (_adapter) return _adapter;
 
-  if (isGraphConfigured()) {
+  // Prioridad: SMTP → Graph → Mock
+  if (isSmtpConfigured()) {
+    try {
+      _adapter = await createGmailAdapter();
+      _adapterMode = "smtp";
+      if (process.env.NODE_ENV !== "test") {
+        console.log("[Email] Usando SMTP (Gmail) – correos reales");
+      }
+    } catch (err) {
+      _adapter = createMockOutlookAdapter();
+      _adapterMode = "mock";
+      console.warn("[Email] SMTP no disponible, usando mock. Error:", err instanceof Error ? err.message : err);
+    }
+  } else if (isGraphConfigured()) {
     try {
       _adapter = await createGraphOutlookAdapter();
       _adapterMode = "graph";
       if (process.env.NODE_ENV !== "test") {
-        console.log("[Email] Usando Microsoft Graph real (jfanjul@riberacare.com)");
+        console.log("[Email] Usando Graph – correos reales");
       }
     } catch (err) {
       _adapter = createMockOutlookAdapter();
@@ -38,15 +54,15 @@ async function getAdapter() {
     _adapter = createMockOutlookAdapter();
     _adapterMode = "mock";
     if (process.env.NODE_ENV !== "test") {
-      console.warn("[Email] Faltan AZURE_CLIENT_ID, AZURE_CLIENT_SECRET o AZURE_TENANT_ID. Usando mock (no se envían correos reales).");
+      console.warn("[Email] MOCK – Configure SMTP o Azure para envío real.");
     }
   }
   return _adapter;
 }
 
-/** Indica si el envío usa Microsoft Graph real o mock */
+/** Indica si el envío usa SMTP, Graph o mock */
 export function isUsingRealEmail(): boolean {
-  return _adapterMode === "graph";
+  return _adapterMode === "smtp" || _adapterMode === "graph";
 }
 
 // --- Envío ---
@@ -75,22 +91,29 @@ export interface NewUserInvitationParams {
   recipientName?: string;
   accessLink: string;
   initialPassword: string;
+  /** Quién invita (ej. nombre del gestor que crea el usuario) */
+  invitedByName?: string;
+  /** Normas de programación (desde BD; opcional) */
+  normasTexto?: string;
 }
 
 /** Envía invitación de nuevo usuario desde jfanjul@riberacare.com */
 export async function sendNewUserInvitationEmail(params: NewUserInvitationParams): Promise<void> {
   const adapter = await getAdapter();
-  const subject = getEmailSubject(params.role);
-  const body = getEmailBody(params.role, {
-    recipientName: params.recipientName,
-    accessLink: params.accessLink,
-    initialPassword: params.initialPassword,
+  const { subject, text, html } = buildInvitationEmail({
+    name: params.recipientName ?? "",
+    email: params.toEmail,
+    role: params.role,
+    invitedByName: params.invitedByName,
+    appUrl: params.accessLink,
+    temporaryPassword: params.initialPassword,
+    normasTexto: params.normasTexto,
   });
   await adapter.send({
     to: params.toEmail,
     subject,
-    bodyPlain: body,
-    bodyHtml: body.replace(/\n/g, "<br>"),
+    bodyPlain: text,
+    bodyHtml: html ?? text.replace(/\n/g, "<br>"),
   });
 }
 
@@ -150,6 +173,36 @@ export async function sendPacienteNoAptoEmail(toEmail: string, apellido: string)
     subject: getPacienteNoAptoSubject(),
     bodyPlain: getPacienteNoAptoBody(apellido),
   });
+}
+
+/** Notifica a cirujanos sobre huecos liberados a la bolsa común. Un correo por destinatario, mismo contenido. */
+export async function sendReleaseNotificationToSurgeons(
+  slots: ReleasedSlotInfo[],
+  recipientEmails: string[]
+): Promise<{ sent: number; failed: number; errors: string[] }> {
+  if (slots.length === 0 || recipientEmails.length === 0) {
+    return { sent: 0, failed: 0, errors: [] };
+  }
+  const { subject, text } = buildReleaseNotificationEmail(slots);
+  const adapter = await getAdapter();
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const email of recipientEmails) {
+    try {
+      await adapter.send({
+        to: email,
+        subject,
+        bodyPlain: text,
+        bodyHtml: text.replace(/\n/g, "<br>"),
+      });
+      sent++;
+    } catch (err) {
+      failed++;
+      errors.push(`${email}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { sent, failed, errors };
 }
 
 // --- Lectura y clasificación ---

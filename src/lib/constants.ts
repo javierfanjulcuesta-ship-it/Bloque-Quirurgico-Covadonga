@@ -52,6 +52,9 @@ export const PREANESTHESIA_MAX_PATIENTS = 12;
 /** Cierre reserva: jueves 00:00 cierra la semana siguiente; máximo 4 semanas por delante */
 export const SCHEDULING_DEADLINE_DAY = 4;
 export const SCHEDULING_DEADLINE_WEEK_OFFSET = -1;
+/** Hora y minuto de cierre (por defecto 00:00). Reservado para futuro. */
+export const SCHEDULING_DEADLINE_HOUR = 0;
+export const SCHEDULING_DEADLINE_MINUTE = 0;
 
 /** Recordatorio automático: miércoles se avisa a cirujanos con huecos sin pacientes */
 export const NOTIFICATION_DAY = 3;

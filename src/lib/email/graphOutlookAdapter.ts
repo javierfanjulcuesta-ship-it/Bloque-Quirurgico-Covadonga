@@ -90,7 +90,7 @@ export async function createGraphOutlookAdapter(): Promise<OutlookAdapter> {
           .post(message);
 
         if (process.env.NODE_ENV !== "test") {
-          console.log("[Graph] Email enviado:", { to: params.to, subject: params.subject.slice(0, 50) });
+          console.log("[Email] Enviado vía Graph:", { to: params.to, subject: params.subject.slice(0, 50) });
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

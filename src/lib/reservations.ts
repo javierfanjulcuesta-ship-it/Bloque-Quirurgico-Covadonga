@@ -10,6 +10,7 @@ import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMe
 import {
   fetchReservations,
   createReservation,
+  cancelReservationPatient,
   mapPatientToApi,
   ReservationsApiError,
 } from "./api/reservations";
@@ -78,4 +79,21 @@ export async function createReservationEntry(data: CreateReservationData): Promi
     slotIndex: data.slotIndex,
     patients: apiPatients,
   });
+}
+
+export interface CancelPatientResult {
+  reservation: Reservation;
+  slotOutcome: "retained" | "released" | null;
+}
+
+/** Cancelar un paciente. En modoDemo no disponible (usa API real si useRealReservationsApi). */
+export async function cancelPatient(
+  reservationId: string,
+  patientId: string,
+  reason?: string
+): Promise<CancelPatientResult> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Cancelar paciente no disponible en modo demo.", 400);
+  }
+  return cancelReservationPatient(reservationId, patientId, reason);
 }

@@ -53,5 +53,46 @@ export const getReservationsQuerySchema = z.object({
   surgeonId: z.string().optional(),
 });
 
+// --- PATCH reservation: añadir pacientes a reserva existente ---
+export const updateReservationSchema = z.object({
+  patients: z.array(patientSchema).optional(),
+  coSurgeonIds: z.array(z.string().min(1)).optional(),
+});
+
+// --- PATCH patient: actualizar o sustituir un paciente ---
+export const updatePatientSchema = z.object({
+  patientId: z.string().min(1, "patientId obligatorio"),
+  historyNumber: z.string().min(1, "Nº historia obligatorio").optional(),
+  fullName: z.string().optional(),
+  procedure: z.string().min(1, "Procedimiento obligatorio").optional(),
+  estimatedDurationMinutes: z.number().int().positive("Duración debe ser > 0").optional(),
+  anesthesiaType: z.string().min(1, "Tipo de anestesia obligatorio").optional(),
+  insuranceType: z.string().min(1, "Entidad financiadora obligatoria").optional(),
+  admissionType: z.enum(ADMISSION_TYPES).optional(),
+  orderIndex: z.number().int().min(0).optional(),
+  notes: z.string().optional(),
+  solicitudRecursos: z.string().optional(),
+}).refine((d) => {
+  const hasUpdate = d.historyNumber !== undefined || d.fullName !== undefined || d.procedure !== undefined
+    || d.estimatedDurationMinutes !== undefined || d.anesthesiaType !== undefined || d.insuranceType !== undefined
+    || d.admissionType !== undefined || d.orderIndex !== undefined || d.notes !== undefined || d.solicitudRecursos !== undefined;
+  return hasUpdate;
+}, { message: "Proporcione al menos un campo a actualizar" });
+
+// --- PATCH patient/cancel: cancelar un paciente (solo patientId) ---
+export const cancelPatientSchema = z.object({
+  patientId: z.string().min(1, "patientId obligatorio"),
+  reason: z.string().max(500).optional(),
+});
+
+// --- PATCH cancel: cancelar reserva completa ---
+export const cancelReservationSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
 export type GetReservationsQuery = z.infer<typeof getReservationsQuerySchema>;
+export type UpdateReservationInput = z.infer<typeof updateReservationSchema>;
+export type UpdatePatientInput = z.infer<typeof updatePatientSchema>;
+export type CancelPatientInput = z.infer<typeof cancelPatientSchema>;
+export type CancelReservationInput = z.infer<typeof cancelReservationSchema>;

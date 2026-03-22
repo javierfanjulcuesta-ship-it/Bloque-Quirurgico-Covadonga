@@ -39,10 +39,15 @@ model User {
   role                   UserRole
   approved               Boolean                   @default(false)
   canSespa               Boolean                   @default(false)
+  isActive               Boolean                   @default(true)
+  deletedAt              DateTime?
+  deletedByUserId        String?
+  deletionReason         String?                   @db.Text
   createdAt              DateTime                  @default(now())
   updatedAt              DateTime                  @updatedAt
   reservations           Reservation[]             @relation("SurgeonReservations")
   anesthetistAssignments  AnesthetistAssignment[]
+  blockOpeningPlansApproved BlockOpeningPlan[]
 }
 
 enum ReservationOrigin {
@@ -83,7 +88,11 @@ enum ReservationEventType {
   RESERVATION_UPDATED
   RESERVATION_CANCELLED
   RESERVATION_RELEASED
+  AUTO_RELEASE_TO_COMMON_POOL
   RESERVATION_REJECTED_CONFLICT
+  RESERVATION_PATIENT_UPDATED
+  RESERVATION_PATIENT_REPLACED
+  RESERVATION_PATIENT_CANCELLED
 }
 
 model ReservationEvent {
@@ -190,6 +199,20 @@ model ContactMessage {
   @@index([createdAt])
 }
 
+/** Registro de notificación por liberación automática de huecos a bolsa común */
+model ReleaseNotificationLog {
+  id                    String   @id @default(cuid())
+  releasedCount         Int
+  slotDetailsJson       String   @db.Text
+  releasedReservationIds String  @db.Text
+  recipientCount        Int      @default(0)
+  emailStatus           String   // SENT | FAILED | SKIPPED
+  errorMessage          String?  @db.Text
+  createdAt             DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model EmailProcessingLog {
   id            String   @id @default(cuid())
   emailMessageId String
@@ -201,4 +224,62 @@ model EmailProcessingLog {
   emailMessage  EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
 
   @@index([emailMessageId])
+}
+
+// --- Plan de apertura del bloque quirúrgico ---
+
+enum BlockOpeningStatus {
+  OPEN             // Abierto a reservas normales
+  CLOSED           // Cerrado: no se puede reservar
+  URGENT_RESERVED  // Reservado para urgencias: no reservas normales
+}
+
+model BlockOpeningPlan {
+  id                    String              @id @default(cuid())
+  date                  DateTime            // YYYY-MM-DD
+  shift                 Shift               // MORNING | AFTERNOON
+  resourceId            String              // Q1, Q2, Q3, procedimientos-menores, tecnicas-dolor
+  status                BlockOpeningStatus  @default(OPEN)
+  minRequiredMinutes    Int                 @default(0)   // Umbral mínimo para considerar apertura justificada
+  reservedUrgentMinutes Int                 @default(0)  // Minutos reservados para urgencias
+  notes                 String?             @db.Text
+  approvedByUserId      String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  approvedByUser        User?               @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([date, resourceId, shift])
+  @@index([date])
+  @@index([resourceId])
+}
+
+/** Reglas de programación editables por gestor (normas_texto, deadline, etc.) */
+model ProgrammingRule {
+  id              String    @id @default(cuid())
+  key             String    @unique // normas_texto_completo, scheduling_deadline_day, etc.
+  name            String
+  description     String?   @db.Text
+  category        String    @default("scheduling") // scheduling | informational
+  valueJson       String?   @db.Text // JSON: string, number, etc.
+  isActive        Boolean   @default(true)
+  updatedAt       DateTime  @updatedAt
+  updatedByUserId String?
+
+  @@index([category])
+  @@index([isActive])
+}
+
+/** Auditoría de acciones sobre usuarios (desactivar, reactivar, etc.) */
+model UserAuditEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  eventType   String   // USER_DEACTIVATED | USER_REACTIVATED | USER_DELETED
+  actorUserId String?
+  detailsJson String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
 }

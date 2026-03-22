@@ -5,13 +5,32 @@
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
+import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/auth/rateLimit";
 import { prisma } from "@/lib/db/prisma";
-import { hasGestorAccess } from "@/lib/types";
 
 const MAX_BODY_LENGTH = 5000;
+const CONTACT_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 min
+const CONTACT_MAX_ATTEMPTS = 5;
 
 export async function POST(request: Request) {
   try {
+    const rateLimit = checkRateLimit(request, "contact", {
+      windowMs: CONTACT_RATE_WINDOW_MS,
+      maxAttempts: CONTACT_MAX_ATTEMPTS,
+    });
+    if (!rateLimit.ok) {
+      return NextResponse.json(
+        { error: "Demasiados envíos. Espere unos minutos e inténtelo de nuevo." },
+        {
+          status: 429,
+          headers: rateLimit.retryAfterSec
+            ? { "Retry-After": String(rateLimit.retryAfterSec) }
+            : undefined,
+        }
+      );
+    }
+
     const body = await request.json();
     const fromName = typeof body.fromName === "string" ? body.fromName.trim().slice(0, 200) : "";
     const fromEmail = typeof body.fromEmail === "string" ? body.fromEmail.trim().toLowerCase().slice(0, 200) : "";
@@ -55,13 +74,12 @@ export async function POST(request: Request) {
 
 export async function GET() {
   try {
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-    if (!hasGestorAccess(session.role as "gestor" | "gestor-anestesista")) {
-      return NextResponse.json({ error: "Solo gestores" }, { status: 403 });
-    }
+    const session = toAuthSession(await getSessionFromCookie());
+    const denyAuth = requireAuth(session);
+    if (denyAuth) return denyAuth;
+
+    const denyPerm = requirePermission(session!, "contact:view");
+    if (denyPerm) return denyPerm;
 
     const list = await prisma.contactMessage.findMany({
       orderBy: { createdAt: "desc" },

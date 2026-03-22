@@ -57,9 +57,9 @@ export function WeekGridCalendar({
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="mb-4 flex items-center justify-between">
-        <button type="button" onClick={prevPeriod} className="rounded p-2 text-gray-600 hover:bg-gray-100" aria-label="Semana anterior">‹</button>
+        <button type="button" onClick={prevPeriod} className="flex min-h-11 min-w-11 items-center justify-center rounded p-2 text-gray-600 hover:bg-gray-100" aria-label="Semana anterior">‹</button>
         <span className="text-sm font-semibold text-gray-800">{periodLabel}</span>
-        <button type="button" onClick={nextPeriod} className="rounded p-2 text-gray-600 hover:bg-gray-100" aria-label="Semana siguiente">›</button>
+        <button type="button" onClick={nextPeriod} className="flex min-h-11 min-w-11 items-center justify-center rounded p-2 text-gray-600 hover:bg-gray-100" aria-label="Semana siguiente">›</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center text-sm">
         {WEEKDAY_LABELS.map((l) => (
@@ -78,7 +78,7 @@ export function WeekGridCalendar({
                 type="button"
                 onClick={() => !disabled && onSelectDay(new Date(cell))}
                 disabled={disabled}
-                className={`h-9 w-9 rounded ${!isCurrentMonth ? "text-gray-300" : "text-gray-800"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:bg-[var(--ribera-red)]/10"} ${selected ? "bg-[var(--ribera-red)] text-white" : ""} ${isToday && !selected ? "ring-1 ring-[var(--ribera-red)]" : ""} ${extraClass}`}
+                className={`min-h-11 min-w-11 flex items-center justify-center rounded ${!isCurrentMonth ? "text-gray-300" : "text-gray-800"} ${disabled ? "cursor-not-allowed opacity-50" : "hover:bg-[var(--ribera-red)]/10"} ${selected ? "bg-[var(--ribera-red)] text-white" : ""} ${isToday && !selected ? "ring-1 ring-[var(--ribera-red)]" : ""} ${extraClass}`}
               >
                 {cell.getDate()}
               </button>
