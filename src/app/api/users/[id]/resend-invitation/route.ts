@@ -32,7 +32,6 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    console.log("[RESEND-INVITE] inicio", { id });
     const session = toAuthSession(await getSessionFromCookie());
     const denyAuth = requireAuth(session);
     if (denyAuth) return denyAuth;
@@ -47,7 +46,7 @@ export async function POST(
       appUrl = getAppUrl();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("[RESEND-INVITE] URL no configurada:", msg);
+      console.error("[resend-invitation] URL no configurada:", msg);
       return NextResponse.json(
         { error: "La URL de la aplicación no está configurada. Configure NEXT_PUBLIC_APP_URL o NEXTAUTH_URL en Vercel." },
         { status: 503 }
@@ -58,15 +57,10 @@ export async function POST(
       where: { id },
       select: { id: true, email: true, name: true, role: true },
     });
-    if (!user) {
-      console.log("[RESEND-INVITE] usuario no encontrado", { id });
-      return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
-    }
-    console.log("[RESEND-INVITE] usuario encontrado", { id: user.id, email: user.email, role: user.role });
+    if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
 
     const tempPassword = generateTempPassword();
     const passwordHash = await hashPassword(tempPassword);
-    console.log("[RESEND-INVITE] contraseña regenerada");
 
     await prisma.user.update({
       where: { id },
@@ -74,7 +68,6 @@ export async function POST(
     });
 
     const role = roleToFrontend(user.role);
-    console.log("[RESEND-INVITE] intento envío", { to: user.email });
 
     try {
       await sendNewUserInvitationEmail({
@@ -84,10 +77,9 @@ export async function POST(
         accessLink: appUrl,
         initialPassword: tempPassword,
       });
-      console.log("[RESEND-INVITE] envío ok", { to: user.email });
     } catch (sendErr) {
       const sendMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
-      console.error("[RESEND-INVITE] error envío", { to: user.email, error: sendMsg });
+      console.error("[resend-invitation] error envío:", sendMsg);
       return NextResponse.json(
         {
           error: "No se pudo enviar el correo de invitación",
@@ -107,7 +99,7 @@ export async function POST(
     return NextResponse.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[RESEND-INVITE] ERROR", err);
+    console.error("[resend-invitation]", err);
     return NextResponse.json(
       { error: "Error al reenviar invitación", detail: msg },
       { status: 500 }

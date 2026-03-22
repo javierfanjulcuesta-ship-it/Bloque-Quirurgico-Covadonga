@@ -36,7 +36,10 @@ export async function POST(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
     if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
 
     const tempPassword = generateTempPassword();

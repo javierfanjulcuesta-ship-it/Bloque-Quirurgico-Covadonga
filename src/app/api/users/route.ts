@@ -41,7 +41,6 @@ export async function POST(request: Request) {
     if (denyPerm) return denyPerm;
 
     const body = await request.json();
-    console.log("[USERS] REQUEST BODY", body);
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const roleInput = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
     const role = roleToPrisma(roleInput);
@@ -70,7 +69,6 @@ export async function POST(request: Request) {
 
     const canSespa = typeof body.canSespa === "boolean" ? body.canSespa : false;
 
-    console.log("[USERS] creando usuario", { email, role });
     const dbUser = await prisma.user.create({
       data: {
         email,
@@ -94,12 +92,8 @@ export async function POST(request: Request) {
       tempPassword,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[USERS] ERROR", err);
-    return NextResponse.json(
-      { error: msg },
-      { status: 500 }
-    );
+    console.error("[users POST]", err);
+    return NextResponse.json({ error: "Error al crear usuario" }, { status: 500 });
   }
 }
 
@@ -125,10 +119,9 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const _includeInactive = hasFullList && searchParams.get("includeInactive") === "1";
+    const includeInactive = hasFullList && searchParams.get("includeInactive") === "1";
 
-    // User no tiene isActive en schema desplegado. Solo filtramos por approved.
-    const where = { approved: true };
+    const where = includeInactive ? {} : { approved: true };
 
     const dbUsers = await prisma.user.findMany({
       where,
@@ -143,7 +136,6 @@ export async function GET(request: Request) {
       },
     });
 
-    // user:list → datos completos; resto → mínimos (sin email). isActive no existe → siempre true.
     const users = hasFullList
       ? dbUsers.map((u) => ({
           id: u.id,
@@ -152,7 +144,7 @@ export async function GET(request: Request) {
           role: roleToFrontend(u.role),
           approved: u.approved,
           canSespa: u.canSespa,
-          isActive: true as boolean,
+          isActive: u.approved,
         }))
       : dbUsers.map((u) => ({
           id: u.id,
@@ -161,7 +153,7 @@ export async function GET(request: Request) {
           role: roleToFrontend(u.role),
           approved: u.approved,
           canSespa: u.canSespa,
-          isActive: true as boolean,
+          isActive: u.approved,
         }));
 
     return NextResponse.json({ users });

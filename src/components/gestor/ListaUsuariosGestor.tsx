@@ -58,6 +58,8 @@ export function ListaUsuariosGestor() {
         setActionError(data.error ?? "Error al desactivar");
         return;
       }
+      setActionSuccess("Usuario desactivado. Ya no podrá iniciar sesión.");
+      setTimeout(() => setActionSuccess(null), 4000);
       await load();
       refresh();
     } catch {
@@ -80,6 +82,8 @@ export function ListaUsuariosGestor() {
         setActionError(data.error ?? "Error al reactivar");
         return;
       }
+      setActionSuccess("Usuario reactivado. Podrá iniciar sesión de nuevo.");
+      setTimeout(() => setActionSuccess(null), 4000);
       await load();
       refresh();
     } catch {
@@ -136,6 +140,8 @@ export function ListaUsuariosGestor() {
         return;
       }
       setPasswordShown({ userId: user.id, password: data.tempPassword ?? "" });
+      setActionSuccess("Contraseña regenerada. Cópiela o compártala de forma segura.");
+      setTimeout(() => setActionSuccess(null), 5000);
     } catch {
       setActionError("Error de conexión");
     } finally {
