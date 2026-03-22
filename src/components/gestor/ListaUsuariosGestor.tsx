@@ -102,11 +102,12 @@ export function ListaUsuariosGestor() {
       const data = await res.json();
       if (!res.ok) {
         const msg = (data.error as string) ?? "Error al reenviar invitación";
-        setActionError(
+        const detail = (data.detail as string) ?? "";
+        const display =
           res.status === 503
             ? "Configure NEXT_PUBLIC_APP_URL y SMTP_USER/SMTP_PASS en Vercel para enviar emails."
-            : msg
-        );
+            : detail ? `${msg}: ${detail}` : msg;
+        setActionError(display);
         return;
       }
       setActionSuccess("Invitación reenviada correctamente.");
