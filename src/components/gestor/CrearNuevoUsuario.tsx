@@ -52,9 +52,10 @@ export function CrearNuevoUsuario() {
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error ?? "Error al crear usuario";
+        console.log("[FRONT] ERROR CREAR USUARIO", data);
+        const msg = data.error || "Error desconocido";
         setError(
-          res.status === 409 && msg.includes("email")
+          res.status === 409 && msg.toLowerCase().includes("email")
             ? "Ya existe un usuario con ese correo. Puede reactivar la cuenta o reenviar la invitación desde Gestión de usuarios."
             : msg
         );

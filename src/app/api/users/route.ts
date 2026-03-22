@@ -97,16 +97,11 @@ export async function POST(request: Request) {
       tempPassword,
     });
   } catch (err) {
-    let msg = "Error interno";
-    if (err instanceof Error) {
-      msg = err.message;
-      const prismaErr = err as { code?: string; meta?: unknown };
-      if (prismaErr.code === "P2002") msg = "Ya existe un usuario con ese email";
-      else if (prismaErr.code === "P2003") msg = "Referencia inválida en la base de datos";
-    }
     console.error("[USERS] ERROR", err);
     return NextResponse.json(
-      { error: msg },
+      {
+        error: err instanceof Error ? err.message : JSON.stringify(err),
+      },
       { status: 500 }
     );
   }
