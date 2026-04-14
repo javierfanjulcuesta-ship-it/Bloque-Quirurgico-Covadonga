@@ -77,30 +77,51 @@ body {
   background-color: var(--ribera-red-pale);
 }
 
+.btn-ribera-secondary {
+  border-radius: 0.5rem;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  padding: 0.625rem 1rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: #334155;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.btn-ribera-secondary:hover {
+  background-color: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.btn-ribera-secondary:focus {
+  outline: 2px solid var(--ribera-navy);
+  outline-offset: 2px;
+}
+
 /* Huecos del calendario: libre (verde), reservado (ámbar), ocupado (rojo) */
 .slot-free {
-  background-color: var(--slot-free);
-  border: 1px solid #a7f3d0;
+  background-color: #ecfdf3;
+  border: 1px solid #9fe3c2;
 }
 
 .slot-reserved {
-  background-color: var(--slot-reserved);
-  border: 1px solid #fcd34d;
+  background-color: #fff7e1;
+  border: 1px solid #f4c96a;
 }
 
 .slot-occupied {
-  background-color: var(--slot-occupied);
-  border: 1px solid #cbd5e1;
+  background-color: #f8fafc;
+  border: 1px solid #cdd8e5;
 }
 
 .slot-private {
-  background-color: var(--slot-private);
-  border: 1px solid #fdba74;
+  background-color: #ffedd7;
+  border: 1px solid #f8b977;
 }
 
 .slot-sespa {
-  background-color: #fce7f3;
-  border: 1px solid #f9a8d4;
+  background-color: #fdebf4;
+  border: 1px solid #f2a7cb;
 }
 
 /* Utilidades de color Ribera (para uso con Tailwind o en línea) */

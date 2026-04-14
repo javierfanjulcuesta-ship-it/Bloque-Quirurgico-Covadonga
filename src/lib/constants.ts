@@ -62,6 +62,12 @@ export const NOTIFICATION_DAY = 3;
 /** Minutos extra por procedimiento: limpieza, anestesia y colocación (norma: solo 10 min por procedimiento) */
 export const TRANSITION_MINUTES_PER_PROCEDURE = 10;
 
+/**
+ * Si el tiempo libre dentro del tramo reservado es ≥ este valor (min), la UI de programación
+ * muestra aviso de holgura amplia. 60 min ≈ un hueco corto adicional típico sin alarmar en tramos de 30 min.
+ */
+export const LARGE_BLOCK_REMAINDER_MINUTES = 60;
+
 /** Identificadores de puntos de seguridad (orden de ejecución: checkpoint antes de revisión) */
 export type SafetyCheckpointId = "checkpoint" | "revision";
 

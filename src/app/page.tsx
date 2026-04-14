@@ -18,6 +18,8 @@ import { roleLabel } from "@/lib/types";
 import type { User } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { modoDemo } from "@/lib/config";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 
 export default function HomePage() {
   const router = useRouter();
@@ -51,6 +53,14 @@ export default function HomePage() {
     if (authUser.role === "cirujano" || authUser.role === "endoscopista") router.replace("/cirujano");
     else router.replace("/calendario");
   };
+
+  const roleWorkspaceHint = authUser
+    ? authUser.role === "cirujano" || authUser.role === "endoscopista"
+      ? "Entrará en su espacio de programación quirúrgica."
+      : hasGestorAccess(authUser.role)
+        ? "Entrará en el espacio de coordinación del bloque (calendario global)."
+        : "Entrará en su espacio de programación y consulta anestésica."
+    : "";
 
   const handleEnterDemo = () => {
     if (!selectedUser) return;
@@ -159,13 +169,14 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] flex-col items-center justify-center px-4" style={{ minHeight: "60vh" }}>
+    <div className="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-6xl flex-col justify-center px-4 py-8" style={{ minHeight: "60vh" }}>
       {authUser && (
-        <div className="mb-4 w-full max-w-md rounded-lg border border-green-200 bg-green-50 p-4 text-center">
+        <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
           <p className="text-sm font-medium text-green-800">
             Sesión iniciada como <strong>{authUser.name}</strong>.
           </p>
-          <div className="mt-2 flex flex-wrap justify-center gap-2">
+          <p className="mt-1 text-xs text-green-700">{roleWorkspaceHint}</p>
+          <div className="mt-2 flex flex-wrap justify-center gap-2 lg:justify-start">
             <button type="button" onClick={goToPanel} className="btn-ribera-primary">
               Ir al panel
             </button>
@@ -188,18 +199,52 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <div className="card-ribera w-full max-w-md p-8">
+      <div className="grid gap-6 lg:grid-cols-[1.05fr,1fr] lg:items-start">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <StatusBadge tone="info">QxFlow</StatusBadge>
+            <span className="text-xs font-medium text-slate-500">Plataforma de coordinación quirúrgica</span>
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight text-[var(--ribera-navy)]">QxFlow</h1>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-600">
+            Gestión clínica y operativa del bloque quirúrgico con vistas por rol, programación asistida y seguimiento en tiempo real.
+          </p>
+          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-semibold text-slate-700">Entorno por rol</p>
+              <p className="mt-1 text-xs text-slate-600">Cada perfil entra directamente en su espacio de trabajo.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-semibold text-slate-700">Contexto clínico claro</p>
+              <p className="mt-1 text-xs text-slate-600">Calendario, estados y programación con jerarquía visual estable.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-semibold text-slate-700">Coordinación segura</p>
+              <p className="mt-1 text-xs text-slate-600">Flujos pensados para gestor, cirujano y anestesista sin fugas de información.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <p className="font-semibold text-slate-700">Producto hospitalario</p>
+              <p className="mt-1 text-xs text-slate-600">Diseño sobrio, profesional y orientado al uso diario del bloque.</p>
+            </div>
+          </div>
+          <p className="mt-4 text-xs text-slate-500">
+            Bloque Quirúrgico Covadonga · Grupo Ribera
+          </p>
+        </section>
+
+      <div className="card-ribera w-full p-8">
         {modoDemo && (
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">DEMO</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
         )}
-        <h1 className="mb-1 text-2xl font-bold tracking-tight text-[var(--ribera-navy)]">Gestión de Bloque Quirúrgico</h1>
+        <h2 className="mb-1 text-2xl font-bold tracking-tight text-[var(--ribera-navy)]">Acceso a QxFlow</h2>
+        <p className="mb-4 text-sm text-slate-600">Acceda a su entorno de trabajo clínico y operativo.</p>
         {modoDemo ? (
           <>
-        <p className="mb-4 text-sm text-gray-600">Seleccione un usuario y pulse <strong>Entrar en modo DEMO</strong>. Sin contraseñas.</p>
+        <p className="mb-4 text-sm text-gray-600">Seleccione un perfil y pulse <strong>Entrar en modo DEMO</strong>. Sin contraseñas.</p>
         {hasNoDemoUsers && (
-          <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+          <InlineNotice variant="warning" className="mb-4">
             No hay usuarios demo disponibles. Compruebe la configuración de la aplicación.
-          </p>
+          </InlineNotice>
         )}
         <div className="space-y-2">
           {demoUsers.map((u) => (
@@ -266,14 +311,14 @@ export default function HomePage() {
           </button>
         </div>
         {loadExampleSuccess && (
-          <p className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-center text-sm text-green-800" role="status">
+          <InlineNotice variant="success" className="mt-3 text-center" role="status">
             Datos de ejemplo cargados. Seleccione un usuario y pulse Entrar en modo DEMO para verlos.
-          </p>
+          </InlineNotice>
         )}
           </>
         ) : (
           <form onSubmit={handleLoginSubmit} className="space-y-4">
-            <p className="mb-4 text-sm text-gray-600">Introduzca sus credenciales para acceder.</p>
+            <p className="mb-4 text-sm text-gray-600">Introduzca sus credenciales para continuar.</p>
             <label className="block">
               <span className="mb-1 block text-sm font-medium text-gray-700">Email</span>
               <input
@@ -297,7 +342,7 @@ export default function HomePage() {
               />
             </label>
             {loginError && (
-              <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700" role="alert">{loginError}</p>
+              <InlineNotice variant="error" role="alert">{loginError}</InlineNotice>
             )}
             <button
               type="submit"
@@ -307,10 +352,11 @@ export default function HomePage() {
               {loginLoading ? "Iniciando sesión…" : "Iniciar sesión"}
             </button>
             <p className="mt-4 text-center text-sm text-gray-500">
-              Si no tiene cuenta, contacte con la coordinación del bloque quirúrgico.
+              Si no dispone de acceso, contacte con la coordinación del bloque quirúrgico.
             </p>
           </form>
         )}
+      </div>
       </div>
 
       {contactModalOpen && (
@@ -327,7 +373,7 @@ export default function HomePage() {
               El mensaje llegará a los gestores del bloque quirúrgico.
             </p>
             {contactSent ? (
-              <div className="rounded-lg bg-green-50 p-4 text-green-800">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
                 <p className="font-medium">Mensaje enviado correctamente.</p>
                 <button
                   type="button"
@@ -355,7 +401,7 @@ export default function HomePage() {
                   <span className="mb-1 block text-sm font-medium text-gray-700">¿Qué desea comunicar?</span>
                   <textarea value={contactBody} onChange={(e) => setContactBody(e.target.value)} placeholder="Describa su consulta..." rows={4} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
                 </label>
-                {contactError && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{contactError}</p>}
+                {contactError && <InlineNotice variant="error">{contactError}</InlineNotice>}
                 <div className="flex gap-2">
                   <button type="submit" className="btn-ribera-primary">Enviar mensaje</button>
                   <button type="button" onClick={() => setContactModalOpen(false)} className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>

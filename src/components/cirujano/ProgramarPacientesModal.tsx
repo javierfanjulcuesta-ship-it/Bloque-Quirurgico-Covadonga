@@ -6,10 +6,17 @@
 
 import { useState, useMemo } from "react";
 import type { PatientInBlock, AdmissionType, SolicitudRecursosId } from "@/lib/types";
-import { TRANSITION_MINUTES_PER_PROCEDURE, SOLICITUD_RECURSOS_OPTIONS } from "@/lib/constants";
+import {
+  TRANSITION_MINUTES_PER_PROCEDURE,
+  SOLICITUD_RECURSOS_OPTIONS,
+  LARGE_BLOCK_REMAINDER_MINUTES,
+} from "@/lib/constants";
+import { getEffectiveTotalMinutesFilledRows } from "@/lib/utils";
 import type { Shift } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
-import { hasProgrammingAccess } from "@/lib/types";
+import { hasGestorAccess, type UserRole } from "@/lib/types";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 
 export interface SlotSelection {
   date: string;
@@ -27,7 +34,13 @@ export interface ProgramarPacientesModalProps {
   slots: SlotSelection[];
   /** ID del usuario actual (cirujano/endoscopista) para excluirlo de la lista de 2º cirujano */
   currentUserId?: string;
-  onSave: (patients: Omit<PatientInBlock, "id" | "order">[], coSurgeonIds?: string[]) => void | Promise<void>;
+  /** Rol del usuario que abre el modal (gestor / gestor-anestesista → cirujano responsable obligatorio). */
+  schedulerRole?: UserRole | string;
+  onSave: (
+    patients: Omit<PatientInBlock, "id" | "order">[],
+    coSurgeonIds?: string[],
+    meta?: { responsibleSurgeonId: string }
+  ) => void | Promise<void>;
   onClose: () => void;
   /** Si true, deshabilita el botón guardar (ej. mientras se guarda en API) */
   saving?: boolean;
@@ -37,23 +50,191 @@ const ANESTHESIA_OPTIONS = ["Local", "Regional", "General", "Sedación"];
 
 type ModalTab = "datos" | "recursos";
 
-export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
+interface QuickParseResult {
+  parsedPatients: Partial<PatientInBlock>[];
+  detectedSurgeonId?: string;
+  detectedSurgeonName?: string;
+  detectedProcedureCount: number;
+  detectedFundingLabels: string[];
+  recognizedAbbreviations: string[];
+  normalizedTerms: string[];
+  noiseRemovedCount: number;
+}
+
+function normalizeLower(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+const FUNDING_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
+  { label: "SESPA", patterns: [/\bsespa\b/i, /\bsergas\b/i, /\bsas\b/i, /\bpublic[oa]?\b/i] },
+  { label: "Privado", patterns: [/\bprivad[oa]s?\b/i, /\bprivate\b/i] },
+  { label: "Mutua", patterns: [/\bmutua(?:s)?\b/i, /\bmutual\b/i, /\bfremap\b/i, /\bmapfre\b/i, /\baxa\b/i, /\badeslas\b/i, /\basisa\b/i, /\bdkv\b/i] },
+];
+
+const PROCEDURE_ABBREVIATIONS: Array<{ pattern: RegExp; token: string; normalized: string; confident: boolean }> = [
+  { pattern: /\bprp\b/gi, token: "PRP", normalized: "PRP", confident: true },
+  { pattern: /\bholep\b/gi, token: "HOLEP", normalized: "HOLEP", confident: true },
+  { pattern: /\bfacos?\b/gi, token: "FACO/FACOS", normalized: "Facoemulsificación", confident: true },
+  { pattern: /\blca\b/gi, token: "LCA", normalized: "Lesión/rotura LCA", confident: true },
+  { pattern: /\bptr\b/gi, token: "PTR", normalized: "PTR", confident: true },
+  { pattern: /\bptc\b/gi, token: "PTC", normalized: "PTC", confident: true },
+  { pattern: /\bfx\b/gi, token: "Fx", normalized: "Fractura", confident: true },
+  { pattern: /\bmc\b/gi, token: "MC", normalized: "MC (revisar)", confident: false },
+  { pattern: /\bcar\b/gi, token: "CAR", normalized: "CAR (revisar)", confident: false },
+  { pattern: /\bcah\b/gi, token: "CAH", normalized: "CAH (revisar)", confident: false },
+];
+
+const NOISE_PATTERNS: RegExp[] = [
+  /\bpte(?:\s+parte)?\b/gi,
+  /\bconfirmad[oa]s?\b/gi,
+  /\bpendiente(?:s)?\b/gi,
+  /\bbloque\b/gi,
+];
+
+function detectFundingFromText(text: string): string {
+  for (const f of FUNDING_PATTERNS) {
+    if (f.patterns.some((p) => p.test(text))) return f.label;
+  }
+  return "";
+}
+
+function detectProcedureCount(text: string): number {
+  const m = text.match(/\b(\d{1,2})\s*(?:car|cas|casos|proc|proced|pac|pacientes?)\b/i);
+  if (!m) return 0;
+  const n = parseInt(m[1] ?? "0", 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function parseQuickBlockText(
+  text: string,
+  surgeons: Array<{ id: string; name: string }>
+): QuickParseResult {
+  const clean = text.trim();
+  if (!clean) {
+    return {
+      parsedPatients: [],
+      detectedProcedureCount: 0,
+      detectedFundingLabels: [],
+      recognizedAbbreviations: [],
+      normalizedTerms: [],
+      noiseRemovedCount: 0,
+    };
+  }
+
+  const lower = normalizeLower(clean);
+  let detectedSurgeonId: string | undefined;
+  let detectedSurgeonName: string | undefined;
+  for (const s of surgeons) {
+    const nameNorm = normalizeLower(s.name);
+    const parts = nameNorm.split(" ").filter(Boolean);
+    const surname = parts.length > 1 ? parts[parts.length - 1] : nameNorm;
+    if (lower.includes(nameNorm) || (surname.length > 3 && lower.includes(surname))) {
+      detectedSurgeonId = s.id;
+      detectedSurgeonName = s.name;
+      break;
+    }
+  }
+
+  let noiseRemovedCount = 0;
+  let sanitized = clean;
+  for (const np of NOISE_PATTERNS) {
+    const matches = sanitized.match(np);
+    if (matches?.length) noiseRemovedCount += matches.length;
+    sanitized = sanitized.replace(np, " ");
+  }
+  sanitized = sanitized.replace(/\s{2,}/g, " ").trim();
+
+  const splitBySeparators = sanitized
+    .split(/\/\/|\n|;/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const recognizedAbbreviations = new Set<string>();
+  const normalizedTerms = new Set<string>();
+
+  const likelyProcedures = splitBySeparators.map((part) => {
+    let normalized = part;
+    for (const map of PROCEDURE_ABBREVIATIONS) {
+      if (map.pattern.test(normalized)) {
+        recognizedAbbreviations.add(map.token);
+        normalizedTerms.add(map.normalized);
+      }
+      normalized = normalized.replace(map.pattern, map.confident ? map.normalized : map.token);
+    }
+    return normalized.replace(/\s{2,}/g, " ").trim();
+  }).filter((part) => {
+    const p = normalizeLower(part);
+    return !p.startsWith("dr ") && !p.startsWith("dra ") && !p.includes("mutual") && !p.includes("mutua") && !p.includes("sespa") && !p.includes("privado");
+  });
+
+  const targetCount = detectProcedureCount(clean);
+  const inferredCount = targetCount > 0 ? targetCount : Math.max(1, likelyProcedures.length);
+
+  const entities = Array.from(
+    new Set(
+      splitBySeparators
+        .map(detectFundingFromText)
+        .filter(Boolean)
+    )
+  );
+  const mainFunding = entities[0] ?? detectFundingFromText(clean);
+
+  const parsedPatients: Partial<PatientInBlock>[] = [];
+  for (let i = 0; i < inferredCount; i++) {
+    const rawProc = likelyProcedures[i] ?? likelyProcedures[likelyProcedures.length - 1] ?? `Procedimiento ${i + 1}`;
+    parsedPatients.push({
+      procedure: rawProc.trim(),
+      entidadFinanciadora: mainFunding || "",
+      estimatedDurationMinutes: 60,
+      admissionType: "ambulatorio",
+      notes: "",
+    });
+  }
+
+  return {
+    parsedPatients,
+    detectedSurgeonId,
+    detectedSurgeonName,
+    detectedProcedureCount: inferredCount,
+    detectedFundingLabels: entities,
+    recognizedAbbreviations: Array.from(recognizedAbbreviations),
+    normalizedTerms: Array.from(normalizedTerms),
+    noiseRemovedCount,
+  };
+}
+
+export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
   const [patients, setPatients] = useState<Partial<PatientInBlock>[]>([{}]);
   const [activeTab, setActiveTab] = useState<ModalTab>("datos");
+  const [quickMode, setQuickMode] = useState(false);
+  const [quickText, setQuickText] = useState("");
+  const [quickParseMessage, setQuickParseMessage] = useState<string | null>(null);
   const [secondSurgeonName, setSecondSurgeonName] = useState("");
+  const [responsibleSurgeonId, setResponsibleSurgeonId] = useState("");
   const [error, setError] = useState("");
   const totalReserved = totalReservedMinutes(slots);
 
+  const requireResponsibleSurgeon = schedulerRole ? hasGestorAccess(schedulerRole) : false;
+
   const otherSurgeons = useMemo(
     () =>
-      getUsers().filter(
-        (u) =>
-          hasProgrammingAccess(u.role) &&
-          u.id !== currentUserId &&
-          u.approved
-      ),
+      getUsers().filter((u) => {
+        if (!u.approved || u.id === currentUserId) return false;
+        const r = String(u.role).trim().toLowerCase().replace(/_/g, "-");
+        return r === "cirujano" || r === "endoscopista";
+      }),
     [currentUserId]
   );
+
+  const responsibleSurgeonCandidates = useMemo(() => {
+    return getUsers().filter((u) => {
+      if (!u.approved) return false;
+      const r = String(u.role).trim().toLowerCase().replace(/_/g, "-");
+      return r === "cirujano" || r === "endoscopista";
+    });
+  }, []);
 
   const addPatient = () => setPatients((prev) => [...prev, {}]);
   const removePatient = (index: number) => setPatients((prev) => prev.filter((_, i) => i !== index));
@@ -73,6 +254,46 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
     0
   );
   const over = currentTotal > totalReserved;
+  const programmedForRemainder = getEffectiveTotalMinutesFilledRows(patients);
+  const remainderMinutes = Math.max(0, totalReserved - programmedForRemainder);
+  const showWideRemainder =
+    !over && totalReserved > 0 && remainderMinutes >= LARGE_BLOCK_REMAINDER_MINUTES;
+  const validRowsCount = patients.filter(
+    (p) =>
+      p.numeroHistoria?.trim() &&
+      p.procedure?.trim() &&
+      p.entidadFinanciadora?.trim() &&
+      p.anesthesiaType?.trim() &&
+      typeof p.estimatedDurationMinutes === "number" &&
+      Number.isFinite(p.estimatedDurationMinutes) &&
+      p.estimatedDurationMinutes > 0 &&
+      p.solicitudRecursos
+  ).length;
+  const quickParsedPreview = useMemo(
+    () => parseQuickBlockText(quickText, responsibleSurgeonCandidates),
+    [quickText, responsibleSurgeonCandidates]
+  );
+
+  const applyQuickParse = () => {
+    setQuickParseMessage(null);
+    const parsed = parseQuickBlockText(quickText, responsibleSurgeonCandidates);
+    if (parsed.parsedPatients.length === 0) {
+      setQuickParseMessage("No se pudo interpretar el texto. Puede seguir en edición manual.");
+      return;
+    }
+    setPatients(parsed.parsedPatients);
+    if (requireResponsibleSurgeon && parsed.detectedSurgeonId) {
+      setResponsibleSurgeonId(parsed.detectedSurgeonId);
+    }
+    setActiveTab("datos");
+    setQuickParseMessage(
+      `Se han generado ${parsed.parsedPatients.length} paciente(s)${
+        parsed.detectedSurgeonName ? ` · Cirujano detectado: ${parsed.detectedSurgeonName}` : ""
+      }. Revise y complete los campos obligatorios antes de guardar${
+        parsed.normalizedTerms.some((t) => t.includes("(revisar)")) ? " (hay abreviaturas ambiguas marcadas para revisar)." : "."
+      }`
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,6 +312,12 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
     if (valid.length === 0) {
       setError("Rellene al menos un paciente con todos los campos obligatorios (incluida la pestaña Solicitud de recursos).");
       return;
+    }
+    if (requireResponsibleSurgeon) {
+      if (!responsibleSurgeonId.trim()) {
+        setError("Seleccione el cirujano o endoscopista responsable del caso.");
+        return;
+      }
     }
     const total = valid.reduce((s, p) => s + safeMinutes(p) + TRANSITION_MINUTES_PER_PROCEDURE, 0);
     if (total > totalReserved) {
@@ -128,7 +355,11 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
     }
 
     try {
-      await onSave(withOrder, coSurgeonIds);
+      await onSave(
+        withOrder,
+        coSurgeonIds,
+        requireResponsibleSurgeon ? { responsibleSurgeonId: responsibleSurgeonId.trim() } : undefined
+      );
       onClose();
     } catch {
       setError("Error al guardar. Compruebe que el hueco sigue libre e intente de nuevo.");
@@ -137,27 +368,137 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Reservar y programar pacientes</h2>
-        <p className="mb-4 text-sm text-gray-600">
-          Tiempo reservado total: <strong>{totalReserved} min</strong>. Cada procedimiento suma su tiempo estimado + {TRANSITION_MINUTES_PER_PROCEDURE} min de limpieza/anestesia.
+      <div
+        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border-t-4 border-[var(--ribera-navy)] bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="programar-pacientes-title"
+      >
+        <h2 id="programar-pacientes-title" className="mb-1 text-xl font-bold text-[var(--ribera-navy)]">
+          Reservar y programar pacientes
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Revise tiempos, entidad financiadora y recursos antes de confirmar. La acción principal queda al final del formulario.
         </p>
-        <div className="mb-4 flex gap-2 border-b border-gray-200">
+        <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <div className="grid gap-2 text-xs sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <p className="font-medium text-slate-500">Tiempo reservado</p>
+              <p className="text-base font-semibold text-[var(--ribera-navy)]">{totalReserved} min</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <p className="font-medium text-slate-500">Estimado actual</p>
+              <p className={`text-base font-semibold ${over ? "text-rose-700" : "text-slate-800"}`}>{programmedForRemainder} min</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <p className="font-medium text-slate-500">Disponible</p>
+              <p className={`text-base font-semibold ${remainderMinutes > 0 ? "text-emerald-700" : "text-slate-700"}`}>{remainderMinutes} min</p>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">
+            Cada procedimiento suma su tiempo estimado + {TRANSITION_MINUTES_PER_PROCEDURE} min de limpieza/anestesia.
+          </p>
+        </div>
+        <div className="mb-4 flex gap-1 border-b border-slate-200">
           <button
             type="button"
             onClick={() => setActiveTab("datos")}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium ${activeTab === "datos" ? "border border-b-0 border-gray-200 bg-white text-[var(--ribera-navy)]" : "text-gray-600 hover:bg-gray-50"}`}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "datos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
           >
             Datos del paciente
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("recursos")}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium ${activeTab === "recursos" ? "border border-b-0 border-gray-200 bg-white text-[var(--ribera-navy)]" : "text-gray-600 hover:bg-gray-50"}`}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "recursos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
           >
             Solicitud de recursos
           </button>
         </div>
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+          <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={quickMode}
+              onChange={(e) => setQuickMode(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-[var(--ribera-red)] focus:ring-[var(--ribera-red)]"
+            />
+            Modo rápido (tipo Excel)
+          </label>
+          {quickMode && (
+            <div className="mt-3 space-y-3">
+              <textarea
+                value={quickText}
+                onChange={(e) => setQuickText(e.target.value)}
+                placeholder='Ejemplo: "DR ROJAS 3 CAR MC mutual // PRP // Fx muñeca fremap"'
+                className="min-h-[110px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <StatusBadge tone="info">Procedimientos detectados: {quickParsedPreview.detectedProcedureCount}</StatusBadge>
+                {quickParsedPreview.detectedFundingLabels.length > 0 && (
+                  <StatusBadge tone="neutral">Entidad: {quickParsedPreview.detectedFundingLabels.join(", ")}</StatusBadge>
+                )}
+                {quickParsedPreview.detectedSurgeonName && (
+                  <StatusBadge tone="neutral">Cirujano: {quickParsedPreview.detectedSurgeonName}</StatusBadge>
+                )}
+                {quickParsedPreview.noiseRemovedCount > 0 && (
+                  <StatusBadge tone="warning">Ruido limpiado: {quickParsedPreview.noiseRemovedCount}</StatusBadge>
+                )}
+              </div>
+              {quickParsedPreview.recognizedAbbreviations.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 text-xs text-slate-600">
+                  <span className="font-medium text-slate-700">Abreviaturas reconocidas:</span>
+                  {quickParsedPreview.recognizedAbbreviations.map((abbr) => (
+                    <StatusBadge key={abbr} tone="neutral" size="sm">{abbr}</StatusBadge>
+                  ))}
+                </div>
+              )}
+              {quickParsedPreview.normalizedTerms.length > 0 && (
+                <p className="text-xs text-slate-600">
+                  Normalización aplicada: {quickParsedPreview.normalizedTerms.slice(0, 5).join(", ")}
+                  {quickParsedPreview.normalizedTerms.length > 5 ? "..." : ""}.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={applyQuickParse} className="btn-ribera-primary">
+                  Convertir a pacientes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickText("");
+                    setQuickParseMessage(null);
+                  }}
+                  className="btn-ribera-secondary"
+                >
+                  Limpiar texto
+                </button>
+              </div>
+              {quickParseMessage && <InlineNotice variant="info">{quickParseMessage}</InlineNotice>}
+            </div>
+          )}
+        </div>
+        {requireResponsibleSurgeon && (
+          <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/80 p-3">
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista responsable *</span>
+              <select
+                value={responsibleSurgeonId}
+                onChange={(e) => setResponsibleSurgeonId(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                required
+              >
+                <option value="">Seleccione…</option>
+                {responsibleSurgeonCandidates.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-gray-600">La reserva quedará a nombre de este profesional.</span>
+            </label>
+          </div>
+        )}
         <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
           <label className="block">
             <span className="block text-sm font-medium text-gray-700">2º cirujano (opcional)</span>
@@ -177,22 +518,47 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
           </label>
         </div>
         {over && (
-          <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
+          <InlineNotice variant="error" className="mb-4 font-medium">
             El tiempo total introducido ({currentTotal} min) supera el reservado ({totalReserved} min). Debe reducir pacientes o tiempos.
-          </p>
+          </InlineNotice>
+        )}
+        {showWideRemainder && (
+          <InlineNotice variant="warning" className="mb-4">
+            <span className="font-semibold">Holgura amplia:</span> quedan unos{" "}
+            <strong>{remainderMinutes} min</strong> sin usar dentro del bloque reservado. Puede valorar otro procedimiento
+            corto o revisar el rango reservado si sobra mucho tiempo.
+          </InlineNotice>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
           {activeTab === "datos" && (
           <>
           {patients.map((p, index) => (
-            <fieldset key={index} className="rounded-lg border border-gray-200 p-4">
-              <div className="mb-2 flex justify-between">
-                <span className="font-medium text-gray-700">Paciente {index + 1}</span>
-                {patients.length > 1 && (
-                  <button type="button" onClick={() => removePatient(index)} className="text-sm text-red-600 hover:underline">
-                    Quitar
-                  </button>
-                )}
+            <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">Paciente {index + 1}</span>
+                  {p.procedure?.trim() ? (
+                    <span className="max-w-[280px] truncate text-xs font-medium text-slate-600" title={p.procedure}>
+                      {p.procedure}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400">Sin procedimiento indicado</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge
+                    tone={p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0 ? "success" : "warning"}
+                  >
+                    {p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0
+                      ? "Completo"
+                      : "Pendiente"}
+                  </StatusBadge>
+                  {patients.length > 1 && (
+                    <button type="button" onClick={() => removePatient(index)} className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100">
+                      Quitar
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label>
@@ -279,17 +645,22 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
               </div>
             </fieldset>
           ))}
-          <button type="button" onClick={addPatient} className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          <button type="button" onClick={addPatient} className="btn-ribera-secondary">
             + Añadir otro paciente
           </button>
           </>
           )}
           {activeTab === "recursos" && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-600">Seleccione la solicitud de recursos para cada paciente.</p>
+            <p className="text-sm text-gray-600">Seleccione la solicitud de recursos para cada paciente. Este campo es obligatorio para guardar.</p>
             {patients.map((p, index) => (
-              <fieldset key={index} className="rounded-lg border border-gray-200 p-4">
-                <div className="mb-2 font-medium text-gray-700">Paciente {index + 1}{p.procedure?.trim() ? ` · ${p.procedure}` : ""}</div>
+              <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-medium text-slate-700">Paciente {index + 1}{p.procedure?.trim() ? ` · ${p.procedure}` : ""}</div>
+                  <StatusBadge tone={p.solicitudRecursos ? "success" : "warning"}>
+                    {p.solicitudRecursos ? "Recurso OK" : "Falta recurso"}
+                  </StatusBadge>
+                </div>
                 <label>
                   <span className="block text-sm font-medium text-gray-700">Solicitud de recursos *</span>
                   <select
@@ -308,14 +679,29 @@ export function ProgramarPacientesModal({ slots, currentUserId, onSave, onClose,
             ))}
           </div>
           )}
-          {error && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{error}</p>}
-          <div className="flex gap-2">
-            <button type="submit" className="btn-ribera-primary" disabled={over || saving}>
+          {error && (
+            <InlineNotice variant="error" role="alert">
+              {error}
+            </InlineNotice>
+          )}
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+              <span>Pacientes en formulario: <strong>{patients.length}</strong></span>
+              <span>Completos para guardar: <strong>{validRowsCount}</strong></span>
+              <span>Pestaña actual: <strong>{activeTab === "datos" ? "Datos clínicos" : "Recursos"}</strong></span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+            <button
+              type="submit"
+              className="btn-ribera-primary min-h-11 px-6 text-base shadow-md shadow-slate-900/10"
+              disabled={over || saving}
+            >
               {saving ? "Guardando…" : "Guardar y programar"}
             </button>
-            <button type="button" onClick={onClose} className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            <button type="button" onClick={onClose} className="btn-ribera-secondary min-h-11">
               Cancelar
             </button>
+            </div>
           </div>
         </form>
       </div>

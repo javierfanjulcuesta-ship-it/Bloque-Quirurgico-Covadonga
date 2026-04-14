@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { getWeekDays, getSlots, toISODate } from "@/lib/utils";
 import type { Reservation, ResourceId, Shift } from "@/lib/types";
 import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
+import { FundingBadge } from "@/components/ui/StatusBadge";
 
 export type CellState = "free" | "occupied-other" | "reserved-mine" | "programmed-mine";
 
@@ -150,7 +151,7 @@ export function BloqueEstadoGrid({
                     {info.state === "programmed-mine" && info.reservation?.patients && (
                       <div className="space-y-0.5">
                         {hasSespaPatient && (
-                          <span className="inline-block rounded px-1 py-0.5 text-[9px] font-bold uppercase bg-rose-200 text-rose-800 border border-rose-300 mr-1">SESPA</span>
+                          <span className="mr-1 inline-block"><FundingBadge type="sespa" /></span>
                         )}
                         {info.reservation.patients.map((p) => (
                           <div key={p.id} className="text-gray-800">

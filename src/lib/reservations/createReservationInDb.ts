@@ -54,6 +54,61 @@ export async function createReservationInDb(
 
   if (existing) {
     if (existing.status === "PENDING" || existing.status === "CONFIRMED") {
+      const patientCount = await prisma.patientInBlock.count({
+        where: { reservationId: existing.id },
+      });
+      /**
+       * Completar programación sobre hueco ya reservado sin pacientes (mismo cirujano titular).
+       * Sin esto, POST devolvía "ocupado" y el cirujano/gestor no podían añadir pacientes tras "solo reservar".
+       * Cuerpo sin pacientes + 0 pacientes en BD → idempotente (p. ej. varios slots en un mismo guardado).
+       */
+      if (patientCount === 0 && existing.surgeonId === surgeonId) {
+        if (!hasPatients) {
+          return { ok: true, reservationId: existing.id };
+        }
+        await prisma.$transaction(async (tx) => {
+          for (let i = 0; i < patients.length; i++) {
+            const p = patients[i]!;
+            await tx.patientInBlock.create({
+              data: {
+                reservationId: existing.id,
+                historyNumber: p.historyNumber,
+                fullName: p.fullName ?? null,
+                procedure: p.procedure,
+                estimatedDurationMinutes: p.estimatedDurationMinutes,
+                anesthesiaType: p.anesthesiaType,
+                insuranceType: p.insuranceType,
+                admissionType: p.admissionType ?? null,
+                orderIndex: p.orderIndex ?? i,
+                notes: p.notes ?? null,
+                solicitudRecursos: p.solicitudRecursos ?? null,
+              },
+            });
+          }
+          await tx.reservation.update({
+            where: { id: existing.id },
+            data: {
+              status: "CONFIRMED",
+              updatedByUserId: actorUserId,
+            },
+          });
+        });
+        await logReservationEvent({
+          eventType: "RESERVATION_UPDATED",
+          reservationId: existing.id,
+          actorUserId,
+          origin: origin.toLowerCase() as "app" | "email" | "gestor",
+          detailsJson: {
+            action: "add_patients_to_empty_hold",
+            date,
+            resourceId,
+            shift,
+            slotIndex,
+            patientCount: patients.length,
+          },
+        });
+        return { ok: true, reservationId: existing.id };
+      }
       return {
         ok: false,
         error: "slot_occupied",

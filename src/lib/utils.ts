@@ -115,6 +115,25 @@ export function getEffectiveTotalMinutes(
   );
 }
 
+/**
+ * Minutos efectivos solo de filas con duración estimada > 0 (procedimiento + transición).
+ * Sirve para holgura en el modal sin contar líneas de paciente vacías en borrador.
+ */
+export function getEffectiveTotalMinutesFilledRows(
+  patients: { estimatedDurationMinutes?: number }[]
+): number {
+  return patients.reduce((sum, p) => {
+    const m =
+      typeof p.estimatedDurationMinutes === "number" &&
+      Number.isFinite(p.estimatedDurationMinutes) &&
+      p.estimatedDurationMinutes > 0
+        ? p.estimatedDurationMinutes
+        : 0;
+    if (m <= 0) return sum;
+    return sum + m + TRANSITION_MINUTES_PER_PROCEDURE;
+  }, 0);
+}
+
 export function isToday(date: Date): boolean {
   const today = new Date();
   return toISODate(date) === toISODate(today);

@@ -2,8 +2,7 @@
 
 /**
  * Pestaña del gestor: asignar anestesista a cada turno (recurso + fecha + mañana/tarde).
- * Enlazado con los pacientes programados en el calendario: se muestran los procedimientos
- * y los turnos con algún paciente privado aparecen en naranja.
+ * Casos SESPA → fondo azul; financiación privada → amarillo/ámbar; cirujano y procedimiento principal visibles en la celda.
  */
 
 import { useState, useMemo, useEffect, Fragment } from "react";
@@ -11,14 +10,18 @@ import { getWeekStart, getWeekDays, toISODate } from "@/lib/utils";
 import { RESOURCES, PREANESTHESIA_MAX_PATIENTS } from "@/lib/constants";
 import { useUsers } from "@/context/UsersContext";
 import { hasAnesthetistAccess } from "@/lib/types";
-import type { AnesthetistAssignment, ResourceId, Reservation, Shift } from "@/lib/types";
+import type { AnesthetistAssignment, PatientInBlock, ResourceId, Reservation, Shift } from "@/lib/types";
 import { ASSIGNMENT_FULL_SHIFT, ASSIGNMENT_PREANESTHESIA } from "@/lib/types";
 import { getAnesthetistsOverLimit } from "@/lib/storageAnesthetistAssignments";
 import { getAssignments, saveAssignments } from "@/lib/anesthetistAssignments";
 import { isUnavailable as isAnesthetistUnavailable } from "@/lib/storageAnesthetistUnavailability";
 import { getStoredReservations } from "@/lib/storageMensajesYNotificaciones";
 import { WeekNavigation } from "@/components/calendar/WeekNavigation";
-import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
+import { caseFundingToneFromPatients, primaryProcedureFromPatients, type CaseFundingTone } from "@/lib/caseFundingUi";
+import { SectionIntro } from "@/components/ui/PageShellHeader";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { ActionBar } from "@/components/ui/ActionBar";
+import { FundingBadge } from "@/components/ui/StatusBadge";
 
 function isMondayOrThursday(date: Date): boolean {
   const d = date.getDay();
@@ -32,32 +35,69 @@ export interface SlotPatientInfo {
   surgeonName: string;
 }
 
-/** Pacientes programados en un turno (recurso + fecha + mañana/tarde) con NHC, procedimiento, cirujano */
+export interface SlotTurnDisplay {
+  patientLines: SlotPatientInfo[];
+  fundingTone: CaseFundingTone;
+  hasPrivate: boolean;
+  hasSespa: boolean;
+  summarySurgeonName: string;
+  summaryProcedure: string;
+}
+
+function assignmentCellSurfaceClasses(display: SlotTurnDisplay): string {
+  if (display.patientLines.length === 0) return "";
+  if (display.fundingTone === "sespa") return "bg-sky-50/90 border-l-4 border-l-blue-600";
+  if (display.fundingTone === "private") return "bg-amber-50/90 border-l-4 border-l-amber-500";
+  return "bg-slate-50/80 border-l-4 border-l-slate-300";
+}
+
+/** Pacientes y resumen del turno (misma fuente de datos que el calendario: entidadFinanciadora). */
 function getSlotPatientInfo(
   reservations: Reservation[],
   dateStr: string,
   shift: Shift,
   resourceId: ResourceId,
   users: { id: string; name: string }[]
-): { patientInfo: SlotPatientInfo[]; hasPrivate: boolean; hasSespa: boolean } {
-  const patientInfo: SlotPatientInfo[] = [];
-  let hasPrivate = false;
-  let hasSespa = false;
-  reservations
-    .filter((r) => r.date === dateStr && r.shift === shift && r.resourceId === resourceId && r.patients?.length)
-    .forEach((r) => {
-      const surgeonName = users.find((u) => u.id === r.surgeonId)?.name ?? "—";
-      r.patients.forEach((p) => {
-        patientInfo.push({
-          nhc: p.numeroHistoria || "—",
-          procedure: p.procedure || "—",
-          surgeonName,
-        });
-        if (isPrivateFunding(p.entidadFinanciadora)) hasPrivate = true;
-        if (isSespa(p.entidadFinanciadora)) hasSespa = true;
+): SlotTurnDisplay {
+  const matches = reservations.filter(
+    (r) => r.date === dateStr && r.shift === shift && r.resourceId === resourceId && r.patients?.length
+  );
+  const patientLines: SlotPatientInfo[] = [];
+  const allPatients: PatientInBlock[] = [];
+
+  matches.forEach((r) => {
+    const surgeonName = users.find((u) => u.id === r.surgeonId)?.name ?? "—";
+    r.patients.forEach((p) => {
+      patientLines.push({
+        nhc: p.numeroHistoria || "—",
+        procedure: p.procedure || "—",
+        surgeonName,
       });
+      allPatients.push(p);
     });
-  return { patientInfo, hasPrivate, hasSespa };
+  });
+
+  const fundingTone = caseFundingToneFromPatients(allPatients);
+  const hasSespa = fundingTone === "sespa";
+  const hasPrivate = fundingTone === "private";
+
+  let summarySurgeonName = "—";
+  let summaryProcedure = "—";
+  if (matches.length > 0) {
+    const sortedRes = [...matches].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const first = sortedRes[0]!;
+    summarySurgeonName = users.find((u) => u.id === first.surgeonId)?.name ?? "—";
+    summaryProcedure = primaryProcedureFromPatients(first.patients);
+  }
+
+  return {
+    patientLines,
+    fundingTone,
+    hasSespa,
+    hasPrivate,
+    summarySurgeonName,
+    summaryProcedure,
+  };
 }
 
 
@@ -290,15 +330,15 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
   }, [users]);
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-      <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Asignar anestesistas</h2>
-      <p className="mb-4 text-sm text-gray-600">
-        Asigne un anestesista a cada turno. Procedimientos bajo cada celda; turnos con paciente privado en naranja. Máx. 2 recursos por anestesista a la vez.
-      </p>
+    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <SectionIntro
+        title="Asignar anestesistas"
+        description="Asigne un profesional a cada turno. En cada celda verá cirujano responsable, procedimiento principal y el tipo de caso (SESPA / privado). Máximo dos recursos por anestesista en el mismo turno."
+      />
       {anestList.length === 0 && (
-        <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="alert">
+        <InlineNotice variant="warning" className="mb-4">
           No hay anestesistas en el sistema. Añada usuarios con perfil anestesista o gestor-anestesista para poder asignarlos.
-        </p>
+        </InlineNotice>
       )}
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-[var(--ribera-navy)]/20 bg-[var(--ribera-navy)]/5 px-4 py-3">
@@ -345,19 +385,28 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                     const daySepTarde = dayIndex < weekDays.length - 1 ? " border-r-2 border-gray-300" : "";
                     return (
                       <Fragment key={dateStr}>
-                        <td className={`border-r border-gray-100 p-2 align-top${daySep} ${morningSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""} ${morningSlot.hasSespa ? "border-l-4 border-l-rose-400 bg-rose-50/50" : ""}`}>
+                        <td className={`border-r border-gray-100 p-2 align-top${daySep} ${assignmentCellSurfaceClasses(morningSlot)}`}>
                           {morningSlot.hasSespa && (
-                            <p className="mb-1 text-[10px] text-rose-700 font-medium">Este bloque contiene pacientes SESPA</p>
+                            <p className="mb-1 text-[10px] font-medium text-blue-900">Requiere anestesista habilitado SESPA</p>
                           )}
-                          {morningSlot.patientInfo.length > 0 && (
-                            <div className="mb-2 space-y-1 rounded bg-gray-100/80 px-1.5 py-1 text-[10px] text-gray-700 leading-tight">
-                              {morningSlot.patientInfo.slice(0, 3).map((p, i) => (
-                                <div key={i} className="truncate" title={`${p.nhc} · ${p.procedure} · ${p.surgeonName}`}>
-                                  <span className="font-medium">{p.nhc}</span> · {p.procedure} · <span className="text-gray-600">{p.surgeonName}</span>
-                                </div>
-                              ))}
-                              {morningSlot.patientInfo.length > 3 && (
-                                <div className="text-gray-500">+{morningSlot.patientInfo.length - 3} más</div>
+                          {morningSlot.patientLines.length > 0 && (
+                            <div className="mb-2 space-y-0.5 rounded border border-white/50 bg-white/50 px-1.5 py-1.5 text-[10px] leading-tight text-gray-800 shadow-sm">
+                              <div className="truncate font-semibold text-gray-900" title={morningSlot.summarySurgeonName}>
+                                Cir. {morningSlot.summarySurgeonName}
+                              </div>
+                              <div className="truncate text-gray-700" title={morningSlot.summaryProcedure}>
+                                {morningSlot.summaryProcedure}
+                              </div>
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                {morningSlot.fundingTone === "sespa" && (
+                                  <FundingBadge type="sespa" />
+                                )}
+                                {morningSlot.fundingTone === "private" && (
+                                  <FundingBadge type="private" />
+                                )}
+                              </div>
+                              {morningSlot.patientLines.length > 1 && (
+                                <div className="text-[9px] text-gray-500">{morningSlot.patientLines.length} pacientes</div>
                               )}
                             </div>
                           )}
@@ -396,19 +445,28 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                             })()}
                           </select>
                         </td>
-                        <td className={`border-r border-gray-200 p-2 align-top${daySepTarde} ${afternoonSlot.hasPrivate ? "bg-orange-50 border-l-4 border-l-orange-400" : ""} ${afternoonSlot.hasSespa ? "border-l-4 border-l-rose-400 bg-rose-50/50" : ""}`}>
+                        <td className={`border-r border-gray-200 p-2 align-top${daySepTarde} ${assignmentCellSurfaceClasses(afternoonSlot)}`}>
                           {afternoonSlot.hasSespa && (
-                            <p className="mb-1 text-[10px] text-rose-700 font-medium">Este bloque contiene pacientes SESPA</p>
+                            <p className="mb-1 text-[10px] font-medium text-blue-900">Requiere anestesista habilitado SESPA</p>
                           )}
-                          {afternoonSlot.patientInfo.length > 0 && (
-                            <div className="mb-2 space-y-1 rounded bg-gray-100/80 px-1.5 py-1 text-[10px] text-gray-700 leading-tight">
-                              {afternoonSlot.patientInfo.slice(0, 3).map((p, i) => (
-                                <div key={i} className="truncate" title={`${p.nhc} · ${p.procedure} · ${p.surgeonName}`}>
-                                  <span className="font-medium">{p.nhc}</span> · {p.procedure} · <span className="text-gray-600">{p.surgeonName}</span>
-                                </div>
-                              ))}
-                              {afternoonSlot.patientInfo.length > 3 && (
-                                <div className="text-gray-500">+{afternoonSlot.patientInfo.length - 3} más</div>
+                          {afternoonSlot.patientLines.length > 0 && (
+                            <div className="mb-2 space-y-0.5 rounded border border-white/50 bg-white/50 px-1.5 py-1.5 text-[10px] leading-tight text-gray-800 shadow-sm">
+                              <div className="truncate font-semibold text-gray-900" title={afternoonSlot.summarySurgeonName}>
+                                Cir. {afternoonSlot.summarySurgeonName}
+                              </div>
+                              <div className="truncate text-gray-700" title={afternoonSlot.summaryProcedure}>
+                                {afternoonSlot.summaryProcedure}
+                              </div>
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                {afternoonSlot.fundingTone === "sespa" && (
+                                  <FundingBadge type="sespa" />
+                                )}
+                                {afternoonSlot.fundingTone === "private" && (
+                                  <FundingBadge type="private" />
+                                )}
+                              </div>
+                              {afternoonSlot.patientLines.length > 1 && (
+                                <div className="text-[9px] text-gray-500">{afternoonSlot.patientLines.length} pacientes</div>
                               )}
                             </div>
                           )}
@@ -462,8 +520,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                   const fullShiftHasSespaA = slotHasSespa(reservations, dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, users);
                   return (
                     <Fragment key={dateStr}>
-                      <td className={`border-r border-amber-100 p-2 align-top${daySep} ${fullShiftHasSespaM ? "border-l-4 border-l-rose-400 bg-rose-50/30" : ""}`}>
-                        {fullShiftHasSespaM && <p className="mb-1 text-[10px] text-rose-700 font-medium">Turno con SESPA</p>}
+                      <td className={`border-r border-amber-100 p-2 align-top${daySep} ${fullShiftHasSespaM ? "border-l-4 border-l-blue-600 bg-sky-50/40" : ""}`}>
+                        {fullShiftHasSespaM && <p className="mb-1 text-[10px] font-medium text-blue-900">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "morning", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -497,8 +555,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           })()}
                         </select>
                       </td>
-                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde} ${fullShiftHasSespaA ? "border-l-4 border-l-rose-400 bg-rose-50/30" : ""}`}>
-                        {fullShiftHasSespaA && <p className="mb-1 text-[10px] text-rose-700 font-medium">Turno con SESPA</p>}
+                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde} ${fullShiftHasSespaA ? "border-l-4 border-l-blue-600 bg-sky-50/40" : ""}`}>
+                        {fullShiftHasSespaA && <p className="mb-1 text-[10px] font-medium text-blue-900">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -634,33 +692,37 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
 
       <div className="mb-4 flex flex-col gap-1 text-xs text-gray-500">
         <p className="flex items-center gap-2">
-          <span className="inline-block h-4 w-6 rounded border-2 border-orange-300 bg-orange-50 align-middle" />
-          Turno con paciente privado (mismo dato que en el calendario).
+          <span className="inline-block h-4 w-6 rounded border-2 border-blue-500 bg-sky-50 align-middle" />
+          Caso con paciente SESPA (entidadFinanciadora SESPA).
         </p>
         <p className="flex items-center gap-2">
-          <span className="inline-block h-4 w-6 rounded border-2 border-rose-300 bg-rose-50 align-middle" />
-          Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.
+          <span className="inline-block h-4 w-6 rounded border-2 border-amber-500 bg-amber-50 align-middle" />
+          Caso con financiación privada (texto &quot;privado&quot; en entidad).
+        </p>
+        <p className="flex items-center gap-2">
+          <span className="inline-block h-4 w-6 rounded border-2 border-slate-300 bg-slate-50 align-middle" />
+          Otros casos u ocupación sin clasificación SESPA/privado.
         </p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <ActionBar className="mt-4">
         <button
           type="button"
           onClick={handleSave}
           disabled={saving || anestList.length === 0}
-          className="rounded-lg bg-[var(--ribera-red)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn-ribera-primary min-h-11 px-5 shadow-md shadow-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? "Guardando…" : "Guardar asignaciones"}
         </button>
-        {saveSuccess && (
-          <span className="text-sm font-medium text-green-700">Asignaciones guardadas correctamente.</span>
-        )}
-        {(saveError || sespaError) && (
-          <p className="text-sm font-medium text-rose-700" role="alert">
+        {saveSuccess ? (
+          <span className="text-sm font-medium text-emerald-800">Asignaciones guardadas correctamente.</span>
+        ) : null}
+        {(saveError || sespaError) ? (
+          <p className="text-sm font-medium text-rose-800" role="alert">
             {saveError || sespaError}
           </p>
-        )}
-      </div>
+        ) : null}
+      </ActionBar>
 
       {alarm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

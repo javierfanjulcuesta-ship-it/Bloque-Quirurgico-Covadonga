@@ -48,7 +48,7 @@ export function roleLabel(role: UserRole | string): string {
 /** Roles que usan la pantalla de programación (calendario, reservas, etc.). Acepta variaciones de formato. */
 export function hasProgrammingAccess(role: UserRole | string): boolean {
   const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
-  return r === "cirujano" || r === "endoscopista" || r === "gestor-anestesista";
+  return r === "cirujano" || r === "endoscopista" || r === "gestor-anestesista" || r === "gestor";
 }
 
 /** Recursos del bloque: quirófanos Q1–Q3, sala de procedimientos menores, zona de técnicas del dolor */
@@ -156,6 +156,14 @@ export interface SlotView {
   assignedToAnesthetist?: boolean;
   /** Razón por la que el slot está bloqueado (no reservable): CLOSED | URGENT_RESERVED */
   blockReason?: "CLOSED" | "URGENT_RESERVED";
+  /** Holgura estimada del bloque titular (solo para avisos UX por rol). */
+  underutilizedMinutes?: number;
+  /** Texto breve orientativo (p. ej. "Caso corto" / "Caso medio"). */
+  underutilizedLabel?: string;
+  /** Minutos de pacientes usados en el slot (orientativo para tooltip rápido). */
+  usedMinutes?: number;
+  /** Minutos totales del slot (o tramo asociado). */
+  totalMinutes?: number;
 }
 
 /** Indisponibilidad del anestesista */

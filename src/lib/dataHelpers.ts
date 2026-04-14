@@ -5,7 +5,7 @@
 
 import type { Reservation, SlotView, User, BlockOpeningPlan } from "./types";
 import { RESOURCES } from "./constants";
-import { getWeekDays, getSlots, toISODate } from "./utils";
+import { getWeekDays, getSlots, toISODate, getSlotDurationMinutes, getEffectiveTotalMinutes } from "./utils";
 import { isPrivateFunding, reservationHasSespa } from "./patientInsurance";
 
 /** Reservas en un rango de fechas (incluidas from y to). */
@@ -81,8 +81,13 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
+        const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
+        const totalMinutes = getSlotDurationMinutes("morning", i);
         const blockReason = getBlockReason(dateStr, resourceId, "morning");
-        const baseStatus = res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : (blockReason ? "blocked" : "free");
+        const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
+        const baseStatus = res
+          ? (isEmptyReservation && (asGestor || !!isMine) ? "reserved" : "occupied")
+          : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
           date: dateStr,
@@ -100,6 +105,8 @@ export function buildSlotViews(
               : undefined,
           hasPrivate: hasPrivate || undefined,
           hasSespa: hasSespa || undefined,
+          usedMinutes: usedMinutes || undefined,
+          totalMinutes: totalMinutes || undefined,
         });
       }
       for (let i = 0; i < afternoonCount; i++) {
@@ -117,8 +124,13 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
+        const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
+        const totalMinutes = getSlotDurationMinutes("afternoon", i);
         const blockReason = getBlockReason(dateStr, resourceId, "afternoon");
-        const baseStatus = res ? (isMine && (res.patients?.length ?? 0) === 0 ? "reserved" : "occupied") : (blockReason ? "blocked" : "free");
+        const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
+        const baseStatus = res
+          ? (isEmptyReservation && (asGestor || !!isMine) ? "reserved" : "occupied")
+          : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
           date: dateStr,
@@ -136,6 +148,8 @@ export function buildSlotViews(
               : undefined,
           hasPrivate: hasPrivate || undefined,
           hasSespa: hasSespa || undefined,
+          usedMinutes: usedMinutes || undefined,
+          totalMinutes: totalMinutes || undefined,
         });
       }
     });

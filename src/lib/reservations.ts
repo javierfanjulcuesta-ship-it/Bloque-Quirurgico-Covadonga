@@ -11,6 +11,7 @@ import {
   fetchReservations,
   createReservation,
   cancelReservationPatient,
+  updateReservationPatient as updateReservationPatientApi,
   mapPatientToApi,
   ReservationsApiError,
 } from "./api/reservations";
@@ -42,6 +43,7 @@ export interface CreateReservationData {
   resourceId: string;
   shift: string;
   slotIndex: number;
+  /** En API real: cirujano titular del hueco. Si se omite, el backend usa la sesión. */
   surgeonId: string;
   patients?: Omit<PatientInBlock, "id" | "order">[];
 }
@@ -78,12 +80,27 @@ export async function createReservationEntry(data: CreateReservationData): Promi
     shift: data.shift,
     slotIndex: data.slotIndex,
     patients: apiPatients,
+    surgeonId: data.surgeonId,
   });
 }
 
 export interface CancelPatientResult {
   reservation: Reservation;
   slotOutcome: "retained" | "released" | null;
+}
+
+export interface UpdatePatientData {
+  reservationId: string;
+  patientId: string;
+  numeroHistoria?: string;
+  name?: string;
+  procedure?: string;
+  estimatedDurationMinutes?: number;
+  anesthesiaType?: string;
+  entidadFinanciadora?: string;
+  admissionType?: PatientInBlock["admissionType"];
+  notes?: string;
+  solicitudRecursos?: PatientInBlock["solicitudRecursos"];
 }
 
 /** Cancelar un paciente. En modoDemo no disponible (usa API real si useRealReservationsApi). */
@@ -96,4 +113,22 @@ export async function cancelPatient(
     throw new ReservationsApiError("Cancelar paciente no disponible en modo demo.", 400);
   }
   return cancelReservationPatient(reservationId, patientId, reason);
+}
+
+/** Actualiza un paciente dentro de una reserva existente. */
+export async function updateReservationPatientEntry(data: UpdatePatientData): Promise<Reservation> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Editar paciente no disponible en modo demo.", 400);
+  }
+  return updateReservationPatientApi(data.reservationId, data.patientId, {
+    historyNumber: data.numeroHistoria,
+    fullName: data.name,
+    procedure: data.procedure,
+    estimatedDurationMinutes: data.estimatedDurationMinutes,
+    anesthesiaType: data.anesthesiaType,
+    insuranceType: data.entidadFinanciadora,
+    admissionType: data.admissionType,
+    notes: data.notes,
+    solicitudRecursos: data.solicitudRecursos,
+  });
 }

@@ -5,13 +5,14 @@
  */
 
 import { NextResponse } from "next/server";
+import { UserRole } from "@prisma/client";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission, requireAnyPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
 import { toApiReservation } from "@/lib/reservations/reservationApiHelpers";
-import { getReservationsQuerySchema } from "@/lib/validations/reservation";
+import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
 
 export const dynamic = "force-dynamic";
 
@@ -115,8 +116,50 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
   }
 
-  const surgeonId = session!.userId;
-  const result = await createReservationInDb(body as Parameters<typeof createReservationInDb>[0], surgeonId, { origin: "APP" });
+  const raw = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const { surgeonId: rawSurgeonId, ...reservationFields } = raw;
+  const parsed = createReservationSchema.safeParse(reservationFields);
+  if (!parsed.success) {
+    const msg = parsed.error.errors[0]?.message ?? "Datos inválidos";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+
+  const responsibleSurgeonFromBody =
+    typeof rawSurgeonId === "string" && rawSurgeonId.trim().length > 0 ? rawSurgeonId.trim() : undefined;
+  const reservationPayload = parsed.data;
+  const roleNorm = session!.role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
+  const isCoordinator = roleNorm === "gestor" || roleNorm === "gestor-anestesista";
+
+  let effectiveSurgeonId = session!.userId;
+  if (isCoordinator) {
+    if (!responsibleSurgeonFromBody) {
+      return NextResponse.json(
+        { error: "Debe indicar el cirujano o endoscopista responsable (campo surgeonId)." },
+        { status: 400 }
+      );
+    }
+    const surgeonUser = await prisma.user.findFirst({
+      where: {
+        id: responsibleSurgeonFromBody,
+        approved: true,
+        deletedAt: null,
+        role: { in: [UserRole.CIRUJANO, UserRole.ENDOSCOPISTA] },
+      },
+      select: { id: true },
+    });
+    if (!surgeonUser) {
+      return NextResponse.json(
+        { error: "El cirujano responsable no es válido, no está aprobado o no tiene perfil cirujano/endoscopista." },
+        { status: 400 }
+      );
+    }
+    effectiveSurgeonId = surgeonUser.id;
+  }
+
+  const result = await createReservationInDb(reservationPayload, effectiveSurgeonId, {
+    origin: isCoordinator ? "GESTOR" : "APP",
+    actorUserId: session!.userId,
+  });
 
   if (!result.ok) {
     if (result.error === "slot_occupied") {

@@ -9,6 +9,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { useUsers } from "@/context/UsersContext";
 import { roleLabel, hasGestorAccess } from "@/lib/types";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getAllowedResourcesForRole, RESOURCES } from "@/lib/constants";
@@ -18,7 +19,7 @@ import { getStoredReservations, getMessagesToGestor } from "@/lib/storageMensaje
 import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getReservations, ReservationsApiError } from "@/lib/reservations";
 import { getAssignments } from "@/lib/anesthetistAssignments";
-import { buildSlotViews, getUsers } from "@/lib/dataHelpers";
+import { buildSlotViews } from "@/lib/dataHelpers";
 import { modoDemo } from "@/lib/config";
 import { WeekCalendar } from "@/components/calendar/WeekCalendar";
 import { WeekGridCalendar } from "@/components/calendar/WeekGridCalendar";
@@ -36,16 +37,81 @@ import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
 import { SolicitarNoDisponibilidad } from "@/components/anestesista/SolicitarNoDisponibilidad";
-import type { Reservation } from "@/lib/types";
+import type { BlockOpeningPlan, Reservation } from "@/lib/types";
 import { hasAnesthetistAccess } from "@/lib/types";
+import { PageShellHeader } from "@/components/ui/PageShellHeader";
+import { AppNavTab } from "@/components/ui/AppNavTab";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { CalendarStateLegend } from "@/components/ui/CalendarStateLegend";
+import { WorkspaceQuickActions } from "@/components/ui/WorkspaceQuickActions";
 
 const RESERVATIONS_STORAGE_KEY = "bloque_quirurgico_reservations";
+
+type CalendarioViewTab =
+  | "calendario"
+  | "perfil"
+  | "coordinacion"
+  | "gestion-usuarios"
+  | "asignar-anestesistas"
+  | "gestionar-apertura"
+  | "normas"
+  | "mensajes"
+  | "consulta-preanestesia"
+  | "mi-programacion"
+  | "solicitar-no-disponibilidad"
+  | "historico";
+
+function getCalendarioScreenContext(
+  tab: CalendarioViewTab,
+  opts: { isGestor: boolean; isAnestesista: boolean }
+): { title: string; subtitle: string } {
+  const { isGestor, isAnestesista } = opts;
+  switch (tab) {
+    case "calendario":
+      return {
+        title: "Calendario del bloque",
+        subtitle: isGestor
+          ? "Vista global del quirófano: día, preanestesia y resumen semanal. La leyenda describe los colores de cada hueco."
+          : isAnestesista
+          ? "Consulte la ocupación y los huecos donde figura asignado. El resto de tareas están en las pestañas superiores."
+          : "Consulte la actividad del bloque según los permisos asociados a su rol.",
+      };
+    case "perfil":
+      return { title: "Mi perfil", subtitle: "Datos de su cuenta y preferencias en la aplicación." };
+    case "coordinacion":
+      return { title: "Contactar coordinación", subtitle: "Envíe un mensaje al equipo de coordinación del bloque." };
+    case "gestion-usuarios":
+      return { title: "Gestión de usuarios", subtitle: "Alta de cuentas, listado, invitaciones y activación." };
+    case "asignar-anestesistas":
+      return {
+        title: "Asignar anestesistas",
+        subtitle: "Asigne profesionales por quirófano y turno; respete SESPA y el máximo de recursos por anestesista.",
+      };
+    case "gestionar-apertura":
+      return { title: "Apertura del bloque", subtitle: "Gestión de planes de apertura y disponibilidad de recursos." };
+    case "normas":
+      return { title: "Normas", subtitle: "Criterios de programación y uso del bloque quirúrgico." };
+    case "mensajes":
+      return { title: "Mensajes", subtitle: "Bandeja de mensajes desde coordinación y la pantalla de acceso." };
+    case "consulta-preanestesia":
+      return { title: "Consulta de preanestesia", subtitle: "Valoración y listados según la programación del bloque." };
+    case "mi-programacion":
+      return { title: "Mi programación", subtitle: "Resumen de sus asignaciones y pacientes vinculados." };
+    case "solicitar-no-disponibilidad":
+      return { title: "Solicitar no disponibilidad", subtitle: "Indique franjas en las que no puede asumir asignaciones." };
+    case "historico":
+      return { title: "Histórico", subtitle: "Consulta de actividad registrada en el bloque." };
+    default:
+      return { title: "Calendario", subtitle: "" };
+  }
+}
 
 export default function CalendarioPage() {
   const router = useRouter();
   const { user, logout, hydrated } = useAuth();
-  type TabId = "calendario" | "perfil" | "coordinacion" | "gestion-usuarios" | "asignar-anestesistas" | "gestionar-apertura" | "normas" | "mensajes" | "consulta-preanestesia" | "mi-programacion" | "solicitar-no-disponibilidad" | "historico";
-  const [viewTab, setViewTab] = useState<TabId>("calendario");
+  /** Lista de usuarios del directorio (misma fuente que Asignar anestesistas). Debe estar en dependencias del calendario para recalcular nombres de cirujano tras /api/users. */
+  const { users: usersDirectory } = useUsers();
+  const [viewTab, setViewTab] = useState<CalendarioViewTab>("calendario");
   const isAnestesista = user ? hasAnesthetistAccess(user.role) : false;
   const [selectedDateForGrid, setSelectedDateForGrid] = useState<Date | null>(null);
   const [calendarPeriodStart, setCalendarPeriodStart] = useState(() => getWeekStart(new Date()));
@@ -56,7 +122,7 @@ export default function CalendarioPage() {
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
-  const [blockPlans, setBlockPlans] = useState<any[]>([]);
+  const [blockPlans, setBlockPlans] = useState<BlockOpeningPlan[]>([]);
 
   const refreshContactMessages = useCallback(async () => {
     if (modoDemo) return;
@@ -194,16 +260,62 @@ export default function CalendarioPage() {
   const canListUsers = user ? hasPermission(user.role, "user:list") : false;
   const allowedResourceIds = user ? getAllowedResourcesForRole(user.role) : undefined;
 
+  const screen = useMemo(
+    () => getCalendarioScreenContext(viewTab, { isGestor, isAnestesista }),
+    [viewTab, isGestor, isAnestesista]
+  );
+  const workspaceQuickActions = useMemo(() => {
+    if (isGestor && isAnestesista) {
+      return {
+        title: "Espacio gestor-anestesista",
+        subtitle: "Combina visión operativa global y seguimiento de actividad anestésica en un único entorno.",
+        nextAction: viewTab === "calendario" ? "Revise hoy en Calendario y pase a Asignar anestesistas si hay huecos pendientes." : "Use los accesos rápidos para volver al módulo de trabajo principal.",
+        actions: [
+          { label: "Calendario del día", onClick: () => setViewTab("calendario"), primary: viewTab !== "calendario" },
+          { label: "Asignar anestesistas", onClick: () => setViewTab("asignar-anestesistas"), primary: viewTab === "calendario" },
+          { label: "Mi programación", onClick: () => setViewTab("mi-programacion") },
+          { label: "Importar planificación", onClick: () => router.push("/importar-planificacion") },
+          { label: "Reservar / programar", onClick: () => router.push("/cirujano") },
+        ],
+      };
+    }
+    if (isGestor) {
+      return {
+        title: "Espacio gestor",
+        subtitle: "Vista global del bloque para coordinar reservas, asignaciones y seguimiento semanal.",
+        nextAction: viewTab === "calendario" ? "Seleccione un día y revise reservas, preanestesia e infrautilización." : "Vuelva a Calendario para validar impacto de cambios operativos.",
+        actions: [
+          { label: "Calendario del día", onClick: () => setViewTab("calendario"), primary: true },
+          { label: "Asignar anestesistas", onClick: () => setViewTab("asignar-anestesistas") },
+          { label: "Importar planificación", onClick: () => router.push("/importar-planificacion") },
+          { label: "Mensajes", onClick: () => setViewTab("mensajes") },
+          { label: "Reservar / programar", onClick: () => router.push("/cirujano") },
+        ],
+      };
+    }
+    return {
+      title: "Espacio anestesista",
+      subtitle: "Área centrada en su agenda clínica, disponibilidad y consulta de preanestesia.",
+      nextAction: viewTab === "mi-programacion" ? "Revise turnos asignados y después complete preanestesia o no disponibilidad si procede." : "Abra Mi programación para empezar la jornada.",
+      actions: [
+        { label: "Mi programación", onClick: () => setViewTab("mi-programacion"), primary: viewTab !== "mi-programacion" },
+        { label: "Consulta preanestesia", onClick: () => setViewTab("consulta-preanestesia") },
+        { label: "No disponibilidad", onClick: () => setViewTab("solicitar-no-disponibilidad") },
+        { label: "Calendario", onClick: () => setViewTab("calendario") },
+      ],
+    };
+  }, [isGestor, isAnestesista, viewTab, router]);
+
   const slotViews = useMemo(
     () =>
       buildSlotViews(weekStart, reservations, {
         asGestor: isGestor,
         currentUserId: user?.id,
-        users: getUsers(),
+        users: usersDirectory,
         blockPlans,
         asGestorForBlocks: isGestor,
       }),
-    [weekStart, reservations, isGestor, user?.id, blockPlans]
+    [weekStart, reservations, isGestor, user?.id, blockPlans, usersDirectory]
   );
 
   /** Vista del día seleccionado: columnas = recursos, filas = rangos (gestor/anestesista) */
@@ -219,7 +331,7 @@ export default function CalendarioPage() {
       blockPlans,
       asGestorForBlocks: isGestor,
       currentUserId: user?.id,
-      users: getUsers(),
+      users: usersDirectory,
     });
     const dateStr = toISODate(selectedDateForGrid);
     let views = allViews.filter((v) => v.date === dateStr && allowedResources.some((r) => r.id === v.resourceId));
@@ -241,7 +353,7 @@ export default function CalendarioPage() {
       }));
     }
     return views;
-  }, [selectedDateForGrid, reservations, user?.id, isGestor, isAnestesista, allowedResources, anesthetistAssignments, blockPlans]);
+  }, [selectedDateForGrid, reservations, user?.id, isGestor, isAnestesista, allowedResources, anesthetistAssignments, blockPlans, usersDirectory]);
 
   /** Pacientes programados de la semana se asignan automáticamente a la consulta de preanestesia (lun y jue, mañana). */
   const preanesthesiaAssignedByDate = useMemo(() => {
@@ -263,91 +375,106 @@ export default function CalendarioPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <header className="border-b border-gray-200 pb-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-[var(--ribera-navy)]">Calendario</h1>
-              <p className="mt-1 text-sm text-gray-600">
-                Bloque Quirúrgico Covadonga
-                {user && (
-                  <> · {roleLabel(user.role)} · {user.name} · <button type="button" onClick={handleLogout} className="font-medium text-[var(--ribera-red)] hover:underline">Cerrar sesión</button></>
-                )}
-              </p>
-            </div>
-            {user && (
-              <nav className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setViewTab("calendario")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "calendario" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                  Calendario
-                </button>
-                {hasAnesthetistAccess(user?.role ?? "") && isGestor && (
-                  <button type="button" onClick={() => router.push("/cirujano")} className="rounded-lg px-4 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50">
-                    Reservar / programar
-                  </button>
-                )}
-                {(isGestor || canManageUsers) && (
-                  <>
-                    <button type="button" onClick={() => setViewTab("mensajes")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "mensajes" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Mensajes
-                    </button>
-                    {(canListUsers || canManageUsers) && (
-                    <button type="button" onClick={() => setViewTab("gestion-usuarios")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "gestion-usuarios" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
+      <div className="mx-auto max-w-7xl space-y-6">
+        <PageShellHeader
+          title={screen.title}
+          subtitle={
+            <>
+              <span className="text-slate-500">Bloque Quirúrgico Covadonga</span>
+              {screen.subtitle ? (
+                <>
+                  {" "}
+                  <span className="text-slate-400">·</span> {screen.subtitle}
+                </>
+              ) : null}
+            </>
+          }
+          roleBadge={roleLabel(user.role)}
+          userLine={
+            <>
+              <span className="text-slate-700">{user.name}</span>
+              <span className="mx-1.5 text-slate-400">·</span>
+              <button type="button" onClick={handleLogout} className="font-medium text-[var(--ribera-red)] hover:underline">
+                Cerrar sesión
+              </button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <nav className="flex flex-wrap gap-2" aria-label="Secciones principales">
+              <AppNavTab active={viewTab === "calendario"} onClick={() => setViewTab("calendario")}>
+                Calendario
+              </AppNavTab>
+              {isGestor && (
+                <AppNavTab active={false} emphasized onClick={() => router.push("/cirujano")}>
+                  Reservar / programar
+                </AppNavTab>
+              )}
+              {(isGestor || canManageUsers) && (
+                <>
+                  <AppNavTab active={viewTab === "mensajes"} onClick={() => setViewTab("mensajes")}>
+                    Mensajes
+                  </AppNavTab>
+                  {(canListUsers || canManageUsers) && (
+                    <AppNavTab active={viewTab === "gestion-usuarios"} onClick={() => setViewTab("gestion-usuarios")}>
                       Gestión de usuarios
-                    </button>
-                    )}
-                    {isGestor && (
+                    </AppNavTab>
+                  )}
+                  {isGestor && (
                     <>
-                    <button type="button" onClick={() => setViewTab("asignar-anestesistas")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "asignar-anestesistas" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Asignar anestesistas
-                    </button>
-                    <button type="button" onClick={() => setViewTab("gestionar-apertura")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "gestionar-apertura" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Apertura bloque
-                    </button>
-                    <button type="button" onClick={() => setViewTab("normas")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "normas" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Normas
-                    </button>
+                      <AppNavTab active={viewTab === "asignar-anestesistas"} onClick={() => setViewTab("asignar-anestesistas")}>
+                        Asignar anestesistas
+                      </AppNavTab>
+                      <AppNavTab active={viewTab === "gestionar-apertura"} onClick={() => setViewTab("gestionar-apertura")}>
+                        Apertura bloque
+                      </AppNavTab>
+                      <AppNavTab active={viewTab === "normas"} onClick={() => setViewTab("normas")}>
+                        Normas
+                      </AppNavTab>
                     </>
-                    )}
-                  </>
-                )}
-                {isAnestesista && (
-                  <>
-                    <button type="button" onClick={() => setViewTab("mi-programacion")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "mi-programacion" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Mi programación
-                    </button>
-                    <button type="button" onClick={() => setViewTab("solicitar-no-disponibilidad")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "solicitar-no-disponibilidad" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Solicitar no disponibilidad
-                    </button>
-                    <button type="button" onClick={() => setViewTab("consulta-preanestesia")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "consulta-preanestesia" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Consulta preanestesia
-                    </button>
-                    <button type="button" onClick={() => setViewTab("historico")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "historico" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                      Histórico
-                    </button>
-                  </>
-                )}
-                <button type="button" onClick={() => setViewTab("coordinacion")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "coordinacion" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                  Contactar coordinación
-                </button>
-                <button type="button" onClick={() => setViewTab("perfil")} className={`rounded-lg px-4 py-2 text-sm font-medium ${viewTab === "perfil" ? "bg-[var(--ribera-red)] text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}>
-                  Mi perfil
-                </button>
-              </nav>
+                  )}
+                </>
+              )}
+              {isAnestesista && (
+                <>
+                  <AppNavTab active={viewTab === "mi-programacion"} onClick={() => setViewTab("mi-programacion")}>
+                    Mi programación
+                  </AppNavTab>
+                  <AppNavTab
+                    active={viewTab === "solicitar-no-disponibilidad"}
+                    onClick={() => setViewTab("solicitar-no-disponibilidad")}
+                  >
+                    Solicitar no disponibilidad
+                  </AppNavTab>
+                  <AppNavTab active={viewTab === "consulta-preanestesia"} onClick={() => setViewTab("consulta-preanestesia")}>
+                    Consulta preanestesia
+                  </AppNavTab>
+                  <AppNavTab active={viewTab === "historico"} onClick={() => setViewTab("historico")}>
+                    Histórico
+                  </AppNavTab>
+                </>
+              )}
+              <AppNavTab active={viewTab === "coordinacion"} onClick={() => setViewTab("coordinacion")}>
+                Contactar coordinación
+              </AppNavTab>
+              <AppNavTab active={viewTab === "perfil"} onClick={() => setViewTab("perfil")}>
+                Mi perfil
+              </AppNavTab>
+            </nav>
+            {viewTab === "calendario" && (
+              <div className="space-y-2">
+                <CalendarStateLegend variant="compact" showAnestesistaHint={isAnestesista} />
+                {reservationsError ? <InlineNotice variant="error">{reservationsError}</InlineNotice> : null}
+              </div>
             )}
           </div>
-          {viewTab === "calendario" && (
-            <>
-              <p className="mt-2 text-sm text-gray-600">
-                Elija un día para ver el estado del bloque. Privados en naranja, SESPA en rosa.
-              </p>
-              {reservationsError && (
-                <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
-                  {reservationsError}
-                </p>
-              )}
-            </>
-          )}
-        </header>
+        </PageShellHeader>
+        <WorkspaceQuickActions
+          title={workspaceQuickActions.title}
+          subtitle={workspaceQuickActions.subtitle}
+          nextAction={workspaceQuickActions.nextAction}
+          actions={workspaceQuickActions.actions}
+        />
 
         {user && viewTab === "perfil" && (
           <MiPerfil user={user} />
@@ -407,7 +534,7 @@ export default function CalendarioPage() {
               Mensajes desde Contactar coordinación y pantalla de acceso.
             </p>
             {contactMessagesLoading && !modoDemo ? (
-              <p className="rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-800">Cargando mensajes…</p>
+              <InlineNotice variant="info">Cargando mensajes…</InlineNotice>
             ) : (
               <div className="space-y-4">
                 {(modoDemo ? getMessagesToGestor() : contactMessages).length === 0 ? (
@@ -439,9 +566,9 @@ export default function CalendarioPage() {
         {viewTab === "calendario" && (
           <>
             {reservationsLoading && !modoDemo && (
-              <p className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800" role="status">
+              <InlineNotice variant="info" className="mb-2">
                 Cargando reservas…
-              </p>
+              </InlineNotice>
             )}
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
               <div className="shrink-0">
@@ -472,13 +599,11 @@ export default function CalendarioPage() {
                   <>
                     {(isGestor || isAnestesista) && (
                       <>
-                        <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                          <p className="text-sm font-semibold text-gray-800">
+                        <div className="mb-4 space-y-2 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                          <p className="text-sm font-semibold text-[var(--ribera-navy)]">
                             {selectedDateForGrid.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
                           </p>
-                          <p className="mt-1 text-xs text-gray-500">
-                            Verde: libre · Amarillo: reservado · Blanco: con pacientes · Naranja: privado
-                          </p>
+                          <CalendarStateLegend variant="compact" showAnestesistaHint={isAnestesista} />
                         </div>
                         <section className="mb-6">
                           <DaySlotGrid
@@ -500,7 +625,7 @@ export default function CalendarioPage() {
                               No hay reservas. Los cirujanos y endoscopistas pueden crearlas desde el panel <strong>Estado del bloque</strong> (Reservar / programar).
                             </p>
                           ) : (
-                            <VistaSemanal storedReservations={reservations} />
+                            <VistaSemanal storedReservations={reservations} addedUsers={usersDirectory} />
                           )}
                         </section>
                       </>

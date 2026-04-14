@@ -23,11 +23,16 @@ export function CrearNuevoUsuario() {
   const [canSespa, setCanSespa] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [loading, setLoading] = useState(false);
+  /** Si el alta en BD fue OK pero falló el email: el gestor debe poder copiar la contraseña temporal aquí. */
+  const [manualCredentials, setManualCredentials] = useState<{ email: string; tempPassword: string } | null>(null);
   const { refresh } = useUsers();
 
   const handleEnviar = async () => {
     setError("");
+    setWarning("");
+    setManualCredentials(null);
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) {
       setError("Indique el correo electrónico.");
@@ -61,7 +66,12 @@ export function CrearNuevoUsuario() {
         );
         return;
       }
-      const { tempPassword } = data;
+      const tempPassword = typeof data.tempPassword === "string" ? data.tempPassword : "";
+      if (!tempPassword) {
+        setError("El usuario pudo crearse pero el servidor no devolvió contraseña temporal. Use «Regenerar contraseña» en Gestión de usuarios.");
+        await refresh();
+        return;
+      }
       const accessLink = typeof window !== "undefined" ? window.location.origin : "";
       const recipientName = name.trim() || undefined;
 
@@ -80,15 +90,19 @@ export function CrearNuevoUsuario() {
       const emailData = await emailRes.json().catch(() => ({}));
       if (!emailRes.ok) {
         const msg = (emailData.error as string) ?? "No se pudo enviar el email";
-        setError(
+        await refresh();
+        setManualCredentials({ email: trimmed, tempPassword });
+        setWarning(
           emailRes.status === 503
-            ? "Configure NEXT_PUBLIC_APP_URL y SMTP_USER/SMTP_PASS en Vercel para enviar invitaciones."
-            : msg
+            ? "Usuario creado en la base de datos, pero no se pudo enviar el correo (revise NEXT_PUBLIC_APP_URL y SMTP). Copie la contraseña temporal abajo y entréguela al usuario para que pueda iniciar sesión."
+            : `Usuario creado, pero falló el envío del correo: ${msg}. Copie la contraseña temporal abajo.`
         );
         return;
       }
 
       setSent(true);
+      setWarning("");
+      setManualCredentials(null);
       setEmail("");
       setName("");
       refresh();
@@ -154,6 +168,19 @@ export function CrearNuevoUsuario() {
           </label>
         )}
         <div className="flex flex-col gap-2">
+          {manualCredentials && (
+            <div
+              className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950"
+              role="status"
+            >
+              <p className="mb-2 font-semibold">Contraseña temporal (cópiela ahora)</p>
+              <p className="mb-1 text-gray-800">
+                <span className="text-gray-600">Correo:</span> {manualCredentials.email}
+              </p>
+              <p className="select-all font-mono text-base font-bold tracking-wider">{manualCredentials.tempPassword}</p>
+            </div>
+          )}
+          {warning && <p className="text-sm font-medium text-amber-800">{warning}</p>}
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="button"

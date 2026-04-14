@@ -38,6 +38,8 @@ export interface CreateReservationPayload {
   shift: string;
   slotIndex: number;
   patients?: ApiPatientInput[];
+  /** Cirujano/endoscopista responsable cuando programa un gestor (obligatorio en API para ese rol). */
+  surgeonId?: string;
 }
 
 export interface ApiPatientInput {
@@ -59,13 +61,19 @@ export interface FetchReservationsFilters {
   resourceId?: string;
 }
 
+/** GET devuelve turno en minúsculas (`toApiReservation`); otros clientes pueden enviar MORNING/AFTERNOON. */
+function normalizeShiftFromApi(shift: string): Shift {
+  const u = String(shift).trim().toUpperCase();
+  return u === "MORNING" ? "morning" : "afternoon";
+}
+
 /** Convierte reserva de API al formato del frontend */
 export function mapReservationFromApi(api: ApiReservation): Reservation {
   return {
     id: api.id,
     date: api.date,
     resourceId: api.resourceId as ResourceId,
-    shift: (api.shift === "MORNING" ? "morning" : "afternoon") as Shift,
+    shift: normalizeShiftFromApi(api.shift),
     slotIndex: api.slotIndex,
     surgeonId: api.surgeonId,
     status: (api.status.toLowerCase() as Reservation["status"]) || "pending",
@@ -158,7 +166,7 @@ export async function fetchReservations(filters?: FetchReservationsFilters): Pro
 }
 
 export async function createReservation(payload: CreateReservationPayload): Promise<Reservation> {
-  const body = {
+  const body: Record<string, unknown> = {
     date: payload.date,
     resourceId: payload.resourceId,
     shift: payload.shift,
@@ -168,6 +176,7 @@ export async function createReservation(payload: CreateReservationPayload): Prom
       orderIndex: p.orderIndex ?? 0,
     })),
   };
+  if (payload.surgeonId) body.surgeonId = payload.surgeonId;
 
   const res = await fetch("/api/reservations", {
     method: "POST",
@@ -179,7 +188,7 @@ export async function createReservation(payload: CreateReservationPayload): Prom
 
   if (!res.ok) {
     if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError("Solo cirujanos, endoscopistas y gestores-anestesistas pueden crear reservas.", 403);
+    if (res.status === 403) throw new ReservationsApiError("No tiene permiso para crear esta reserva.", 403);
     if (res.status === 409) throw new ReservationsApiError((data as { error?: string }).error ?? "El hueco ya está ocupado.", 409);
     throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear la reserva", res.status);
   }
