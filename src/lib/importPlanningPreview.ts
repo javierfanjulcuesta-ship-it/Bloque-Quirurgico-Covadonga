@@ -1,5 +1,4 @@
 import * as XLSX from "xlsx";
-import { getDocument } from "pdfjs-dist";
 import { RESOURCES } from "@/lib/constants";
 import type { ResourceId } from "@/lib/types";
 
@@ -158,6 +157,7 @@ function parseExcel(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; name
 }
 
 async function parsePdf(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; name: string }>): Promise<PlanningPreviewResult> {
+  const { getDocument } = await import("pdfjs-dist");
   const issues: string[] = [];
   const blocks: PlanningPreviewBlock[] = [];
   const data = new Uint8Array(arrayBuffer);
