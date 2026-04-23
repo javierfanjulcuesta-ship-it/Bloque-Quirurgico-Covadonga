@@ -11,6 +11,7 @@ import { roleLabel } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { useUsers } from "@/context/UsersContext";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 
 const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "gestor-anestesista", "cirujano", "endoscopista"];
 
@@ -21,18 +22,31 @@ export function CrearNuevoUsuario() {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [canSespa, setCanSespa] = useState(false);
-  const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-  /** Si el alta en BD fue OK pero falló el email: el gestor debe poder copiar la contraseña temporal aquí. */
-  const [manualCredentials, setManualCredentials] = useState<{ email: string; tempPassword: string } | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; tempPassword: string; role: UserRole } | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
   const { refresh } = useUsers();
+
+  const copyCredentials = async (value: { email: string; tempPassword: string; role: UserRole }) => {
+    const text = `Email: ${value.email}\nContraseña temporal: ${value.tempPassword}\nRol: ${roleLabel(value.role)}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus("Credenciales copiadas al portapapeles.");
+    } catch {
+      setCopyStatus("No se pudieron copiar automáticamente. Puede seleccionar y copiar manualmente.");
+    }
+    setTimeout(() => setCopyStatus(""), 2500);
+  };
 
   const handleEnviar = async () => {
     setError("");
     setWarning("");
-    setManualCredentials(null);
+    setSuccess("");
+    setCopyStatus("");
+    setCreatedCredentials(null);
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) {
       setError("Indique el correo electrónico.");
@@ -72,6 +86,9 @@ export function CrearNuevoUsuario() {
         await refresh();
         return;
       }
+      const credentials = { email: trimmed, tempPassword, role: profile };
+      setCreatedCredentials(credentials);
+      setSuccess("Usuario creado correctamente. Puede acceder inmediatamente con estas credenciales.");
       const accessLink = typeof window !== "undefined" ? window.location.origin : "";
       const recipientName = name.trim() || undefined;
 
@@ -91,18 +108,16 @@ export function CrearNuevoUsuario() {
       if (!emailRes.ok) {
         const msg = (emailData.error as string) ?? "No se pudo enviar el email";
         await refresh();
-        setManualCredentials({ email: trimmed, tempPassword });
+        setCreatedCredentials(credentials);
         setWarning(
           emailRes.status === 503
-            ? "Usuario creado en la base de datos, pero no se pudo enviar el correo (revise NEXT_PUBLIC_APP_URL y SMTP). Copie la contraseña temporal abajo y entréguela al usuario para que pueda iniciar sesión."
-            : `Usuario creado, pero falló el envío del correo: ${msg}. Copie la contraseña temporal abajo.`
+            ? "El usuario está creado, pero no se pudo enviar el correo de invitación. Puede entregar estas credenciales manualmente."
+            : `El usuario está creado, pero falló el envío del correo: ${msg}. Puede entregar estas credenciales manualmente.`
         );
         return;
       }
 
-      setSent(true);
       setWarning("");
-      setManualCredentials(null);
       setEmail("");
       setName("");
       refresh();
@@ -118,7 +133,7 @@ export function CrearNuevoUsuario() {
       <div>
           <h2 className="mb-4 text-xl font-bold text-[var(--ribera-navy)]">Crear nuevo usuario</h2>
           <p className="mb-4 text-sm text-gray-600">
-            Seleccione el perfil, correo y nombre. Se creará el usuario en el sistema y se enviará un correo real con la invitación y la contraseña temporal.
+            Seleccione el perfil, correo y nombre. El usuario se crea al instante y verá credenciales para acceso inmediato.
           </p>
 
           <div className="flex flex-col gap-4 max-w-md">
@@ -168,20 +183,35 @@ export function CrearNuevoUsuario() {
           </label>
         )}
         <div className="flex flex-col gap-2">
-          {manualCredentials && (
-            <div
-              className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-sm text-amber-950"
-              role="status"
-            >
-              <p className="mb-2 font-semibold">Contraseña temporal (cópiela ahora)</p>
-              <p className="mb-1 text-gray-800">
-                <span className="text-gray-600">Correo:</span> {manualCredentials.email}
-              </p>
-              <p className="select-all font-mono text-base font-bold tracking-wider">{manualCredentials.tempPassword}</p>
+          {success && <InlineNotice variant="success">{success}</InlineNotice>}
+          {warning && <InlineNotice variant="warning">{warning}</InlineNotice>}
+          {error && <InlineNotice variant="error">{error}</InlineNotice>}
+          {createdCredentials && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-800">Credenciales de acceso</p>
+              <div className="space-y-1 text-sm text-slate-700">
+                <p>
+                  <span className="font-medium">Email:</span>{" "}
+                  <span className="select-all font-mono">{createdCredentials.email}</span>
+                </p>
+                <p>
+                  <span className="font-medium">Contraseña temporal:</span>{" "}
+                  <span className="select-all font-mono">{createdCredentials.tempPassword}</span>
+                </p>
+                <p>
+                  <span className="font-medium">Rol:</span> {roleLabel(createdCredentials.role)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyCredentials(createdCredentials)}
+                className="btn-ribera-secondary mt-3 px-3 py-2 text-sm"
+              >
+                Copiar credenciales
+              </button>
+              {copyStatus && <p className="mt-2 text-xs text-slate-600">{copyStatus}</p>}
             </div>
           )}
-          {warning && <p className="text-sm font-medium text-amber-800">{warning}</p>}
-          {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="button"
             onClick={handleEnviar}
@@ -191,11 +221,6 @@ export function CrearNuevoUsuario() {
             {loading ? "Creando usuario…" : "Crear usuario y enviar invitación"}
           </button>
         </div>
-        {sent && (
-          <p className="text-sm text-green-700">
-            Usuario creado y email enviado correctamente.
-          </p>
-        )}
           </div>
       </div>
     </section>

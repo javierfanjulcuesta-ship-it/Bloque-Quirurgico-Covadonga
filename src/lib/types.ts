@@ -95,6 +95,8 @@ export interface Reservation {
   shift: Shift;
   slotIndex: number;
   surgeonId: string;
+  /** Nombre libre introducido por gestor cuando no hay cirujano reconocido en BD. */
+  externalSurgeonName?: string;
   coSurgeonIds?: string[];
   patients: PatientInBlock[];
   status: "pending" | "confirmed" | "cancelled" | "released";
@@ -164,6 +166,12 @@ export interface SlotView {
   usedMinutes?: number;
   /** Minutos totales del slot (o tramo asociado). */
   totalMinutes?: number;
+  /** Minutos libres dentro del tramo reservado actual. */
+  remainingMinutes?: number;
+  /** Estado visual de la reserva según ocupación real. */
+  reservationVisualState?: "empty" | "partial" | "complete";
+  /** Indica si esta reserva es anulable (sin actividad clínica real). */
+  isCancellableReservation?: boolean;
 }
 
 /** Indisponibilidad del anestesista */

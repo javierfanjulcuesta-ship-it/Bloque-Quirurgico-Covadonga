@@ -19,13 +19,18 @@ import {
 import {
   getReservations,
   createReservationEntry,
+  createReservationBatchEntry,
+  cancelReservationEntry,
   cancelPatient,
   updateReservationPatientEntry,
+  updateReservationBlockEntry,
+  movePatientsBetweenReservationsEntry,
   ReservationsApiError,
 } from "@/lib/reservations";
 import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
+import { SOLICITUD_RECURSOS_OPTIONS } from "@/lib/constants";
 import { modoDemo } from "@/lib/config";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
 import { ProgramarPacientesModal, type SlotSelection } from "@/components/cirujano/ProgramarPacientesModal";
@@ -51,9 +56,15 @@ import {
   holguraSuggestionBadgeLabel,
   holguraSuggestionLevel,
 } from "@/lib/reservationUnderutilization";
+import { findNextConsecutiveRangeByMinutes } from "@/lib/scheduling/nextConsecutiveFreeSuggestion";
+import { calculateReservationOccupation, getReservationVisualState } from "@/lib/reservationOccupation";
 
 function slotKey(date: string, resourceId: string, shift: string, slotIndex: number) {
   return `${date}__${resourceId}__${shift}__${slotIndex}`;
+}
+
+function patientMoveSelectKey(reservationId: string, patientId: string) {
+  return `${reservationId}::${patientId}`;
 }
 
 /**
@@ -174,6 +185,89 @@ function assertConsecutiveSlotsForGestor(
   return null;
 }
 
+function normalizeSelectedSlotsToResolvedContext(
+  slots: SlotSelection[],
+  resolved: Map<string, ResourceId>
+): Array<SlotSelection & { resourceId: ResourceId }> {
+  return slots
+    .map((slot) => {
+      const key = `${slot.date}-${slot.shift}-${slot.slotIndex}`;
+      const rid = resolved.get(key) ?? (slot.resourceId as ResourceId);
+      return { ...slot, resourceId: rid };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || a.slotIndex - b.slotIndex);
+}
+
+function planAutomaticExpansion(params: {
+  baseSlots: Array<SlotSelection & { resourceId: ResourceId }>;
+  reservations: Reservation[];
+  titularSurgeonId: string;
+  extraMinutesNeeded: number;
+}): { ok: true; additionalSlots: Array<SlotSelection & { resourceId: ResourceId }> } | { ok: false; message: string } {
+  const { baseSlots, reservations, titularSurgeonId, extraMinutesNeeded } = params;
+  if (extraMinutesNeeded <= 0) return { ok: true, additionalSlots: [] };
+  if (!baseSlots.length) return { ok: false, message: "No hay huecos base para ampliar." };
+
+  const first = baseSlots[0]!;
+  const sameContext = baseSlots.every(
+    (s) => s.date === first.date && s.shift === first.shift && s.resourceId === first.resourceId
+  );
+  if (!sameContext) {
+    return {
+      ok: false,
+      message: "Para ampliar automáticamente, seleccione huecos del mismo día, turno y recurso.",
+    };
+  }
+
+  const sortedIndices = [...new Set(baseSlots.map((s) => s.slotIndex))].sort((a, b) => a - b);
+  for (let i = 1; i < sortedIndices.length; i++) {
+    if (sortedIndices[i] !== sortedIndices[i - 1]! + 1) {
+      return {
+        ok: false,
+        message: "Para ampliar automáticamente, la selección inicial debe ser consecutiva.",
+      };
+    }
+  }
+
+  const used = new Set(sortedIndices);
+  let remaining = extraMinutesNeeded;
+  let idx = sortedIndices[sortedIndices.length - 1]! + 1;
+  const max = getSlots(first.shift).length - 1;
+  const additionalSlots: Array<SlotSelection & { resourceId: ResourceId }> = [];
+
+  while (remaining > 0 && idx <= max) {
+    if (!used.has(idx)) {
+      const free = isSlotUsableForTitularInRoom(
+        first.resourceId,
+        first.date,
+        first.shift,
+        idx,
+        reservations,
+        titularSurgeonId
+      );
+      if (!free) {
+        return { ok: false, message: "No hay hueco consecutivo suficiente para ampliar la reserva." };
+      }
+      const duration = getSlotDurationMinutes(first.shift, idx);
+      additionalSlots.push({
+        date: first.date,
+        shift: first.shift,
+        slotIndex: idx,
+        durationMinutes: duration,
+        resourceId: first.resourceId,
+      });
+      remaining -= duration;
+    }
+    idx += 1;
+  }
+
+  if (remaining > 0) {
+    return { ok: false, message: "No hay hueco consecutivo suficiente para ampliar la reserva." };
+  }
+
+  return { ok: true, additionalSlots };
+}
+
 type CirujanoTab = "bloque" | "pacientes" | "perfil" | "coordinacion" | "historico" | "normas" | "liberaciones";
 
 function getCirujanoScreenContext(
@@ -235,8 +329,18 @@ export default function CirujanoPage() {
     retentionAllowed: boolean;
   } | null>(null);
   const [cancellingPatient, setCancellingPatient] = useState(false);
+  const [cancelReservationConfirm, setCancelReservationConfirm] = useState<{
+    reservationId: string;
+    date: string;
+    resourceLabel: string;
+    shiftLabel: string;
+    slotIndex: number;
+  } | null>(null);
+  const [cancellingReservation, setCancellingReservation] = useState(false);
   const [editingPatient, setEditingPatient] = useState<{
     reservationId: string;
+    reservationSurgeonId: string;
+    reservationExternalSurgeonName?: string;
     patientId: string;
     numeroHistoria: string;
     procedure: string;
@@ -245,9 +349,28 @@ export default function CirujanoPage() {
     entidadFinanciadora: string;
     admissionType: "ingreso" | "ambulatorio";
     notes: string;
+    solicitudRecursos?: PatientInBlock["solicitudRecursos"];
+    responsibleSurgeonId: string;
+    externalSurgeonName: string;
   } | null>(null);
   const [savingEditedPatient, setSavingEditedPatient] = useState(false);
+  /** Selección para mover pacientes: claves `reservationId::patientId` (solo un bloque origen a la vez). */
+  const [movePatientSelectKeys, setMovePatientSelectKeys] = useState<Set<string>>(new Set());
+  const [movePatientsModal, setMovePatientsModal] = useState<{
+    sourceReservationId: string;
+    sourceDate: string;
+    targetReservationId: string;
+  } | null>(null);
+  const [movingPatients, setMovingPatients] = useState(false);
   const [gestorSurgeonSoloId, setGestorSurgeonSoloId] = useState("");
+  const [gestorSurgeonSoloManualName, setGestorSurgeonSoloManualName] = useState("");
+  const [slotSuggestion, setSlotSuggestion] = useState<{
+    date: string;
+    shift: Shift;
+    resourceId: ResourceId;
+    startSlotIndex: number;
+    endSlotIndex: number;
+  } | null>(null);
   const programDeepLinkConsumedRef = useRef(false);
 
   /** Enlace desde calendario gestor: ?programDate=&resourceId=&shift=&startSlot=&span=&surgeonId= */
@@ -402,6 +525,7 @@ export default function CirujanoPage() {
 
   const handleSlotSelect = (slot: SlotView) => {
     const key = slotKey(slot.date, slot.resourceId, slot.shift, slot.slotIndex);
+    setSlotSuggestion(null);
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -485,6 +609,24 @@ export default function CirujanoPage() {
   const totalReservedMinutes = selectedSlots.reduce((s, x) => s + x.durationMinutes, 0);
 
   const canCancelPatient = !modoDemo && user && hasPermission(user.role, "patient:cancel");
+  const canEditPatient = !modoDemo && user && hasPermission(user.role, "patient:update");
+  const canMovePatientsBetweenBlocks =
+    !modoDemo && isGestorScheduler && user && hasPermission(user.role, "booking:update");
+  const canCancelOwnReservations = !modoDemo && user && hasPermission(user.role, "booking:cancel");
+
+  const cancellableOwnReservations = useMemo(() => {
+    if (!user || !canCancelOwnReservations) return [];
+    return reservations
+      .filter((r) => r.surgeonId === user.id)
+      .filter((r) => r.status !== "cancelled")
+      .filter((r) => r.status !== "released")
+      .filter((r) => {
+        const occupation = calculateReservationOccupation(r);
+        const visualState = getReservationVisualState(r, occupation);
+        return occupation.occupiedMinutes === 0 || (!occupation.hasClinicalActivity && visualState === "empty");
+      })
+      .sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.slotIndex - b.slotIndex);
+  }, [reservations, user, canCancelOwnReservations]);
 
   const handleConfirmCancelPatient = async () => {
     if (!cancelConfirm || cancellingPatient) return;
@@ -512,6 +654,30 @@ export default function CirujanoPage() {
     }
   };
 
+  const handleConfirmCancelReservation = async () => {
+    if (!cancelReservationConfirm || cancellingReservation) return;
+    setCancellingReservation(true);
+    setErrorNotification(null);
+    setNotification(null);
+    try {
+      await cancelReservationEntry(cancelReservationConfirm.reservationId, "Liberada por cirujano");
+      setCancelReservationConfirm(null);
+      await refreshReservations();
+      setNotification("Reserva anulada correctamente");
+      setTimeout(() => setNotification(null), 5000);
+    } catch (err) {
+      const apiMessage = err instanceof ReservationsApiError ? err.message : "";
+      if (apiMessage.toLowerCase().includes("actividad asociada")) {
+        setErrorNotification("Esta reserva no puede anularse porque ya contiene actividad asociada");
+      } else {
+        setErrorNotification("No se pudo anular la reserva");
+      }
+      setTimeout(() => setErrorNotification(null), 6000);
+    } finally {
+      setCancellingReservation(false);
+    }
+  };
+
   const handleSaveEditedPatient = async () => {
     if (!editingPatient || savingEditedPatient) return;
     if (!editingPatient.numeroHistoria.trim() || !editingPatient.procedure.trim() || !editingPatient.anesthesiaType.trim() || !editingPatient.entidadFinanciadora.trim()) {
@@ -521,6 +687,11 @@ export default function CirujanoPage() {
     }
     if (!Number.isFinite(editingPatient.estimatedDurationMinutes) || editingPatient.estimatedDurationMinutes <= 0) {
       setErrorNotification("La duración estimada debe ser mayor de 0.");
+      setTimeout(() => setErrorNotification(null), 6000);
+      return;
+    }
+    if (isGestorScheduler && !editingPatient.responsibleSurgeonId.trim() && !editingPatient.externalSurgeonName.trim()) {
+      setErrorNotification("Indique titular del bloque con ID o nombre libre.");
       setTimeout(() => setErrorNotification(null), 6000);
       return;
     }
@@ -537,7 +708,20 @@ export default function CirujanoPage() {
         entidadFinanciadora: editingPatient.entidadFinanciadora.trim(),
         admissionType: editingPatient.admissionType,
         notes: editingPatient.notes,
+        solicitudRecursos: editingPatient.solicitudRecursos,
       });
+      if (
+        editingPatient.responsibleSurgeonId.trim() !== editingPatient.reservationSurgeonId ||
+        editingPatient.externalSurgeonName.trim() !== (editingPatient.reservationExternalSurgeonName ?? "")
+      ) {
+        await updateReservationBlockEntry({
+          reservationId: editingPatient.reservationId,
+          surgeonId: editingPatient.responsibleSurgeonId.trim() || undefined,
+          externalSurgeonName: editingPatient.responsibleSurgeonId.trim()
+            ? undefined
+            : editingPatient.externalSurgeonName.trim() || undefined,
+        });
+      }
       setEditingPatient(null);
       await refreshReservations();
       setNotification("Paciente actualizado correctamente.");
@@ -559,17 +743,138 @@ export default function CirujanoPage() {
 
   /** Pacientes ya programados por este cirujano/endoscopista (reservas con pacientes) */
   const misPacientesProgramados = useMemo(() => {
-    const list: { date: string; resourceLabel: string; shift: Shift; patient: PatientInBlock; reservationId: string }[] = [];
+    const surgeonNameById = new Map(getUsers().map((u) => [u.id, u.name]));
+    const list: {
+      date: string;
+      resourceLabel: string;
+      shift: Shift;
+      patient: PatientInBlock;
+      reservationId: string;
+      reservationSurgeonId: string;
+      reservationExternalSurgeonName?: string;
+      reservationSurgeonLabel: string;
+    }[] = [];
     reservations
-      .filter((r) => r.surgeonId === user?.id && r.patients?.length > 0)
+      .filter((r) => (isGestorScheduler ? (r.patients?.length ?? 0) > 0 : r.surgeonId === user?.id && (r.patients?.length ?? 0) > 0))
       .forEach((r) => {
         const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
+        const reservationSurgeonLabel = surgeonNameById.get(r.surgeonId) ?? r.externalSurgeonName ?? "—";
         r.patients.forEach((p) => {
-          list.push({ date: r.date, resourceLabel, shift: r.shift, patient: p, reservationId: r.id });
+          list.push({
+            date: r.date,
+            resourceLabel,
+            shift: r.shift,
+            patient: p,
+            reservationId: r.id,
+            reservationSurgeonId: r.surgeonId,
+            reservationExternalSurgeonName: r.externalSurgeonName,
+            reservationSurgeonLabel,
+          });
         });
       });
     return list.sort((a, b) => a.date.localeCompare(b.date) || a.patient.order - b.patient.order);
-  }, [reservations, user?.id]);
+  }, [reservations, user?.id, isGestorScheduler]);
+
+  const moveTargetReservationOptions = useMemo(() => {
+    if (!movePatientsModal) return [];
+    const surgeonNameById = new Map(getUsers().map((u) => [u.id, u.name]));
+    return reservations
+      .filter(
+        (r) =>
+          r.date === movePatientsModal.sourceDate &&
+          r.status !== "cancelled" &&
+          r.id !== movePatientsModal.sourceReservationId
+      )
+      .map((r) => ({
+        id: r.id,
+        label: `${RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId} · ${
+          r.shift === "morning" ? "Mañana" : "Tarde"
+        } · tramo ${r.slotIndex} · ${surgeonNameById.get(r.surgeonId) ?? r.externalSurgeonName ?? "Titular no asignado"}`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [movePatientsModal, reservations]);
+
+  const toggleMovePatientSelect = useCallback((reservationId: string, patientId: string) => {
+    const key = patientMoveSelectKey(reservationId, patientId);
+    setMovePatientSelectKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        return next;
+      }
+      const first = next.values().next().value as string | undefined;
+      if (first) {
+        const existingRes = first.split("::")[0];
+        if (existingRes && existingRes !== reservationId) next.clear();
+      }
+      next.add(key);
+      return next;
+    });
+  }, []);
+
+  const openMovePatientsModal = useCallback(() => {
+    if (movePatientSelectKeys.size === 0) {
+      setErrorNotification("Seleccione al menos un paciente.");
+      setTimeout(() => setErrorNotification(null), 5000);
+      return;
+    }
+    const sources = new Set(
+      [...movePatientSelectKeys].map((k) => k.split("::")[0]).filter((x): x is string => Boolean(x))
+    );
+    if (sources.size !== 1) {
+      setErrorNotification("Seleccione pacientes del mismo bloque (una sola reserva origen).");
+      setTimeout(() => setErrorNotification(null), 6000);
+      return;
+    }
+    const sourceReservationId = [...sources][0]!;
+    const row = misPacientesProgramados.find((p) => p.reservationId === sourceReservationId);
+    if (!row) return;
+    setMovePatientsModal({
+      sourceReservationId,
+      sourceDate: row.date,
+      targetReservationId: "",
+    });
+  }, [movePatientSelectKeys, misPacientesProgramados]);
+
+  const handleConfirmMovePatients = useCallback(async () => {
+    if (!movePatientsModal || movingPatients) return;
+    if (!movePatientsModal.targetReservationId.trim()) {
+      setErrorNotification("Elija el bloque destino.");
+      setTimeout(() => setErrorNotification(null), 5000);
+      return;
+    }
+    const patientIds = [...movePatientSelectKeys]
+      .map((k) => {
+        const parts = k.split("::");
+        return parts[1];
+      })
+      .filter((x): x is string => Boolean(x));
+    setMovingPatients(true);
+    setErrorNotification(null);
+    try {
+      const result = await movePatientsBetweenReservationsEntry({
+        sourceReservationId: movePatientsModal.sourceReservationId,
+        targetReservationId: movePatientsModal.targetReservationId.trim(),
+        patientIds,
+      });
+      setMovePatientsModal(null);
+      setMovePatientSelectKeys(new Set());
+      await refreshReservations();
+      const exp = result.expansionSlotsCreated;
+      setNotification(
+        exp > 0
+          ? `Pacientes movidos correctamente. Se amplió el bloque destino con ${exp} ranura(s) adicional(es).`
+          : "Pacientes movidos correctamente."
+      );
+      setTimeout(() => setNotification(null), 6000);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al mover pacientes";
+      setErrorNotification(msg);
+      setTimeout(() => setErrorNotification(null), 8000);
+    } finally {
+      setMovingPatients(false);
+    }
+  }, [movePatientsModal, movePatientSelectKeys, movingPatients, refreshReservations]);
 
   if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
     return null;
@@ -605,14 +910,15 @@ export default function CirujanoPage() {
 
   const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;
+    setSlotSuggestion(null);
     if (selectedSlots.some((s) => isNextWeekReserveClosed(s.date))) return;
-    if (isGestorScheduler && !gestorSurgeonSoloId.trim()) {
+    if (isGestorScheduler && !gestorSurgeonSoloId.trim() && !gestorSurgeonSoloManualName.trim()) {
       setNotification(null);
-      setErrorNotification("Seleccione el cirujano o endoscopista responsable para la reserva vacía.");
+      setErrorNotification("Seleccione cirujano responsable o escriba nombre libre para la reserva vacía.");
       setTimeout(() => setErrorNotification(null), 6000);
       return;
     }
-    const surgeonIdTarget = isGestorScheduler ? gestorSurgeonSoloId.trim() : user.id;
+    const surgeonIdTarget = isGestorScheduler && gestorSurgeonSoloId.trim() ? gestorSurgeonSoloId.trim() : user.id;
     const result = resolveSlotsToSameRoom(selectedSlots, reservations, blockPlans, surgeonIdTarget);
     if (!result) {
       setNotification(null);
@@ -640,11 +946,14 @@ export default function CirujanoPage() {
           shift: slot.shift,
           slotIndex: slot.slotIndex,
           surgeonId: surgeonIdTarget,
+          externalSurgeonName:
+            isGestorScheduler && !gestorSurgeonSoloId.trim() ? gestorSurgeonSoloManualName.trim() || undefined : undefined,
           patients: [],
         });
       }
       setSelectedKeys(new Set());
       setGestorSurgeonSoloId("");
+      setGestorSurgeonSoloManualName("");
       await refreshReservations();
       setNotification("Reserva realizada. Los huecos quedan reservados a su nombre.");
       setTimeout(() => setNotification(null), 4000);
@@ -660,16 +969,19 @@ export default function CirujanoPage() {
   const handleProgramarSave = async (
     patients: Omit<PatientInBlock, "id" | "order">[],
     _coSurgeonIds?: string[],
-    meta?: { responsibleSurgeonId: string }
+    meta?: { responsibleSurgeonId?: string; externalSurgeonName?: string }
   ) => {
     if (selectedSlots.length === 0) return;
-    if (isGestorScheduler && !meta?.responsibleSurgeonId?.trim()) {
-      const msg = "Falta el cirujano responsable.";
+    setSlotSuggestion(null);
+    if (isGestorScheduler && !meta?.responsibleSurgeonId?.trim() && !meta?.externalSurgeonName?.trim()) {
+      const msg = "Falta el cirujano responsable (ID o nombre libre).";
       setErrorNotification(msg);
       setTimeout(() => setErrorNotification(null), 6000);
       throw new Error(msg);
     }
-    const surgeonIdTargetForResolve = isGestorScheduler ? meta!.responsibleSurgeonId.trim() : user.id;
+    const surgeonIdTargetForResolve = isGestorScheduler && meta?.responsibleSurgeonId?.trim()
+      ? meta.responsibleSurgeonId.trim()
+      : user.id;
     const result = resolveSlotsToSameRoom(selectedSlots, reservations, blockPlans, surgeonIdTargetForResolve);
     if (!result) {
       setNotification(null);
@@ -695,40 +1007,213 @@ export default function CirujanoPage() {
       (s, p) => s + p.estimatedDurationMinutes + 10,
       0
     );
-    if (totalPatientMinutes > totalReservedMinutes) {
-      setNotification(null);
-      setErrorNotification("El tiempo total de los pacientes supera el tiempo reservado. No se ha guardado.");
-      setTimeout(() => setErrorNotification(null), 5000);
-      return;
+    const extraMinutesNeeded = Math.max(0, totalPatientMinutes - totalReservedMinutes);
+    const baseResolvedSlots = normalizeSelectedSlotsToResolvedContext(selectedSlots, result.resolved);
+
+    let additionalSlots: Array<SlotSelection & { resourceId: ResourceId }> = [];
+    if (extraMinutesNeeded > 0) {
+      const expansion = planAutomaticExpansion({
+        baseSlots: baseResolvedSlots,
+        reservations,
+        titularSurgeonId: surgeonIdTargetForResolve,
+        extraMinutesNeeded,
+      });
+      if (!expansion.ok) {
+        let suggestedMsg: string | null = null;
+        const baseContext = baseResolvedSlots[0];
+        if (baseContext) {
+          const occupiedSet = new Set(
+            reservations
+              .filter(
+                (r) =>
+                  r.date === baseContext.date &&
+                  r.shift === baseContext.shift &&
+                  r.resourceId === baseContext.resourceId &&
+                  r.status !== "cancelled"
+              )
+              .map((r) => r.slotIndex)
+          );
+          const selectedSet = new Set(baseResolvedSlots.map((s) => s.slotIndex));
+          const totalNeededMinutes = totalPatientMinutes;
+          const suggestion = findNextConsecutiveRangeByMinutes({
+            startAfterSlotIndex: Math.max(...baseResolvedSlots.map((s) => s.slotIndex)),
+            maxSlotIndex: getSlots(baseContext.shift).length - 1,
+            requiredMinutes: totalNeededMinutes,
+            isSlotFree: (slotIndex) => !occupiedSet.has(slotIndex) && !selectedSet.has(slotIndex),
+            getSlotMinutes: (slotIndex) => getSlotDurationMinutes(baseContext.shift, slotIndex),
+          });
+          if (suggestion) {
+            setSlotSuggestion({
+              date: baseContext.date,
+              shift: baseContext.shift,
+              resourceId: baseContext.resourceId,
+              startSlotIndex: suggestion.startSlotIndex,
+              endSlotIndex: suggestion.endSlotIndex,
+            });
+            suggestedMsg = `No cabe en la selección actual. Siguiente hueco libre sugerido: slot ${suggestion.startSlotIndex} a ${suggestion.endSlotIndex} en el mismo recurso/turno.`;
+          } else {
+            setSlotSuggestion(null);
+          }
+        }
+        setNotification(null);
+        setErrorNotification(suggestedMsg ?? expansion.message);
+        setTimeout(() => setErrorNotification(null), 6000);
+        throw new Error(expansion.message);
+      }
+      additionalSlots = expansion.additionalSlots;
     }
     setSavingReservations(true);
     setErrorNotification(null);
     try {
       const surgeonIdTarget = surgeonIdTargetForResolve;
-      for (let idx = 0; idx < selectedSlots.length; idx++) {
-        const slot = selectedSlots[idx]!;
-        const resolvedId = result.resolved.get(`${slot.date}-${slot.shift}-${slot.slotIndex}`) ?? (slot.resourceId as ResourceId);
-        const slotPatients = idx === 0 ? patientsWithOrder : [];
-        await createReservationEntry({
+      const finalSlots = [...baseResolvedSlots, ...additionalSlots].sort(
+        (a, b) => a.date.localeCompare(b.date) || a.slotIndex - b.slotIndex
+      );
+
+      // Validación previa contra backend antes de escribir: evita depender solo del estado local.
+      if (additionalSlots.length > 0) {
+        const sample = finalSlots[0]!;
+        const freshReservations = await getReservations({
+          dateFrom: sample.date,
+          dateTo: sample.date,
+          resourceId: sample.resourceId,
+        });
+        const recheck = planAutomaticExpansion({
+          baseSlots: baseResolvedSlots,
+          reservations: freshReservations,
+          titularSurgeonId: surgeonIdTargetForResolve,
+          extraMinutesNeeded,
+        });
+        if (!recheck.ok) {
+          const baseContext = baseResolvedSlots[0];
+          if (baseContext) {
+            const occupiedSet = new Set(
+              freshReservations
+                .filter(
+                  (r) =>
+                    r.date === baseContext.date &&
+                    r.shift === baseContext.shift &&
+                    r.resourceId === baseContext.resourceId &&
+                    r.status !== "cancelled"
+                )
+                .map((r) => r.slotIndex)
+            );
+            const selectedSet = new Set(baseResolvedSlots.map((s) => s.slotIndex));
+            const suggestion = findNextConsecutiveRangeByMinutes({
+              startAfterSlotIndex: Math.max(...baseResolvedSlots.map((s) => s.slotIndex)),
+              maxSlotIndex: getSlots(baseContext.shift).length - 1,
+              requiredMinutes: totalPatientMinutes,
+              isSlotFree: (slotIndex) => !occupiedSet.has(slotIndex) && !selectedSet.has(slotIndex),
+              getSlotMinutes: (slotIndex) => getSlotDurationMinutes(baseContext.shift, slotIndex),
+            });
+            if (suggestion) {
+              setSlotSuggestion({
+                date: baseContext.date,
+                shift: baseContext.shift,
+                resourceId: baseContext.resourceId,
+                startSlotIndex: suggestion.startSlotIndex,
+                endSlotIndex: suggestion.endSlotIndex,
+              });
+            }
+          }
+          setNotification(null);
+          setErrorNotification("No hay hueco consecutivo suficiente para ampliar la reserva.");
+          setTimeout(() => setErrorNotification(null), 6000);
+          throw new Error("Automatic expansion failed on backend recheck");
+        }
+      }
+
+      await createReservationBatchEntry({
+        slots: finalSlots.map((slot) => ({
           date: slot.date,
-          resourceId: resolvedId,
+          resourceId: slot.resourceId,
           shift: slot.shift,
           slotIndex: slot.slotIndex,
-          surgeonId: surgeonIdTarget,
-          patients: slotPatients,
-        });
-      }
+        })),
+        surgeonId: surgeonIdTarget,
+        externalSurgeonName:
+          isGestorScheduler && !meta?.responsibleSurgeonId?.trim() ? meta?.externalSurgeonName?.trim() || undefined : undefined,
+        patients: patientsWithOrder,
+        isBatchCreation: true,
+      });
       setSelectedKeys(new Set());
       setGestorSurgeonSoloId("");
+      setGestorSurgeonSoloManualName("");
       setShowProgramarModal(false);
       await refreshReservations();
-      setNotification("Pacientes programados correctamente.");
+      const resourcesPending = patientsWithOrder.filter((p) => !p.solicitudRecursos).length;
+      const remainingMinutes = Math.max(0, finalSlots.reduce((s, x) => s + x.durationMinutes, 0) - totalPatientMinutes);
+      const parts = ["Pacientes programados correctamente."];
+      if (additionalSlots.length > 0) parts.push(`Ampliación automática aplicada: +${additionalSlots.length} hueco(s).`);
+      if (remainingMinutes > 0) parts.push(`Tiempo no utilizado estimado: ~${remainingMinutes} min.`);
+      if (resourcesPending > 0) parts.push(`Recursos pendientes: ${resourcesPending} paciente(s).`);
+      setNotification(parts.join(" "));
       setTimeout(() => setNotification(null), 4000);
     } catch (err) {
-      const msg = err instanceof ReservationsApiError ? err.message : "Error al programar pacientes";
+      const msg = err instanceof ReservationsApiError
+        ? err.message
+        : "No se pudo crear el bloque completo. No se ha guardado ningún cambio.";
       setErrorNotification(msg);
       setTimeout(() => setErrorNotification(null), 6000);
       throw err; // rethrow para que el modal no cierre
+    } finally {
+      setSavingReservations(false);
+    }
+  };
+
+  const handleExpandReservationFromModal = async (
+    extraMinutesNeeded: number
+  ): Promise<{ ok: boolean; message?: string }> => {
+    if (selectedSlots.length === 0 || extraMinutesNeeded <= 0) {
+      return { ok: false, message: "No se pudo ampliar la reserva" };
+    }
+    const surgeonIdTarget = isGestorScheduler && gestorSurgeonSoloId.trim() ? gestorSurgeonSoloId.trim() : user.id;
+    const result = resolveSlotsToSameRoom(selectedSlots, reservations, blockPlans, surgeonIdTarget);
+    if (!result) {
+      return { ok: false, message: "No hay hueco contiguo suficiente para ampliar la reserva" };
+    }
+    const baseResolvedSlots = normalizeSelectedSlotsToResolvedContext(selectedSlots, result.resolved);
+    const expansion = planAutomaticExpansion({
+      baseSlots: baseResolvedSlots,
+      reservations,
+      titularSurgeonId: surgeonIdTarget,
+      extraMinutesNeeded,
+    });
+    if (!expansion.ok || expansion.additionalSlots.length === 0) {
+      return { ok: false, message: "No hay hueco contiguo suficiente para ampliar la reserva" };
+    }
+    try {
+      setSavingReservations(true);
+      await createReservationBatchEntry({
+        slots: expansion.additionalSlots.map((slot) => ({
+          date: slot.date,
+          resourceId: slot.resourceId,
+          shift: slot.shift,
+          slotIndex: slot.slotIndex,
+        })),
+        surgeonId: surgeonIdTarget,
+        externalSurgeonName:
+          isGestorScheduler && !gestorSurgeonSoloId.trim() ? gestorSurgeonSoloManualName.trim() || undefined : undefined,
+        patients: [],
+        isBatchCreation: true,
+      });
+      setSelectedKeys((prev) => {
+        const next = new Set(prev);
+        expansion.additionalSlots.forEach((slot) => {
+          next.add(slotKey(slot.date, slot.resourceId, slot.shift, slot.slotIndex));
+        });
+        return next;
+      });
+      await refreshReservations();
+      setNotification("Reserva ampliada correctamente");
+      setTimeout(() => setNotification(null), 4000);
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "";
+      if (msg.toLowerCase().includes("ocup")) {
+        return { ok: false, message: "No hay hueco contiguo suficiente para ampliar la reserva" };
+      }
+      return { ok: false, message: "No se pudo ampliar la reserva" };
     } finally {
       setSavingReservations(false);
     }
@@ -814,6 +1299,28 @@ export default function CirujanoPage() {
           <InlineNotice variant="info">Cargando reservas…</InlineNotice>
         )}
         {errorNotification && <InlineNotice variant="warning">{errorNotification}</InlineNotice>}
+        {slotSuggestion && (
+          <InlineNotice variant="info">
+            Siguiente hueco libre sugerido: {slotSuggestion.resourceId} · {slotSuggestion.shift === "morning" ? "mañana" : "tarde"} · slots{" "}
+            {slotSuggestion.startSlotIndex}-{slotSuggestion.endSlotIndex}.
+            <button
+              type="button"
+              onClick={() => {
+                const next = new Set<string>();
+                for (let i = slotSuggestion.startSlotIndex; i <= slotSuggestion.endSlotIndex; i++) {
+                  next.add(slotKey(slotSuggestion.date, slotSuggestion.resourceId, slotSuggestion.shift, i));
+                }
+                setSelectedKeys(next);
+                setSlotSuggestion(null);
+                setNotification("Sugerencia aplicada. Revise y vuelva a guardar.");
+                setTimeout(() => setNotification(null), 5000);
+              }}
+              className="ml-2 rounded border border-sky-300 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-800 hover:bg-sky-100"
+            >
+              Usar sugerencia
+            </button>
+          </InlineNotice>
+        )}
         {notification && (
           <InlineNotice variant="success" role="status" aria-live="polite">
             {notification}
@@ -840,8 +1347,40 @@ export default function CirujanoPage() {
           <section className="rounded-xl border border-gray-200 bg-white p-6">
             <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes</h2>
             <p className="mb-4 text-sm text-gray-600">
-              Pacientes programados en sus reservas.
+              {isGestorScheduler ? "Pacientes programados en reservas de quirófano (vista global de gestor)." : "Pacientes programados en sus reservas."}
+              {canMovePatientsBetweenBlocks && (
+                <>
+                  {" "}
+                  Puede <strong>reordenar entre bloques del mismo día</strong>: marque uno o varios pacientes del mismo bloque y use <strong>Mover a otro bloque</strong> (operación atómica en servidor; el titular pasa a ser el del bloque destino).
+                </>
+              )}
             </p>
+            {canMovePatientsBetweenBlocks && misPacientesProgramados.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-gray-800">
+                <span>
+                  {movePatientSelectKeys.size > 0
+                    ? `${movePatientSelectKeys.size} paciente(s) seleccionado(s) para mover.`
+                    : "Marque los pacientes de un mismo bloque (misma fila de reserva) y elija destino."}
+                </span>
+                <button
+                  type="button"
+                  onClick={openMovePatientsModal}
+                  disabled={movePatientSelectKeys.size === 0}
+                  className="rounded-lg border border-sky-600 bg-white px-4 py-2 text-sm font-medium text-sky-900 shadow-sm hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Mover a otro bloque…
+                </button>
+                {movePatientSelectKeys.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMovePatientSelectKeys(new Set())}
+                    className="text-sm font-medium text-sky-800 underline decoration-sky-400 hover:text-sky-950"
+                  >
+                    Limpiar selección
+                  </button>
+                )}
+              </div>
+            )}
             {misPacientesProgramados.length === 0 ? (
               <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">Aún no tiene pacientes programados. En la pestaña <strong>Reservar / programar</strong>, elija huecos en el calendario y pulse <strong>Reservar y programar pacientes</strong> para añadirlos.</p>
             ) : (
@@ -849,23 +1388,41 @@ export default function CirujanoPage() {
                 <table className="w-full min-w-[640px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
+                      {canMovePatientsBetweenBlocks && (
+                        <th className="w-12 px-2 py-2 text-center font-semibold text-gray-700" scope="col">
+                          <span className="sr-only">Seleccionar para mover de bloque</span>
+                          Mover
+                        </th>
+                      )}
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Fecha</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Sala</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Turno</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Paciente / Nº historia</th>
+                      {isGestorScheduler && <th className="px-3 py-2 text-left font-semibold text-gray-700">Titular bloque</th>}
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Procedimiento</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Duración</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Anestesia</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Entidad</th>
-                      {canCancelPatient && <th className="px-3 py-2 text-left font-semibold text-gray-700">Acciones</th>}
+                      {(canEditPatient || canCancelPatient) && <th className="px-3 py-2 text-left font-semibold text-gray-700">Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient, reservationId }) => {
+                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient, reservationId, reservationSurgeonId, reservationExternalSurgeonName, reservationSurgeonLabel }) => {
                       const isLastPatient = misPacientesProgramados.filter((p) => p.reservationId === reservationId).length === 1;
                       const retentionAllowed = isReservationRetentionStillAllowed(date);
                       return (
                         <tr key={`${date}-${resourceLabel}-${shift}-${patient.id}`} className="border-b border-gray-100 hover:bg-gray-50/50">
+                          {canMovePatientsBetweenBlocks && (
+                            <td className="px-2 py-2 text-center align-middle">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-gray-300 text-sky-700 focus:ring-sky-500"
+                                checked={movePatientSelectKeys.has(patientMoveSelectKey(reservationId, patient.id))}
+                                onChange={() => toggleMovePatientSelect(reservationId, patient.id)}
+                                aria-label={`Seleccionar para mover de bloque: ${patient.name || patient.numeroHistoria || "paciente"}`}
+                              />
+                            </td>
+                          )}
                           <td className="px-3 py-2 text-gray-800">{new Date(date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</td>
                           <td className="px-3 py-2 text-gray-800">{resourceLabel}</td>
                           <td className="px-3 py-2 text-gray-800">{shift === "morning" ? "Mañana" : "Tarde"}</td>
@@ -873,48 +1430,58 @@ export default function CirujanoPage() {
                             <span className="font-medium text-gray-800">{patient.name || "—"}</span>
                             <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
                           </td>
+                          {isGestorScheduler && <td className="px-3 py-2 text-gray-700">{reservationSurgeonLabel}</td>}
                           <td className="px-3 py-2 text-gray-700">{patient.procedure}</td>
                           <td className="px-3 py-2 text-gray-700">{patient.estimatedDurationMinutes} min</td>
                           <td className="px-3 py-2 text-gray-700">{patient.anesthesiaType}</td>
                           <td className="px-3 py-2 text-gray-700">{patient.entidadFinanciadora}</td>
-                          {canCancelPatient && (
+                          {(canEditPatient || canCancelPatient) && (
                             <td className="px-3 py-2">
                               <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setEditingPatient({
-                                    reservationId,
-                                    patientId: patient.id,
-                                    numeroHistoria: patient.numeroHistoria ?? "",
-                                    procedure: patient.procedure ?? "",
-                                    estimatedDurationMinutes: patient.estimatedDurationMinutes ?? 0,
-                                    anesthesiaType: patient.anesthesiaType ?? "",
-                                    entidadFinanciadora: patient.entidadFinanciadora ?? "",
-                                    admissionType: patient.admissionType ?? "ambulatorio",
-                                    notes: patient.notes ?? "",
-                                  })
-                                }
-                                className="rounded border border-blue-300 bg-blue-50 min-h-10 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
-                              >
-                                Editar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setCancelConfirm({
-                                    reservationId,
-                                    patientId: patient.id,
-                                    patientLabel: `${patient.name || patient.numeroHistoria || "Paciente"} (${patient.numeroHistoria || "—"})`,
-                                    date,
-                                    isLastPatient,
-                                    retentionAllowed,
-                                  })
-                                }
-                                className="rounded border border-amber-400 bg-amber-50 min-h-10 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
-                              >
-                                Cancelar
-                              </button>
+                                {canEditPatient && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setEditingPatient({
+                                        reservationId,
+                                        reservationSurgeonId,
+                                        reservationExternalSurgeonName,
+                                        patientId: patient.id,
+                                        numeroHistoria: patient.numeroHistoria ?? "",
+                                        procedure: patient.procedure ?? "",
+                                        estimatedDurationMinutes: patient.estimatedDurationMinutes ?? 0,
+                                        anesthesiaType: patient.anesthesiaType ?? "",
+                                        entidadFinanciadora: patient.entidadFinanciadora ?? "",
+                                        admissionType: patient.admissionType ?? "ambulatorio",
+                                        notes: patient.notes ?? "",
+                                        solicitudRecursos: patient.solicitudRecursos,
+                                        responsibleSurgeonId: reservationSurgeonId,
+                                        externalSurgeonName: reservationExternalSurgeonName ?? "",
+                                      })
+                                    }
+                                    className="rounded border border-blue-300 bg-blue-50 min-h-10 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                                  >
+                                    Editar
+                                  </button>
+                                )}
+                                {canCancelPatient && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCancelConfirm({
+                                        reservationId,
+                                        patientId: patient.id,
+                                        patientLabel: `${patient.name || patient.numeroHistoria || "Paciente"} (${patient.numeroHistoria || "—"})`,
+                                        date,
+                                        isLastPatient,
+                                        retentionAllowed,
+                                      })
+                                    }
+                                    className="rounded border border-amber-400 bg-amber-50 min-h-10 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                                  >
+                                    Cancelar
+                                  </button>
+                                )}
                               </div>
                             </td>
                           )}
@@ -956,6 +1523,50 @@ export default function CirujanoPage() {
                     )}
                     <CalendarStateLegend variant="compact" className="mb-4" />
 
+                    {canCancelOwnReservations && selectedDateForGrid && (() => {
+                      const selectedDateIso = toISODate(selectedDateForGrid);
+                      const ownForDay = cancellableOwnReservations.filter((r) => r.date === selectedDateIso);
+                      if (ownForDay.length === 0) return null;
+                      return (
+                        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+                          <p className="text-sm font-semibold text-amber-900">
+                            Mis reservas anulables de este día
+                          </p>
+                          <p className="mt-1 text-xs text-amber-800">
+                            Puede liberar huecos reservados por usted sin actividad clínica asociada.
+                          </p>
+                          <div className="mt-3 space-y-2">
+                            {ownForDay.map((r) => {
+                              const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
+                              const shiftLabel = r.shift === "morning" ? "Mañana" : "Tarde";
+                              return (
+                                <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-100 bg-white px-3 py-2">
+                                  <span className="text-sm text-slate-700">
+                                    {resourceLabel} · {shiftLabel} · tramo {r.slotIndex}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCancelReservationConfirm({
+                                        reservationId: r.id,
+                                        date: r.date,
+                                        resourceLabel,
+                                        shiftLabel,
+                                        slotIndex: r.slotIndex,
+                                      })
+                                    }
+                                    className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+                                  >
+                                    Liberar hueco
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {selectedKeys.size > 0 && (
                       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ribera-red)]/30 bg-ribera-red-pale p-4">
                         <span className="text-sm font-medium text-gray-800">
@@ -963,19 +1574,32 @@ export default function CirujanoPage() {
                         </span>
                         {isGestorScheduler && (
                           <label className="min-w-[220px] flex-1">
-                            <span className="block text-xs font-medium text-gray-700">Cirujano responsable (solo reservar vacío) *</span>
+                            <span className="block text-xs font-medium text-gray-700">Cirujano responsable (solo reservar vacío)</span>
                             <select
                               value={gestorSurgeonSoloId}
                               onChange={(e) => setGestorSurgeonSoloId(e.target.value)}
                               className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
                             >
-                              <option value="">Seleccione…</option>
+                              <option value="">No seleccionado (usar nombre libre)</option>
                               {surgeonOptionsForGestor.map((u) => (
                                 <option key={u.id} value={u.id}>
                                   {u.name}
                                 </option>
                               ))}
                             </select>
+                          </label>
+                        )}
+                        {isGestorScheduler && (
+                          <label className="min-w-[220px] flex-1">
+                            <span className="block text-xs font-medium text-gray-700">Nombre libre de cirujano (opcional)</span>
+                            <input
+                              type="text"
+                              value={gestorSurgeonSoloManualName}
+                              onChange={(e) => setGestorSurgeonSoloManualName(e.target.value)}
+                              className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                              placeholder="Ej. Dr. Externo"
+                              maxLength={120}
+                            />
                           </label>
                         )}
                         {isGestorScheduler && (
@@ -1026,6 +1650,71 @@ export default function CirujanoPage() {
         )}
       </div>
 
+      {movePatientsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="move-patients-dialog-title"
+        >
+          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+            <h3 id="move-patients-dialog-title" className="mb-2 text-lg font-semibold text-gray-800">
+              Mover pacientes a otro bloque
+            </h3>
+            <p className="mb-4 text-sm text-gray-600">
+              Solo el <strong>mismo día</strong>. La operación es atómica: o se mueven todos los seleccionados o no cambia nada. Los pacientes quedan en la cabecera del bloque destino y{" "}
+              <strong>adoptan el titular (cirujano / nombre libre) de ese bloque</strong>.
+            </p>
+            <label className="mb-4 block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">Reserva / bloque destino</span>
+              <select
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                value={movePatientsModal.targetReservationId}
+                onChange={(e) =>
+                  setMovePatientsModal((prev) =>
+                    prev ? { ...prev, targetReservationId: e.target.value } : prev
+                  )
+                }
+              >
+                <option value="">Elija destino…</option>
+                {moveTargetReservationOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {moveTargetReservationOptions.length === 0 && (
+              <p className="mb-4 text-sm text-amber-800">
+                No hay otras reservas activas ese día para usar como destino (excluye el bloque origen).
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMovePatientsModal(null)}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                disabled={movingPatients}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMovePatients}
+                disabled={
+                  movingPatients ||
+                  !movePatientsModal.targetReservationId.trim() ||
+                  moveTargetReservationOptions.length === 0
+                }
+                className="rounded-lg border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {movingPatients ? "Moviendo…" : "Confirmar movimiento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title">
           <div className="mx-4 max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
@@ -1061,12 +1750,54 @@ export default function CirujanoPage() {
         </div>
       )}
 
+      {cancelReservationConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-reservation-dialog-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+            <h3 id="cancel-reservation-dialog-title" className="mb-2 text-lg font-semibold text-gray-800">
+              Liberar hueco reservado
+            </h3>
+            <p className="mb-3 text-sm text-gray-700">
+              Vas a liberar este hueco. Podrá volver a ser reservado.
+            </p>
+            <p className="mb-4 text-sm text-gray-600">
+              <strong>{cancelReservationConfirm.resourceLabel}</strong> · {cancelReservationConfirm.shiftLabel} · tramo {cancelReservationConfirm.slotIndex}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelReservationConfirm(null)}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                disabled={cancellingReservation}
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancelReservation}
+                disabled={cancellingReservation}
+                className="rounded-lg border border-amber-500 bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+              >
+                {cancellingReservation ? "Liberando…" : "Liberar hueco"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showProgramarModal && selectedSlots.length > 0 && (
 <ProgramarPacientesModal
         slots={selectedSlots}
         currentUserId={user.id}
         schedulerRole={user.role}
+        initialResponsibleSurgeonId={isGestorScheduler ? gestorSurgeonSoloId : undefined}
+        initialExternalSurgeonName={isGestorScheduler && !gestorSurgeonSoloId.trim() ? gestorSurgeonSoloManualName : undefined}
         onSave={handleProgramarSave}
+        onRequestExpandReservation={handleExpandReservationFromModal}
         onClose={() => setShowProgramarModal(false)}
         saving={savingReservations}
       />
@@ -1108,6 +1839,54 @@ export default function CirujanoPage() {
                 <span className="block text-sm font-medium text-gray-700">Notas</span>
                 <input className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={editingPatient.notes} onChange={(e) => setEditingPatient((prev) => prev ? { ...prev, notes: e.target.value } : prev)} />
               </label>
+              <label>
+                <span className="block text-sm font-medium text-gray-700">Recursos (opcional)</span>
+                <select
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  value={editingPatient.solicitudRecursos ?? ""}
+                  onChange={(e) =>
+                    setEditingPatient((prev) =>
+                      prev ? { ...prev, solicitudRecursos: (e.target.value || undefined) as PatientInBlock["solicitudRecursos"] } : prev
+                    )
+                  }
+                >
+                  <option value="">Sin definir</option>
+                  {SOLICITUD_RECURSOS_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isGestorScheduler && (
+                <>
+                  <label>
+                    <span className="block text-sm font-medium text-gray-700">Titular bloque (ID interno)</span>
+                    <select
+                      className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                      value={editingPatient.responsibleSurgeonId}
+                      onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, responsibleSurgeonId: e.target.value } : prev))}
+                    >
+                      <option value="">No asignado (usar nombre libre)</option>
+                      {surgeonOptionsForGestor.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="block text-sm font-medium text-gray-700">Titular bloque (nombre libre)</span>
+                    <input
+                      className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                      value={editingPatient.externalSurgeonName}
+                      onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, externalSurgeonName: e.target.value } : prev))}
+                      placeholder="Ej. Dr. Rojas"
+                      maxLength={120}
+                    />
+                  </label>
+                </>
+              )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setEditingPatient(null)} className="rounded border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">

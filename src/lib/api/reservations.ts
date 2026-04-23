@@ -12,6 +12,7 @@ export interface ApiReservation {
   shift: string;
   slotIndex: number;
   surgeonId: string;
+  externalSurgeonName?: string;
   status: string;
   anesthetistId?: string;
   createdAt: string;
@@ -40,6 +41,20 @@ export interface CreateReservationPayload {
   patients?: ApiPatientInput[];
   /** Cirujano/endoscopista responsable cuando programa un gestor (obligatorio en API para ese rol). */
   surgeonId?: string;
+  externalSurgeonName?: string;
+}
+
+export interface CreateReservationBatchPayload {
+  slots: Array<{
+    date: string;
+    resourceId: string;
+    shift: string;
+    slotIndex: number;
+  }>;
+  patients?: ApiPatientInput[];
+  surgeonId?: string;
+  externalSurgeonName?: string;
+  isBatchCreation?: boolean;
 }
 
 export interface ApiPatientInput {
@@ -53,6 +68,14 @@ export interface ApiPatientInput {
   orderIndex: number;
   notes?: string;
   solicitudRecursos?: string;
+}
+
+export interface UpdateReservationBlockPayload {
+  reservationId: string;
+  surgeonId?: string;
+  externalSurgeonName?: string;
+  replacePatients?: boolean;
+  patients?: ApiPatientInput[];
 }
 
 export interface FetchReservationsFilters {
@@ -76,6 +99,7 @@ export function mapReservationFromApi(api: ApiReservation): Reservation {
     shift: normalizeShiftFromApi(api.shift),
     slotIndex: api.slotIndex,
     surgeonId: api.surgeonId,
+    externalSurgeonName: api.externalSurgeonName,
     status: (api.status.toLowerCase() as Reservation["status"]) || "pending",
     anesthetistId: api.anesthetistId,
     createdAt: api.createdAt,
@@ -177,6 +201,7 @@ export async function createReservation(payload: CreateReservationPayload): Prom
     })),
   };
   if (payload.surgeonId) body.surgeonId = payload.surgeonId;
+  if (payload.externalSurgeonName) body.externalSurgeonName = payload.externalSurgeonName;
 
   const res = await fetch("/api/reservations", {
     method: "POST",
@@ -195,6 +220,47 @@ export async function createReservation(payload: CreateReservationPayload): Prom
 
   const reservation = (data as { reservation: ApiReservation }).reservation;
   return mapReservationFromApi(reservation);
+}
+
+export async function createReservationBatch(payload: CreateReservationBatchPayload): Promise<Reservation[]> {
+  const body: Record<string, unknown> = {
+    slots: payload.slots.map((s) => ({
+      date: s.date,
+      resourceId: s.resourceId,
+      shift: s.shift,
+      slotIndex: s.slotIndex,
+    })),
+    patients: (payload.patients ?? []).map((p) => ({
+      ...p,
+      orderIndex: p.orderIndex ?? 0,
+    })),
+    isBatchCreation: payload.isBatchCreation === true,
+  };
+  if (payload.surgeonId) body.surgeonId = payload.surgeonId;
+  if (payload.externalSurgeonName) body.externalSurgeonName = payload.externalSurgeonName;
+
+  const res = await fetch("/api/reservations/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError("No tiene permiso para crear este bloque.", 403);
+    if (res.status === 409) {
+      throw new ReservationsApiError(
+        (data as { error?: string }).error ?? "No se pudo crear el bloque completo. No se ha guardado ningún cambio.",
+        409
+      );
+    }
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear el bloque", res.status);
+  }
+
+  const list = (data as { reservations: ApiReservation[] }).reservations ?? [];
+  return list.map(mapReservationFromApi);
 }
 
 async function patchReservation(id: string, path: string, body: unknown): Promise<Reservation> {
@@ -225,6 +291,31 @@ export async function addPatientsToReservation(
   return patchReservation(reservationId, "", {
     patients: patients.map((p, i) => ({ ...p, orderIndex: p.orderIndex ?? i })),
   });
+}
+
+export async function updateReservationBlock(payload: UpdateReservationBlockPayload): Promise<Reservation> {
+  const body: Record<string, unknown> = {};
+  if (payload.surgeonId !== undefined) body.surgeonId = payload.surgeonId;
+  if (payload.externalSurgeonName !== undefined) body.externalSurgeonName = payload.externalSurgeonName;
+  if (payload.replacePatients === true) {
+    body.replacePatients = true;
+    body.patients = (payload.patients ?? []).map((p, i) => ({ ...p, orderIndex: p.orderIndex ?? i }));
+  }
+  const res = await fetch(`/api/reservations/${payload.reservationId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
+    if (res.status === 404) throw new ReservationsApiError((data as { error?: string }).error ?? "No encontrado.", 404);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al actualizar bloque", res.status);
+  }
+  const reservation = (data as { reservation: ApiReservation }).reservation;
+  return mapReservationFromApi(reservation);
 }
 
 /** Actualizar datos de un paciente en la reserva. */
@@ -276,4 +367,29 @@ export async function cancelReservation(
   reason?: string
 ): Promise<Reservation> {
   return patchReservation(reservationId, "/cancel", { reason });
+}
+
+/** Mover pacientes entre reservas (mismo día, servidor transaccional). */
+export async function movePatientsBetweenReservationsApi(payload: {
+  sourceReservationId: string;
+  targetReservationId: string;
+  patientIds: string[];
+}): Promise<{ destinationHeadReservationId: string; expansionSlotsCreated: number }> {
+  const res = await fetch("/api/reservations/move-patients", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
+    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
+    throw new ReservationsApiError((data as { error?: string }).error ?? "No se pudo mover", res.status);
+  }
+  const typed = data as { destinationHeadReservationId: string; expansionSlotsCreated: number };
+  return {
+    destinationHeadReservationId: typed.destinationHeadReservationId,
+    expansionSlotsCreated: typed.expansionSlotsCreated ?? 0,
+  };
 }

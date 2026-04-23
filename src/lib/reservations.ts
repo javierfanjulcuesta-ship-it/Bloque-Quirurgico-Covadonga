@@ -10,8 +10,12 @@ import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMe
 import {
   fetchReservations,
   createReservation,
+  createReservationBatch,
+  updateReservationBlock as updateReservationBlockApi,
+  cancelReservation as cancelReservationApi,
   cancelReservationPatient,
   updateReservationPatient as updateReservationPatientApi,
+  movePatientsBetweenReservationsApi,
   mapPatientToApi,
   ReservationsApiError,
 } from "./api/reservations";
@@ -45,7 +49,21 @@ export interface CreateReservationData {
   slotIndex: number;
   /** En API real: cirujano titular del hueco. Si se omite, el backend usa la sesión. */
   surgeonId: string;
+  externalSurgeonName?: string;
   patients?: Omit<PatientInBlock, "id" | "order">[];
+}
+
+export interface CreateReservationBatchData {
+  slots: Array<{
+    date: string;
+    resourceId: string;
+    shift: string;
+    slotIndex: number;
+  }>;
+  surgeonId: string;
+  externalSurgeonName?: string;
+  patients?: Omit<PatientInBlock, "id" | "order">[];
+  isBatchCreation?: boolean;
 }
 
 /** Crea una reserva (localStorage si modoDemo, API si no) */
@@ -66,6 +84,7 @@ export async function createReservationEntry(data: CreateReservationData): Promi
       shift: data.shift as Reservation["shift"],
       slotIndex: data.slotIndex,
       surgeonId: data.surgeonId,
+      externalSurgeonName: data.externalSurgeonName,
       patients: patientsWithId,
       status: "pending",
       createdAt: now,
@@ -81,12 +100,69 @@ export async function createReservationEntry(data: CreateReservationData): Promi
     slotIndex: data.slotIndex,
     patients: apiPatients,
     surgeonId: data.surgeonId,
+    externalSurgeonName: data.externalSurgeonName,
+  });
+}
+
+export async function createReservationBatchEntry(data: CreateReservationBatchData): Promise<Reservation[]> {
+  if (modoDemo) {
+    const created: Reservation[] = [];
+    const sorted = [...data.slots].sort((a, b) => a.date.localeCompare(b.date) || a.slotIndex - b.slotIndex);
+    const now = new Date().toISOString();
+    for (let i = 0; i < sorted.length; i++) {
+      const slot = sorted[i]!;
+      const patientsWithId: PatientInBlock[] =
+        i === 0
+          ? (data.patients ?? []).map((p, idx) => ({
+              ...p,
+              id: `pat-${Date.now()}-${idx}`,
+              order: idx,
+              admissionType: p.admissionType ?? "ambulatorio",
+              solicitudRecursos: p.solicitudRecursos,
+            }))
+          : [];
+      const res: Reservation = {
+        id: `res-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        resourceId: slot.resourceId as Reservation["resourceId"],
+        date: slot.date,
+        shift: slot.shift as Reservation["shift"],
+        slotIndex: slot.slotIndex,
+        surgeonId: data.surgeonId,
+        externalSurgeonName: data.externalSurgeonName,
+        patients: patientsWithId,
+        status: patientsWithId.length > 0 ? "confirmed" : "pending",
+        createdAt: now,
+      };
+      addOrUpdateStoredReservation(res);
+      created.push(res);
+    }
+    return Promise.resolve(created);
+  }
+
+  const apiPatients = (data.patients ?? []).map((p, i) => mapPatientToApi({ ...p, order: i }));
+  return createReservationBatch({
+    slots: data.slots,
+    surgeonId: data.surgeonId,
+    externalSurgeonName: data.externalSurgeonName,
+    patients: apiPatients,
+    isBatchCreation: data.isBatchCreation,
   });
 }
 
 export interface CancelPatientResult {
   reservation: Reservation;
   slotOutcome: "retained" | "released" | null;
+}
+
+/** Cancelar una reserva completa (liberar hueco). Requiere API real. */
+export async function cancelReservationEntry(
+  reservationId: string,
+  reason?: string
+): Promise<Reservation> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Anular reserva no disponible en modo demo.", 400);
+  }
+  return cancelReservationApi(reservationId, reason);
 }
 
 export interface UpdatePatientData {
@@ -101,6 +177,14 @@ export interface UpdatePatientData {
   admissionType?: PatientInBlock["admissionType"];
   notes?: string;
   solicitudRecursos?: PatientInBlock["solicitudRecursos"];
+}
+
+export interface UpdateReservationBlockData {
+  reservationId: string;
+  surgeonId?: string;
+  externalSurgeonName?: string;
+  replacePatients?: boolean;
+  patients?: Omit<PatientInBlock, "id" | "order">[];
 }
 
 /** Cancelar un paciente. En modoDemo no disponible (usa API real si useRealReservationsApi). */
@@ -131,4 +215,30 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     notes: data.notes,
     solicitudRecursos: data.solicitudRecursos,
   });
+}
+
+export async function updateReservationBlockEntry(data: UpdateReservationBlockData): Promise<Reservation> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Editar bloque no disponible en modo demo.", 400);
+  }
+  const apiPatients = (data.patients ?? []).map((p, i) => mapPatientToApi({ ...p, order: i }));
+  return updateReservationBlockApi({
+    reservationId: data.reservationId,
+    surgeonId: data.surgeonId,
+    externalSurgeonName: data.externalSurgeonName,
+    replacePatients: data.replacePatients,
+    patients: apiPatients,
+  });
+}
+
+/** Mueve pacientes de una reserva a otra (mismo día). Requiere API real. */
+export async function movePatientsBetweenReservationsEntry(payload: {
+  sourceReservationId: string;
+  targetReservationId: string;
+  patientIds: string[];
+}): Promise<{ destinationHeadReservationId: string; expansionSlotsCreated: number }> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Mover pacientes entre bloques no disponible en modo demo.", 400);
+  }
+  return movePatientsBetweenReservationsApi(payload);
 }

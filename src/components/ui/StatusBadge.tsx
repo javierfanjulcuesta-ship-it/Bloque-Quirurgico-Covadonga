@@ -7,6 +7,7 @@ const toneClasses = {
   warning: "border-amber-300 bg-amber-50 text-amber-800",
   danger: "border-rose-300 bg-rose-50 text-rose-800",
   private: "border-orange-300 bg-orange-50 text-orange-800",
+  mutual: "border-violet-300 bg-violet-50 text-violet-800",
   sespa: "border-rose-300 bg-rose-100 text-rose-800",
 } as const;
 
@@ -39,9 +40,11 @@ export function FundingBadge({
   type,
   size = "sm",
 }: {
-  type: "sespa" | "private";
+  type: "sespa" | "private" | "mutual";
   size?: keyof typeof sizeClasses;
 }) {
-  return <StatusBadge tone={type === "sespa" ? "sespa" : "private"} size={size}>{type === "sespa" ? "SESPA" : "Privado"}</StatusBadge>;
+  const tone = type === "sespa" ? "sespa" : type === "private" ? "private" : "mutual";
+  const label = type === "sespa" ? "SESPA" : type === "private" ? "Privado" : "Mutua";
+  return <StatusBadge tone={tone} size={size}>{label}</StatusBadge>;
 }
 

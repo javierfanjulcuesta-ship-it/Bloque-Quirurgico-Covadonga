@@ -17,6 +17,7 @@ export type CreateReservationResult =
 export interface CreateReservationOptions {
   origin?: ReservationOrigin;
   actorUserId?: string;
+  externalSurgeonName?: string;
 }
 
 export async function createReservationInDb(
@@ -38,6 +39,7 @@ export async function createReservationInDb(
   const dateObj = new Date(date + "T00:00:00.000Z");
   const shiftEnum = shift === "morning" ? "MORNING" : "AFTERNOON";
   const origin = options?.origin ?? "APP";
+  const externalSurgeonName = options?.externalSurgeonName?.trim() || null;
   const originPrisma = origin === "EMAIL" ? "EMAIL" : origin === "GESTOR" ? "GESTOR" : "APP";
 
   const existing = await prisma.reservation.findFirst({
@@ -89,6 +91,7 @@ export async function createReservationInDb(
             where: { id: existing.id },
             data: {
               status: "CONFIRMED",
+              externalSurgeonName,
               updatedByUserId: actorUserId,
             },
           });
@@ -122,6 +125,7 @@ export async function createReservationInDb(
           where: { id: existing.id },
           data: {
             surgeonId,
+            externalSurgeonName,
             status: hasPatients ? "CONFIRMED" : "PENDING",
             origin: originPrisma,
             createdByUserId: actorUserId,
@@ -170,6 +174,7 @@ export async function createReservationInDb(
       shift: shiftEnum,
       slotIndex,
       surgeonId,
+      externalSurgeonName,
       status: hasPatients ? "CONFIRMED" : "PENDING",
       origin: originPrisma,
       createdByUserId: actorUserId,

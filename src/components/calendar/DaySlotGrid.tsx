@@ -167,7 +167,8 @@ export function DaySlotGrid({
       <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2">
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-emerald-200 bg-[var(--slot-free)]" /> Libre</li>
-          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-amber-300 bg-[var(--slot-reserved)]" /> Reservado</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-amber-300 bg-[var(--slot-reserved)]" /> Reserva vacía</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-amber-300 bg-[repeating-linear-gradient(45deg,rgba(251,191,36,0.24)_0,rgba(251,191,36,0.24)_6px,rgba(251,191,36,0.08)_6px,rgba(251,191,36,0.08)_12px)]" /> Reservado disponible</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-slate-200 bg-[var(--slot-occupied)]" /> Ocupado</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-gray-400 bg-gray-200" /> Cerrado/Urgencias</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-orange-300 bg-[var(--slot-private)]" /> Privado</li>

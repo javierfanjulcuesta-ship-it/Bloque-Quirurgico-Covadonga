@@ -40,6 +40,7 @@ export interface SlotTurnDisplay {
   fundingTone: CaseFundingTone;
   hasPrivate: boolean;
   hasSespa: boolean;
+  hasMutual: boolean;
   summarySurgeonName: string;
   summaryProcedure: string;
 }
@@ -48,6 +49,7 @@ function assignmentCellSurfaceClasses(display: SlotTurnDisplay): string {
   if (display.patientLines.length === 0) return "";
   if (display.fundingTone === "sespa") return "bg-sky-50/90 border-l-4 border-l-blue-600";
   if (display.fundingTone === "private") return "bg-amber-50/90 border-l-4 border-l-amber-500";
+  if (display.fundingTone === "mutual") return "bg-violet-50/90 border-l-4 border-l-violet-500";
   return "bg-slate-50/80 border-l-4 border-l-slate-300";
 }
 
@@ -66,7 +68,7 @@ function getSlotPatientInfo(
   const allPatients: PatientInBlock[] = [];
 
   matches.forEach((r) => {
-    const surgeonName = users.find((u) => u.id === r.surgeonId)?.name ?? "—";
+    const surgeonName = users.find((u) => u.id === r.surgeonId)?.name ?? r.externalSurgeonName ?? "—";
     r.patients.forEach((p) => {
       patientLines.push({
         nhc: p.numeroHistoria || "—",
@@ -80,13 +82,14 @@ function getSlotPatientInfo(
   const fundingTone = caseFundingToneFromPatients(allPatients);
   const hasSespa = fundingTone === "sespa";
   const hasPrivate = fundingTone === "private";
+  const hasMutual = fundingTone === "mutual";
 
   let summarySurgeonName = "—";
   let summaryProcedure = "—";
   if (matches.length > 0) {
     const sortedRes = [...matches].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const first = sortedRes[0]!;
-    summarySurgeonName = users.find((u) => u.id === first.surgeonId)?.name ?? "—";
+    summarySurgeonName = users.find((u) => u.id === first.surgeonId)?.name ?? first.externalSurgeonName ?? "—";
     summaryProcedure = primaryProcedureFromPatients(first.patients);
   }
 
@@ -95,6 +98,7 @@ function getSlotPatientInfo(
     fundingTone,
     hasSespa,
     hasPrivate,
+    hasMutual,
     summarySurgeonName,
     summaryProcedure,
   };
@@ -404,6 +408,9 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                 {morningSlot.fundingTone === "private" && (
                                   <FundingBadge type="private" />
                                 )}
+                                {morningSlot.fundingTone === "mutual" && (
+                                  <FundingBadge type="mutual" />
+                                )}
                               </div>
                               {morningSlot.patientLines.length > 1 && (
                                 <div className="text-[9px] text-gray-500">{morningSlot.patientLines.length} pacientes</div>
@@ -463,6 +470,9 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                                 )}
                                 {afternoonSlot.fundingTone === "private" && (
                                   <FundingBadge type="private" />
+                                )}
+                                {afternoonSlot.fundingTone === "mutual" && (
+                                  <FundingBadge type="mutual" />
                                 )}
                               </div>
                               {afternoonSlot.patientLines.length > 1 && (
@@ -698,6 +708,10 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
         <p className="flex items-center gap-2">
           <span className="inline-block h-4 w-6 rounded border-2 border-amber-500 bg-amber-50 align-middle" />
           Caso con financiación privada (texto &quot;privado&quot; en entidad).
+        </p>
+        <p className="flex items-center gap-2">
+          <span className="inline-block h-4 w-6 rounded border-2 border-violet-500 bg-violet-50 align-middle" />
+          Caso con financiación de mutua / aseguradora.
         </p>
         <p className="flex items-center gap-2">
           <span className="inline-block h-4 w-6 rounded border-2 border-slate-300 bg-slate-50 align-middle" />

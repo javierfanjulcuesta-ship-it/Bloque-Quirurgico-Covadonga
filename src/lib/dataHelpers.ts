@@ -7,6 +7,7 @@ import type { Reservation, SlotView, User, BlockOpeningPlan } from "./types";
 import { RESOURCES } from "./constants";
 import { getWeekDays, getSlots, toISODate, getSlotDurationMinutes, getEffectiveTotalMinutes } from "./utils";
 import { isPrivateFunding, reservationHasSespa } from "./patientInsurance";
+import { calculateReservationOccupation, getReservationVisualState, splitReservationIntoSlots } from "./reservationOccupation";
 
 /** Reservas en un rango de fechas (incluidas from y to). */
 export function getReservationsInPeriod(
@@ -48,8 +49,10 @@ export function buildSlotViews(
   const morningCount = getSlots("morning").length;
   const afternoonCount = getSlots("afternoon").length;
 
-  const getSurgeonName = (surgeonId: string) =>
-    surgeonId === "[otro]" ? "Otro cirujano" : users.find((u) => u.id === surgeonId)?.name;
+  const getSurgeonName = (surgeonId: string, externalSurgeonName?: string) =>
+    surgeonId === "[otro]"
+      ? "Otro cirujano"
+      : users.find((u) => u.id === surgeonId)?.name ?? externalSurgeonName ?? "—";
 
   /** Plan para (date, resourceId, shift): si CLOSED o URGENT_RESERVED, bloquea para no-gestores */
   const getBlockReason = (dateStr: string, resourceId: string, shift: "morning" | "afternoon") => {
@@ -81,12 +84,18 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
-        const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
         const totalMinutes = getSlotDurationMinutes("morning", i);
+        const split = res ? splitReservationIntoSlots(res, reservations) : [];
+        const splitCurrent = split.find((part) => part.reservationId === res?.id);
+        const occ = res
+          ? calculateReservationOccupation(res, splitCurrent?.reservedMinutes ?? totalMinutes, splitCurrent?.occupiedMinutes)
+          : null;
+        const usedMinutes = occ?.occupiedMinutes ?? (res ? getEffectiveTotalMinutes(res.patients ?? []) : 0);
+        const remainingMinutes = occ?.remainingMinutes ?? 0;
         const blockReason = getBlockReason(dateStr, resourceId, "morning");
-        const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
+        const visualState = res && occ ? getReservationVisualState(res, occ) : undefined;
         const baseStatus = res
-          ? (isEmptyReservation && (asGestor || !!isMine) ? "reserved" : "occupied")
+          ? (isMine && usedMinutes <= 0 ? "reserved" : "occupied")
           : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
@@ -97,7 +106,7 @@ export function buildSlotViews(
           blockReason: blockReason,
           reservationId: res?.id,
           isMyReservation: !!isMine,
-          surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,
+          surgeonName: asGestor && res ? getSurgeonName(res.surgeonId, res.externalSurgeonName) : undefined,
           patientsCount: res ? (res.patients?.length ?? 0) : undefined,
           patientNames:
             asGestor && res
@@ -107,6 +116,9 @@ export function buildSlotViews(
           hasSespa: hasSespa || undefined,
           usedMinutes: usedMinutes || undefined,
           totalMinutes: totalMinutes || undefined,
+          remainingMinutes: remainingMinutes || undefined,
+          reservationVisualState: visualState,
+          isCancellableReservation: res ? !occ?.hasClinicalActivity : undefined,
         });
       }
       for (let i = 0; i < afternoonCount; i++) {
@@ -124,12 +136,18 @@ export function buildSlotViews(
             (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
-        const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
         const totalMinutes = getSlotDurationMinutes("afternoon", i);
+        const split = res ? splitReservationIntoSlots(res, reservations) : [];
+        const splitCurrent = split.find((part) => part.reservationId === res?.id);
+        const occ = res
+          ? calculateReservationOccupation(res, splitCurrent?.reservedMinutes ?? totalMinutes, splitCurrent?.occupiedMinutes)
+          : null;
+        const usedMinutes = occ?.occupiedMinutes ?? (res ? getEffectiveTotalMinutes(res.patients ?? []) : 0);
+        const remainingMinutes = occ?.remainingMinutes ?? 0;
         const blockReason = getBlockReason(dateStr, resourceId, "afternoon");
-        const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
+        const visualState = res && occ ? getReservationVisualState(res, occ) : undefined;
         const baseStatus = res
-          ? (isEmptyReservation && (asGestor || !!isMine) ? "reserved" : "occupied")
+          ? (isMine && usedMinutes <= 0 ? "reserved" : "occupied")
           : (blockReason ? "blocked" : "free");
         views.push({
           resourceId,
@@ -140,7 +158,7 @@ export function buildSlotViews(
           blockReason: blockReason,
           reservationId: res?.id,
           isMyReservation: !!isMine,
-          surgeonName: asGestor && res ? getSurgeonName(res.surgeonId) : undefined,
+          surgeonName: asGestor && res ? getSurgeonName(res.surgeonId, res.externalSurgeonName) : undefined,
           patientsCount: res ? (res.patients?.length ?? 0) : undefined,
           patientNames:
             asGestor && res
@@ -150,6 +168,9 @@ export function buildSlotViews(
           hasSespa: hasSespa || undefined,
           usedMinutes: usedMinutes || undefined,
           totalMinutes: totalMinutes || undefined,
+          remainingMinutes: remainingMinutes || undefined,
+          reservationVisualState: visualState,
+          isCancellableReservation: res ? !occ?.hasClinicalActivity : undefined,
         });
       }
     });
