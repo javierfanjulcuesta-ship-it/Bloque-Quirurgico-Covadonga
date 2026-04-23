@@ -45,7 +45,6 @@ import { AppNavTab } from "@/components/ui/AppNavTab";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { CalendarStateLegend } from "@/components/ui/CalendarStateLegend";
 import { WorkspaceQuickActions } from "@/components/ui/WorkspaceQuickActions";
-import { EconomiaPanel } from "@/modules/economia/pages/EconomiaPanel";
 
 const RESERVATIONS_STORAGE_KEY = "bloque_quirurgico_reservations";
 const RESERVATIONS_DEBUG_ENABLED =
@@ -53,7 +52,6 @@ const RESERVATIONS_DEBUG_ENABLED =
 
 type CalendarioViewTab =
   | "calendario"
-  | "economia"
   | "perfil"
   | "coordinacion"
   | "gestion-usuarios"
@@ -81,8 +79,6 @@ function getCalendarioScreenContext(
           ? "Consulte la ocupación y los huecos donde figura asignado. El resto de tareas están en las pestañas superiores."
           : "Consulte la actividad del bloque según los permisos asociados a su rol.",
       };
-    case "economia":
-      return { title: "Economía", subtitle: "Módulo experimental aislado para análisis económico del bloque." };
     case "perfil":
       return { title: "Mi perfil", subtitle: "Datos de su cuenta y preferencias en la aplicación." };
     case "coordinacion":
@@ -133,7 +129,6 @@ export default function CalendarioPage() {
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
   const [blockPlans, setBlockPlans] = useState<BlockOpeningPlan[]>([]);
-  const economiaEnabled = process.env.NEXT_PUBLIC_ECONOMIA_ENABLED === "1";
 
   const refreshContactMessages = useCallback(async () => {
     if (modoDemo) return;
@@ -441,11 +436,6 @@ export default function CalendarioPage() {
                   Reservar / programar
                 </AppNavTab>
               )}
-              {isGestor && economiaEnabled && (
-                <AppNavTab active={viewTab === "economia"} onClick={() => setViewTab("economia")}>
-                  Economía
-                </AppNavTab>
-              )}
               {(isGestor || canManageUsers) && (
                 <>
                   <AppNavTab active={viewTab === "mensajes"} onClick={() => setViewTab("mensajes")}>
@@ -605,8 +595,6 @@ export default function CalendarioPage() {
         {user && viewTab === "historico" && (
           <HistoricoView user={user} reservations={reservations} />
         )}
-
-        {user && isGestor && economiaEnabled && viewTab === "economia" && <EconomiaPanel />}
 
         {viewTab === "calendario" && (
           <>
