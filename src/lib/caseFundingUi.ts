@@ -3,10 +3,10 @@
  * Usa la misma fuente que el resto de la app: entidadFinanciadora / isSespa / isPrivateFunding.
  */
 
-import { classifyFunding } from "@/lib/patientInsurance";
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
 
 /** Tono visual único por celda de asignación (un solo color de fondo). */
-export type CaseFundingTone = "sespa" | "private" | "mutual" | "neutral";
+export type CaseFundingTone = "sespa" | "private" | "neutral";
 
 /**
  * Clasifica el caso agregado de un turno según pacientes.
@@ -16,9 +16,8 @@ export type CaseFundingTone = "sespa" | "private" | "mutual" | "neutral";
  */
 export function caseFundingToneFromPatients(patients: Array<{ entidadFinanciadora?: string }> | undefined): CaseFundingTone {
   if (!patients?.length) return "neutral";
-  if (patients.some((p) => classifyFunding(p.entidadFinanciadora) === "sespa")) return "sespa";
-  if (patients.some((p) => classifyFunding(p.entidadFinanciadora) === "private")) return "private";
-  if (patients.some((p) => classifyFunding(p.entidadFinanciadora) === "mutual")) return "mutual";
+  if (patients.some((p) => isSespa(p.entidadFinanciadora))) return "sespa";
+  if (patients.some((p) => isPrivateFunding(p.entidadFinanciadora))) return "private";
   return "neutral";
 }
 

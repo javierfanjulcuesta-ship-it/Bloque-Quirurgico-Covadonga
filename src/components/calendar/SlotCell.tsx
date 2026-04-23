@@ -49,9 +49,6 @@ export function SlotCell({
   const hasPrivate = !!slot.hasPrivate;
   const hasSespa = !!slot.hasSespa;
   const ownUnderutilized = !!slot.isMyReservation && (slot.underutilizedMinutes ?? 0) > 0;
-  const ownPartialReservation = !!slot.isMyReservation && slot.reservationVisualState === "partial";
-  const ownEmptyReservation = !!slot.isMyReservation && slot.reservationVisualState === "empty";
-  const ownCompleteReservation = !!slot.isMyReservation && slot.reservationVisualState === "complete";
   const baseTone = isBlocked
     ? "text-slate-700"
     : isFree
@@ -75,10 +72,6 @@ export function SlotCell({
           : hasSespa
             ? "slot-sespa"
             : "slot-occupied";
-  const visualOverlayClass =
-    ownPartialReservation
-      ? "bg-[repeating-linear-gradient(45deg,rgba(251,191,36,0.24)_0,rgba(251,191,36,0.24)_6px,rgba(251,191,36,0.08)_6px,rgba(251,191,36,0.08)_12px)]"
-      : "";
   const [menuOpen, setMenuOpen] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -159,7 +152,6 @@ export function SlotCell({
       className={`
         relative rounded-md border text-left transition-all duration-150
         ${styleClass}
-        ${visualOverlayClass}
         ${clickable ? "cursor-pointer" : ""}
         ${disabled ? "cursor-not-allowed opacity-60" : ""}
         ${compact ? "min-h-[48px] min-w-[48px] p-2 text-xs sm:min-h-0 sm:min-w-0 sm:p-1.5" : "p-2 text-sm"}
@@ -186,7 +178,7 @@ export function SlotCell({
         {isReserved && (
           <>
             <p className="text-[11px] font-semibold text-amber-900" title="Reserva existente. Pulse para programar pacientes.">
-              {ownEmptyReservation ? "Reserva vacía" : "Reservado"}
+              Reservado
             </p>
             {slot.surgeonName && (
               <p className="truncate text-[10px] text-amber-900/85" title={`Responsable: ${slot.surgeonName}`}>
@@ -197,15 +189,7 @@ export function SlotCell({
         )}
         {isOccupied && (
           <>
-            <p className="text-[11px] font-semibold text-slate-900">
-              {isMyOccupied
-                ? ownPartialReservation
-                  ? "Parcialmente ocupada"
-                  : ownCompleteReservation
-                    ? "Completa"
-                    : "Sus pacientes"
-                : "Ocupado"}
-            </p>
+            <p className="text-[11px] font-semibold text-slate-900">{isMyOccupied ? "Sus pacientes" : "Ocupado"}</p>
             {!isMyOccupied && slot.surgeonName && (
               <p className="truncate text-[10px] text-slate-600" title={`Responsable: ${slot.surgeonName}`}>
                 {slot.surgeonName}
@@ -213,7 +197,7 @@ export function SlotCell({
             )}
             {isMyOccupied && (
               <p className="text-[10px] text-slate-700" title="Pulse para ver o editar">
-                {ownPartialReservation ? `Disponible ~${slot.remainingMinutes ?? 0} min` : `${slot.patientsCount ?? 0} paciente(s)`}
+                {slot.patientsCount ?? 0} paciente(s)
               </p>
             )}
             {showDetails && !slot.isMyReservation && slot.patientsCount != null && (
@@ -232,7 +216,7 @@ export function SlotCell({
           )}
         </div>
       )}
-      {showTooltip && (slot.surgeonName || slot.patientsCount != null || slot.totalMinutes || ownUnderutilized || slot.reservationVisualState) && (
+      {showTooltip && (slot.surgeonName || slot.patientsCount != null || slot.totalMinutes || ownUnderutilized) && (
         <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 w-44 -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-700 shadow-lg">
           {slot.surgeonName && <p><span className="font-semibold">Cirujano:</span> {slot.surgeonName}</p>}
           {slot.patientsCount != null && <p><span className="font-semibold">Pacientes:</span> {slot.patientsCount}</p>}
@@ -240,22 +224,6 @@ export function SlotCell({
             <p>
               <span className="font-semibold">Tiempo:</span> {slot.usedMinutes ?? 0}/{slot.totalMinutes ?? 0} min
             </p>
-          )}
-          {slot.remainingMinutes != null && slot.remainingMinutes > 0 && (
-            <p><span className="font-semibold">Disponible:</span> ~{slot.remainingMinutes} min</p>
-          )}
-          {slot.reservationVisualState && (
-            <p>
-              <span className="font-semibold">Estado:</span>{" "}
-              {slot.reservationVisualState === "empty"
-                ? "Reserva vacía"
-                : slot.reservationVisualState === "partial"
-                  ? "Parcialmente ocupada"
-                  : "Completa"}
-            </p>
-          )}
-          {slot.isCancellableReservation === false && (
-            <p><span className="font-semibold">Anulación:</span> No anulable</p>
           )}
           {ownUnderutilized && <p><span className="font-semibold">Holgura:</span> ~{slot.underutilizedMinutes} min</p>}
         </div>

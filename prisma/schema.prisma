@@ -63,7 +63,6 @@ model Reservation {
   shift              Shift
   slotIndex          Int
   surgeonId         String
-  externalSurgeonName String?
   status            ReservationStatus  @default(PENDING)
   anesthetistId     String?
   origin            ReservationOrigin   @default(APP)

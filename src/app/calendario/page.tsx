@@ -18,7 +18,6 @@ import { getWeekStart, getWeekDays, toISODate } from "@/lib/utils";
 import { getStoredReservations, getMessagesToGestor } from "@/lib/storageMensajesYNotificaciones";
 import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getReservations, ReservationsApiError } from "@/lib/reservations";
-import { getLastReservationsNormalizationStats, type ReservationsNormalizationStats } from "@/lib/api/reservations";
 import { getAssignments } from "@/lib/anesthetistAssignments";
 import { buildSlotViews } from "@/lib/dataHelpers";
 import { modoDemo } from "@/lib/config";
@@ -38,7 +37,7 @@ import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
 import { SolicitarNoDisponibilidad } from "@/components/anestesista/SolicitarNoDisponibilidad";
-import type { BlockOpeningPlan, Reservation, SlotView } from "@/lib/types";
+import type { BlockOpeningPlan, Reservation } from "@/lib/types";
 import { hasAnesthetistAccess } from "@/lib/types";
 import { PageShellHeader } from "@/components/ui/PageShellHeader";
 import { AppNavTab } from "@/components/ui/AppNavTab";
@@ -47,8 +46,6 @@ import { CalendarStateLegend } from "@/components/ui/CalendarStateLegend";
 import { WorkspaceQuickActions } from "@/components/ui/WorkspaceQuickActions";
 
 const RESERVATIONS_STORAGE_KEY = "bloque_quirurgico_reservations";
-const RESERVATIONS_DEBUG_ENABLED =
-  process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_RESERVATIONS_DEBUG === "1";
 
 type CalendarioViewTab =
   | "calendario"
@@ -122,9 +119,6 @@ export default function CalendarioPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(false);
   const [reservationsError, setReservationsError] = useState<string | null>(null);
-  const [reservationsDebugStats, setReservationsDebugStats] = useState<ReservationsNormalizationStats | null>(null);
-  /** Misma clave que `DaySlotGrid` (`resourceId-date-shift-slotIndex`) para anillo de selección y arrastre. */
-  const [selectedCalendarioSlotKeys, setSelectedCalendarioSlotKeys] = useState(() => new Set<string>());
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
@@ -167,16 +161,10 @@ export default function CalendarioPage() {
         dateTo: toISODate(to),
       });
       setReservations(list);
-      if (RESERVATIONS_DEBUG_ENABLED) {
-        setReservationsDebugStats(getLastReservationsNormalizationStats());
-      }
     } catch (err) {
       const msg = err instanceof ReservationsApiError ? err.message : "Error al cargar reservas";
       setReservationsError(msg);
       setReservations([]);
-      if (RESERVATIONS_DEBUG_ENABLED) {
-        setReservationsDebugStats(getLastReservationsNormalizationStats());
-      }
     } finally {
       setReservationsLoading(false);
     }
@@ -185,20 +173,6 @@ export default function CalendarioPage() {
   useEffect(() => {
     refreshReservations();
   }, [refreshReservations]);
-
-  useEffect(() => {
-    setSelectedCalendarioSlotKeys(new Set());
-  }, [selectedDateForGrid]);
-
-  const handleCalendarioSlotSelect = useCallback((slot: SlotView) => {
-    const key = `${slot.resourceId}-${slot.date}-${slot.shift}-${slot.slotIndex}`;
-    setSelectedCalendarioSlotKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
 
   const refreshBlockPlans = useCallback(async () => {
     if (modoDemo) return;
@@ -491,13 +465,6 @@ export default function CalendarioPage() {
               <div className="space-y-2">
                 <CalendarStateLegend variant="compact" showAnestesistaHint={isAnestesista} />
                 {reservationsError ? <InlineNotice variant="error">{reservationsError}</InlineNotice> : null}
-                {RESERVATIONS_DEBUG_ENABLED && reservationsDebugStats ? (
-                  <InlineNotice variant="info">
-                    Debug reservas: recibidas {reservationsDebugStats.received}, v&aacute;lidas {reservationsDebugStats.valid}, descartadas{" "}
-                    {reservationsDebugStats.discarded}
-                    {reservationsDebugStats.sourceEndpoint ? ` · origen ${reservationsDebugStats.sourceEndpoint}` : ""}.
-                  </InlineNotice>
-                ) : null}
               </div>
             )}
           </div>
@@ -644,8 +611,6 @@ export default function CalendarioPage() {
                             dateLabel={selectedDateForGrid.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
                             allowedResources={allowedResources}
                             slotViews={slotViewsForSelectedDay}
-                            onSlotSelect={handleCalendarioSlotSelect}
-                            selectedSlotKeys={selectedCalendarioSlotKeys}
                           />
                         </section>
                         <section className="mb-6">

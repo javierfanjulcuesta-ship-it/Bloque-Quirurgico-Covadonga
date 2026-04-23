@@ -4,20 +4,19 @@
  * Modal para añadir pacientes a una reserva. Valida que el tiempo total (procedimiento + 10 min por paciente) no exceda el tiempo reservado.
  */
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import type { PatientInBlock, AdmissionType, SolicitudRecursosId } from "@/lib/types";
 import {
   TRANSITION_MINUTES_PER_PROCEDURE,
   SOLICITUD_RECURSOS_OPTIONS,
   LARGE_BLOCK_REMAINDER_MINUTES,
 } from "@/lib/constants";
-import { getEffectiveTotalMinutesFilledRows, getSlotDurationMinutes, getSlots } from "@/lib/utils";
+import { getEffectiveTotalMinutesFilledRows } from "@/lib/utils";
 import type { Shift } from "@/lib/types";
+import { getUsers } from "@/lib/dataHelpers";
 import { hasGestorAccess, type UserRole } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InlineNotice } from "@/components/ui/InlineNotice";
-import { useUsers } from "@/context/UsersContext";
-import { classifyFunding } from "@/lib/patientInsurance";
 
 export interface SlotSelection {
   date: string;
@@ -31,32 +30,17 @@ function totalReservedMinutes(slots: SlotSelection[]): number {
   return slots.reduce((sum, s) => sum + s.durationMinutes, 0);
 }
 
-function sameSlotContext(slots: SlotSelection[]): { date: string; shift: Shift; resourceId: string } | null {
-  if (!slots.length) return null;
-  const first = slots[0]!;
-  const same = slots.every(
-    (s) => s.date === first.date && s.shift === first.shift && s.resourceId === first.resourceId
-  );
-  return same ? { date: first.date, shift: first.shift, resourceId: first.resourceId } : null;
-}
-
 export interface ProgramarPacientesModalProps {
   slots: SlotSelection[];
   /** ID del usuario actual (cirujano/endoscopista) para excluirlo de la lista de 2º cirujano */
   currentUserId?: string;
   /** Rol del usuario que abre el modal (gestor / gestor-anestesista → cirujano responsable obligatorio). */
   schedulerRole?: UserRole | string;
-  /** Prefill opcional del titular de bloque ya elegido en la cabecera de selección. */
-  initialResponsibleSurgeonId?: string;
-  initialExternalSurgeonName?: string;
   onSave: (
     patients: Omit<PatientInBlock, "id" | "order">[],
     coSurgeonIds?: string[],
-    meta?: { responsibleSurgeonId?: string; externalSurgeonName?: string }
+    meta?: { responsibleSurgeonId: string }
   ) => void | Promise<void>;
-  onRequestExpandReservation?: (
-    extraMinutesNeeded: number
-  ) => Promise<{ ok: boolean; message?: string }>;
   onClose: () => void;
   /** Si true, deshabilita el botón guardar (ej. mientras se guarda en API) */
   saving?: boolean;
@@ -64,18 +48,17 @@ export interface ProgramarPacientesModalProps {
 
 const ANESTHESIA_OPTIONS = ["Local", "Regional", "General", "Sedación"];
 
+type ModalTab = "datos" | "recursos";
+
 interface QuickParseResult {
   parsedPatients: Partial<PatientInBlock>[];
   detectedSurgeonId?: string;
   detectedSurgeonName?: string;
-  detectedExternalSurgeonName?: string;
-  detectedSurgeonSource: "internal" | "external" | "none";
   detectedProcedureCount: number;
   detectedFundingLabels: string[];
   recognizedAbbreviations: string[];
   normalizedTerms: string[];
   noiseRemovedCount: number;
-  parseMode: "structured" | "heuristic" | "none";
 }
 
 function normalizeLower(value: string): string {
@@ -111,33 +94,6 @@ const NOISE_PATTERNS: RegExp[] = [
   /\bbloque\b/gi,
 ];
 
-const PROCEDURE_TERM_PATTERNS: RegExp[] = [
-  /\bholep\b/i,
-  /\bfaco(?:emulsificacion|emulsificación|s)?\b/i,
-  /\bprp\b/i,
-  /\bfx\b/i,
-  /\bfractura\b/i,
-  /\blca\b/i,
-  /\bptr\b/i,
-  /\bptc\b/i,
-  /\bcar\b/i,
-  /\bmc\b/i,
-  /\bcah\b/i,
-];
-
-function safeTest(rx: RegExp, value: string): boolean {
-  // NOTE: /g regex are stateful via lastIndex. Clone them to avoid inconsistent results.
-  const flags = rx.flags.replace("g", "");
-  const cloned = new RegExp(rx.source, flags);
-  return cloned.test(value);
-}
-
-function safeReplaceGlobal(rx: RegExp, value: string, replacement: string): string {
-  const flags = rx.flags.includes("g") ? rx.flags : `${rx.flags}g`;
-  const cloned = new RegExp(rx.source, flags);
-  return value.replace(cloned, replacement);
-}
-
 function detectFundingFromText(text: string): string {
   for (const f of FUNDING_PATTERNS) {
     if (f.patterns.some((p) => p.test(text))) return f.label;
@@ -152,61 +108,6 @@ function detectProcedureCount(text: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-function titleCaseWords(value: string): string {
-  return value
-    .trim()
-    .replace(/\s+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function normalizeDoctorLine(value: string): string {
-  const normalized = value.trim().replace(/\s+/g, " ");
-  const match = normalized.match(/^(dra?|doctora?)\.?\s+(.+)$/i);
-  if (!match) return normalized;
-  const prefixRaw = (match[1] ?? "").toLowerCase();
-  const namePart = titleCaseWords(match[2] ?? "");
-  const prefix = prefixRaw === "dra" || prefixRaw === "doctora" ? "Dra." : "Dr.";
-  return `${prefix} ${namePart}`.trim();
-}
-
-function normalizeFundingLabel(fundingRaw: string): string {
-  const normalized = normalizeLower(fundingRaw);
-  if (!normalized) return "";
-  if (normalized === "sespa") return "SESPA";
-  if (normalized === "privado" || normalized === "privada") return "PRIVADO";
-  return fundingRaw.trim().replace(/\s+/g, " ");
-}
-
-function detectSurgeonFromLine(
-  surgeonLine: string,
-  surgeons: Array<{ id: string; name: string }>
-): Pick<QuickParseResult, "detectedSurgeonId" | "detectedSurgeonName" | "detectedExternalSurgeonName" | "detectedSurgeonSource"> {
-  const normalizedInput = normalizeLower(surgeonLine);
-  for (const s of surgeons) {
-    const nameNorm = normalizeLower(s.name);
-    const parts = nameNorm.split(" ").filter(Boolean);
-    const surname = parts.length > 1 ? parts[parts.length - 1] : nameNorm;
-    if (
-      normalizedInput.includes(nameNorm) ||
-      nameNorm.includes(normalizedInput) ||
-      (surname.length > 3 && normalizedInput.includes(surname))
-    ) {
-      return {
-        detectedSurgeonId: s.id,
-        detectedSurgeonName: s.name,
-        detectedSurgeonSource: "internal",
-      };
-    }
-  }
-  return {
-    detectedExternalSurgeonName: normalizeDoctorLine(surgeonLine),
-    detectedSurgeonSource: "external",
-  };
-}
-
 function parseQuickBlockText(
   text: string,
   surgeons: Array<{ id: string; name: string }>
@@ -216,79 +117,16 @@ function parseQuickBlockText(
     return {
       parsedPatients: [],
       detectedProcedureCount: 0,
-      detectedSurgeonSource: "none",
       detectedFundingLabels: [],
       recognizedAbbreviations: [],
       normalizedTerms: [],
       noiseRemovedCount: 0,
-      parseMode: "none",
     };
-  }
-
-  const structuredLines = clean
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const surgeonLine = structuredLines[0] ?? "";
-  const structuredPatientLines = structuredLines.slice(1).filter((line) => line.startsWith("-"));
-  const isStructuredInput =
-    /(?:^|\s)(dr|dra)\.?(?:\s|$)/i.test(surgeonLine) && structuredPatientLines.length > 0;
-
-  if (isStructuredInput) {
-    const surgeonDetection = detectSurgeonFromLine(surgeonLine, surgeons);
-    const parsedPatients: Partial<PatientInBlock>[] = [];
-    const structuredFundingLabels = new Set<string>();
-
-    for (const line of structuredPatientLines) {
-      const content = line.replace(/^-+\s*/, "").trim();
-      if (!content) continue;
-      const [procedureToken, ...fundingTokens] = content.split(/\s+/).filter(Boolean);
-      if (!procedureToken) continue;
-
-      const procedure = procedureToken.toUpperCase();
-      const rawFunding = fundingTokens.join(" ").trim();
-      const entidadFinanciadora = normalizeFundingLabel(rawFunding);
-      if (entidadFinanciadora) structuredFundingLabels.add(entidadFinanciadora);
-      const fundingCategory = classifyFunding(rawFunding);
-      const insuranceTypeLabel =
-        fundingCategory === "sespa"
-          ? "sespa"
-          : fundingCategory === "private"
-            ? "privado"
-            : fundingCategory === "mutual"
-              ? "mutua"
-              : "";
-
-      parsedPatients.push({
-        procedure,
-        entidadFinanciadora,
-        estimatedDurationMinutes: 60,
-        admissionType: "ambulatorio",
-        notes: `[IMPORTADO TEXTO LIBRE]${insuranceTypeLabel ? ` · financiación detectada: ${insuranceTypeLabel}` : ""}`,
-      });
-    }
-
-    if (parsedPatients.length > 0) {
-      return {
-        parsedPatients,
-        detectedSurgeonId: surgeonDetection.detectedSurgeonId,
-        detectedSurgeonName: surgeonDetection.detectedSurgeonName,
-        detectedExternalSurgeonName: surgeonDetection.detectedExternalSurgeonName,
-        detectedSurgeonSource: surgeonDetection.detectedSurgeonSource,
-        detectedProcedureCount: parsedPatients.length,
-        detectedFundingLabels: Array.from(structuredFundingLabels),
-        recognizedAbbreviations: [],
-        normalizedTerms: [],
-        noiseRemovedCount: 0,
-        parseMode: "structured",
-      };
-    }
   }
 
   const lower = normalizeLower(clean);
   let detectedSurgeonId: string | undefined;
   let detectedSurgeonName: string | undefined;
-  let detectedExternalSurgeonName: string | undefined;
   for (const s of surgeons) {
     const nameNorm = normalizeLower(s.name);
     const parts = nameNorm.split(" ").filter(Boolean);
@@ -297,17 +135,6 @@ function parseQuickBlockText(
       detectedSurgeonId = s.id;
       detectedSurgeonName = s.name;
       break;
-    }
-  }
-  if (!detectedSurgeonId) {
-    const dr =
-      clean.match(/\bdr\.?\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i) ||
-      clean.match(/\bdra\.?\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i);
-    if (dr?.[1]) {
-      const raw = dr[1].trim().replace(/[0-9]/g, "").replace(/\s+/g, " ").trim();
-      if (raw.length >= 3) {
-        detectedExternalSurgeonName = `Dr. ${raw.replace(/\b\w/g, (m) => m.toUpperCase())}`;
-      }
     }
   }
 
@@ -330,11 +157,11 @@ function parseQuickBlockText(
   const likelyProcedures = splitBySeparators.map((part) => {
     let normalized = part;
     for (const map of PROCEDURE_ABBREVIATIONS) {
-      if (safeTest(map.pattern, normalized)) {
+      if (map.pattern.test(normalized)) {
         recognizedAbbreviations.add(map.token);
         normalizedTerms.add(map.normalized);
       }
-      normalized = safeReplaceGlobal(map.pattern, normalized, map.confident ? map.normalized : map.token);
+      normalized = normalized.replace(map.pattern, map.confident ? map.normalized : map.token);
     }
     return normalized.replace(/\s{2,}/g, " ").trim();
   }).filter((part) => {
@@ -342,25 +169,8 @@ function parseQuickBlockText(
     return !p.startsWith("dr ") && !p.startsWith("dra ") && !p.includes("mutual") && !p.includes("mutua") && !p.includes("sespa") && !p.includes("privado");
   });
 
-  const expandedProcedureChunks = likelyProcedures.flatMap((part) =>
-    part
-      .split(/\s+\+\s+|\s+y\s+|,\s*|\/\s*/gi)
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
-  const uniqueProcedures = Array.from(new Set(expandedProcedureChunks));
-  const fallbackProcedureHits = PROCEDURE_TERM_PATTERNS.reduce((acc, rx) => {
-    const m = clean.match(new RegExp(rx.source, rx.flags.includes("i") ? "gi" : "g"));
-    return acc + (m?.length ?? 0);
-  }, 0);
   const targetCount = detectProcedureCount(clean);
-  const inferredCount = Math.max(
-    1,
-    targetCount,
-    uniqueProcedures.length,
-    likelyProcedures.length,
-    fallbackProcedureHits
-  );
+  const inferredCount = targetCount > 0 ? targetCount : Math.max(1, likelyProcedures.length);
 
   const entities = Array.from(
     new Set(
@@ -373,12 +183,7 @@ function parseQuickBlockText(
 
   const parsedPatients: Partial<PatientInBlock>[] = [];
   for (let i = 0; i < inferredCount; i++) {
-    const rawProc =
-      uniqueProcedures[i] ??
-      likelyProcedures[i] ??
-      uniqueProcedures[uniqueProcedures.length - 1] ??
-      likelyProcedures[likelyProcedures.length - 1] ??
-      `Procedimiento ${i + 1}`;
+    const rawProc = likelyProcedures[i] ?? likelyProcedures[likelyProcedures.length - 1] ?? `Procedimiento ${i + 1}`;
     parsedPatients.push({
       procedure: rawProc.trim(),
       entidadFinanciadora: mainFunding || "",
@@ -392,102 +197,52 @@ function parseQuickBlockText(
     parsedPatients,
     detectedSurgeonId,
     detectedSurgeonName,
-    detectedExternalSurgeonName,
-    detectedSurgeonSource: detectedSurgeonId ? "internal" : detectedExternalSurgeonName ? "external" : "none",
     detectedProcedureCount: inferredCount,
     detectedFundingLabels: entities,
     recognizedAbbreviations: Array.from(recognizedAbbreviations),
     normalizedTerms: Array.from(normalizedTerms),
     noiseRemovedCount,
-    parseMode: "heuristic",
   };
 }
 
-export function ProgramarPacientesModal({
-  slots,
-  currentUserId,
-  schedulerRole,
-  initialResponsibleSurgeonId,
-  initialExternalSurgeonName,
-  onSave,
-  onRequestExpandReservation,
-  onClose,
-  saving = false,
-}: ProgramarPacientesModalProps) {
-  const { users: ctxUsers } = useUsers();
+export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
   const [patients, setPatients] = useState<Partial<PatientInBlock>[]>([{}]);
+  const [activeTab, setActiveTab] = useState<ModalTab>("datos");
   const [quickMode, setQuickMode] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickParseMessage, setQuickParseMessage] = useState<string | null>(null);
   const [secondSurgeonName, setSecondSurgeonName] = useState("");
-  const [responsibleSurgeonId, setResponsibleSurgeonId] = useState(initialResponsibleSurgeonId ?? "");
-  const [externalSurgeonName, setExternalSurgeonName] = useState(initialExternalSurgeonName ?? "");
+  const [responsibleSurgeonId, setResponsibleSurgeonId] = useState("");
   const [error, setError] = useState("");
-  const [expandingReservation, setExpandingReservation] = useState(false);
-  const [submitAttempted, setSubmitAttempted] = useState(false);
-  const [resourceSelections, setResourceSelections] = useState<SolicitudRecursosId[][]>([[]]);
-  const procedureRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const fundingRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const resourceRefs = useRef<Array<HTMLInputElement | null>>([]);
   const totalReserved = totalReservedMinutes(slots);
 
   const requireResponsibleSurgeon = schedulerRole ? hasGestorAccess(schedulerRole) : false;
 
   const otherSurgeons = useMemo(
     () =>
-      ctxUsers.filter((u) => {
+      getUsers().filter((u) => {
         if (!u.approved || u.id === currentUserId) return false;
         const r = String(u.role).trim().toLowerCase().replace(/_/g, "-");
         return r === "cirujano" || r === "endoscopista";
       }),
-    [ctxUsers, currentUserId]
+    [currentUserId]
   );
 
   const responsibleSurgeonCandidates = useMemo(() => {
-    return ctxUsers.filter((u) => {
+    return getUsers().filter((u) => {
       if (!u.approved) return false;
       const r = String(u.role).trim().toLowerCase().replace(/_/g, "-");
       return r === "cirujano" || r === "endoscopista";
     });
-  }, [ctxUsers]);
+  }, []);
 
-  const addPatient = () =>
-    setPatients((prev) => {
-      const last = prev[prev.length - 1];
-      if (!last) return [...prev, {}];
-      setResourceSelections((prevSelections) => [...prevSelections, []]);
-      return [
-        ...prev,
-        {
-          entidadFinanciadora: last.entidadFinanciadora,
-          anesthesiaType: last.anesthesiaType,
-          admissionType: last.admissionType ?? "ambulatorio",
-          estimatedDurationMinutes: last.estimatedDurationMinutes,
-          solicitudRecursos: last.solicitudRecursos,
-        },
-      ];
-    });
-  const removePatient = (index: number) => {
-    setPatients((prev) => prev.filter((_, i) => i !== index));
-    setResourceSelections((prev) => prev.filter((_, i) => i !== index));
-  };
+  const addPatient = () => setPatients((prev) => [...prev, {}]);
+  const removePatient = (index: number) => setPatients((prev) => prev.filter((_, i) => i !== index));
   const updatePatient = (index: number, field: keyof PatientInBlock, value: string | number) => {
     setPatients((prev) => prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
   };
-  const updateResourceSelection = (index: number, value: SolicitudRecursosId) => {
-    setResourceSelections((prev) => {
-      const base = prev[index] ?? [];
-      let nextRow: SolicitudRecursosId[];
-      if (value === "ninguno") {
-        nextRow = base.includes("ninguno") ? [] : ["ninguno"];
-      } else {
-        const withoutNone = base.filter((id) => id !== "ninguno");
-        nextRow = withoutNone.includes(value) ? withoutNone.filter((id) => id !== value) : [...withoutNone, value];
-      }
-      const next = [...prev];
-      next[index] = nextRow;
-      return next;
-    });
+  const updateSolicitudRecursos = (index: number, value: SolicitudRecursosId) => {
+    setPatients((prev) => prev.map((p, i) => (i === index ? { ...p, solicitudRecursos: value } : p)));
   };
 
   const safeMinutes = (p: Partial<PatientInBlock>) =>
@@ -501,66 +256,23 @@ export function ProgramarPacientesModal({
   const over = currentTotal > totalReserved;
   const programmedForRemainder = getEffectiveTotalMinutesFilledRows(patients);
   const remainderMinutes = Math.max(0, totalReserved - programmedForRemainder);
-  const showWideRemainder = !over && totalReserved > 0 && remainderMinutes >= LARGE_BLOCK_REMAINDER_MINUTES;
-  const needExtraMinutes = Math.max(0, currentTotal - totalReserved);
-  const slotsContext = useMemo(() => sameSlotContext(slots), [slots]);
-  const expansionPreview = useMemo(() => {
-    if (needExtraMinutes <= 0) return { neededSlots: 0, canEstimate: true };
-    if (!slotsContext) return { neededSlots: 0, canEstimate: false };
-    const sorted = [...slots].sort((a, b) => a.slotIndex - b.slotIndex);
-    const used = new Set(sorted.map((s) => s.slotIndex));
-    let remaining = needExtraMinutes;
-    let idx = sorted[sorted.length - 1]!.slotIndex + 1;
-    let neededSlots = 0;
-    const max = getSlots(slotsContext.shift).length - 1;
-    while (remaining > 0 && idx <= max) {
-      if (!used.has(idx)) {
-        remaining -= getSlotDurationMinutes(slotsContext.shift, idx);
-        neededSlots += 1;
-      }
-      idx += 1;
-    }
-    return { neededSlots, canEstimate: remaining <= 0 };
-  }, [needExtraMinutes, slots, slotsContext]);
+  const showWideRemainder =
+    !over && totalReserved > 0 && remainderMinutes >= LARGE_BLOCK_REMAINDER_MINUTES;
   const validRowsCount = patients.filter(
-    (p, i) =>
+    (p) =>
+      p.numeroHistoria?.trim() &&
       p.procedure?.trim() &&
       p.entidadFinanciadora?.trim() &&
-      (resourceSelections[i]?.length ?? 0) > 0
+      p.anesthesiaType?.trim() &&
+      typeof p.estimatedDurationMinutes === "number" &&
+      Number.isFinite(p.estimatedDurationMinutes) &&
+      p.estimatedDurationMinutes > 0 &&
+      p.solicitudRecursos
   ).length;
-  const nonEmptyRowsCount = patients.filter((p, index) => {
-    return !!(
-      p.numeroHistoria?.trim() ||
-      p.procedure?.trim() ||
-      p.entidadFinanciadora?.trim() ||
-      p.anesthesiaType?.trim() ||
-      (typeof p.estimatedDurationMinutes === "number" && Number.isFinite(p.estimatedDurationMinutes) && p.estimatedDurationMinutes > 0) ||
-      p.notes?.trim() ||
-      (resourceSelections[index]?.length ?? 0) > 0
-    );
-  }).length;
-  const pendingRowsCount = Math.max(0, nonEmptyRowsCount - validRowsCount);
   const quickParsedPreview = useMemo(
     () => parseQuickBlockText(quickText, responsibleSurgeonCandidates),
     [quickText, responsibleSurgeonCandidates]
   );
-
-  const getPrimaryResource = (index: number): SolicitudRecursosId | undefined => {
-    const selected = resourceSelections[index] ?? [];
-    const nonNone = selected.filter((id) => id !== "ninguno");
-    if (nonNone.length > 0) return nonNone[0];
-    return selected.includes("ninguno") ? "ninguno" : undefined;
-  };
-
-  const buildNotesWithResources = (baseNotes: string, index: number): string => {
-    const selected = resourceSelections[index] ?? [];
-    const cleanBase = baseNotes.replace(/\s*\[RECURSOS_LIMITADOS:[^\]]*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
-    if (selected.length === 0) return cleanBase;
-    const labels = selected
-      .map((id) => SOLICITUD_RECURSOS_OPTIONS.find((opt) => opt.id === id)?.label ?? id)
-      .join(", ");
-    return `${cleanBase} [RECURSOS_LIMITADOS: ${labels}]`.trim();
-  };
 
   const applyQuickParse = () => {
     setQuickParseMessage(null);
@@ -570,25 +282,15 @@ export function ProgramarPacientesModal({
       return;
     }
     setPatients(parsed.parsedPatients);
-    setResourceSelections(parsed.parsedPatients.map(() => []));
     if (requireResponsibleSurgeon && parsed.detectedSurgeonId) {
       setResponsibleSurgeonId(parsed.detectedSurgeonId);
-      setExternalSurgeonName("");
-    } else if (requireResponsibleSurgeon && parsed.detectedExternalSurgeonName) {
-      setResponsibleSurgeonId("");
-      setExternalSurgeonName(parsed.detectedExternalSurgeonName);
     }
+    setActiveTab("datos");
     setQuickParseMessage(
-      `Se han generado ${parsed.parsedPatients.length} paciente(s) · cirujano detectado: ${
-        parsed.detectedSurgeonSource === "internal"
-          ? `${parsed.detectedSurgeonName}`
-          : parsed.detectedSurgeonSource === "external"
-            ? `${parsed.detectedExternalSurgeonName}`
-            : "sin detección"
-      }${parsed.parseMode === "structured" ? " (modo estructurado)." : "."} Revise y complete los campos obligatorios antes de guardar${
-        parsed.parseMode === "heuristic" && parsed.normalizedTerms.some((t) => t.includes("(revisar)"))
-          ? " (hay abreviaturas ambiguas marcadas para revisar)."
-          : "."
+      `Se han generado ${parsed.parsedPatients.length} paciente(s)${
+        parsed.detectedSurgeonName ? ` · Cirujano detectado: ${parsed.detectedSurgeonName}` : ""
+      }. Revise y complete los campos obligatorios antes de guardar${
+        parsed.normalizedTerms.some((t) => t.includes("(revisar)")) ? " (hay abreviaturas ambiguas marcadas para revisar)." : "."
       }`
     );
   };
@@ -596,76 +298,44 @@ export function ProgramarPacientesModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setSubmitAttempted(true);
-    const rowsToPersist = patients
-      .map((p, i) => ({
-        index: i,
-        ...p,
-        numeroHistoria: p.numeroHistoria?.trim() ?? "",
-        procedure: p.procedure?.trim() ?? "",
-        anesthesiaType: p.anesthesiaType?.trim() ?? "",
-        entidadFinanciadora: p.entidadFinanciadora?.trim() ?? "",
-        notes: p.notes?.trim() ?? "",
-      }))
-      .filter((p) => {
-        const hasAny =
-          !!p.numeroHistoria ||
-          !!p.procedure ||
-          !!p.anesthesiaType ||
-          !!p.entidadFinanciadora ||
-          !!p.notes ||
-          (resourceSelections[p.index]?.length ?? 0) > 0 ||
-          (typeof p.estimatedDurationMinutes === "number" && Number.isFinite(p.estimatedDurationMinutes) && p.estimatedDurationMinutes > 0);
-        return hasAny;
-      });
-    const firstMissing = rowsToPersist.find(
-      (row) => !row.procedure || !row.entidadFinanciadora || (resourceSelections[row.index]?.length ?? 0) === 0
+    const valid = patients.filter(
+      (p) =>
+        p.numeroHistoria?.trim() &&
+        p.procedure?.trim() &&
+        p.entidadFinanciadora?.trim() &&
+        p.anesthesiaType?.trim() &&
+        typeof p.estimatedDurationMinutes === "number" &&
+        Number.isFinite(p.estimatedDurationMinutes) &&
+        p.estimatedDurationMinutes > 0 &&
+        p.solicitudRecursos
     );
-    if (firstMissing) {
-      setError("Faltan datos obligatorios: procedimiento, financiación o recursos necesarios.");
-      if (!firstMissing.procedure) {
-        procedureRefs.current[firstMissing.index]?.focus();
-      } else if (!firstMissing.entidadFinanciadora) {
-        fundingRefs.current[firstMissing.index]?.focus();
-      } else {
-        resourceRefs.current[firstMissing.index]?.focus();
-      }
+    if (valid.length === 0) {
+      setError("Rellene al menos un paciente con todos los campos obligatorios (incluida la pestaña Solicitud de recursos).");
       return;
     }
     if (requireResponsibleSurgeon) {
-      if (!responsibleSurgeonId.trim() && !externalSurgeonName.trim()) {
-        setError("Seleccione un cirujano responsable o escriba un nombre libre.");
+      if (!responsibleSurgeonId.trim()) {
+        setError("Seleccione el cirujano o endoscopista responsable del caso.");
         return;
       }
     }
-    // Filosofía: NO bloquear guardado. Si faltan campos requeridos por BD, se rellenan con placeholders
-    // marcados como pendientes, para completar después mediante edición.
-    const withOrder: Omit<PatientInBlock, "id" | "order">[] = rowsToPersist.map((p, i) => {
-      const pendingParts: string[] = [];
-      const history = p.numeroHistoria?.trim();
-      const proc = p.procedure?.trim();
-      const anest = p.anesthesiaType?.trim();
-      const fund = p.entidadFinanciadora?.trim();
-      const dur = typeof p.estimatedDurationMinutes === "number" ? p.estimatedDurationMinutes : 0;
-      if (!history) pendingParts.push("historia");
-      if (!anest) pendingParts.push("anestesia");
-      if (!(Number.isFinite(dur) && dur > 0)) pendingParts.push("duración");
-
-      const pendingPrefix = pendingParts.length > 0 ? `[PENDIENTE: ${pendingParts.join(", ")}] ` : "";
-
-      return {
-        name: p.name,
-        numeroHistoria: history || `PEND-${i + 1}`,
-        procedure: proc!,
-        estimatedDurationMinutes: Number.isFinite(dur) && dur > 0 ? dur : 60,
-        anesthesiaType: anest || "Pendiente",
-        entidadFinanciadora: fund!,
-        admissionType: (p.admissionType as AdmissionType) ?? "ambulatorio",
-        notes: buildNotesWithResources(`${pendingPrefix}${p.notes?.trim() ?? ""}`.trim(), p.index),
-        solicitudRecursos: getPrimaryResource(p.index),
-        order: i,
-      };
-    });
+    const total = valid.reduce((s, p) => s + safeMinutes(p) + TRANSITION_MINUTES_PER_PROCEDURE, 0);
+    if (total > totalReserved) {
+      setError("El tiempo total supera el reservado. Reduzca pacientes o tiempos.");
+      return;
+    }
+    const withOrder: Omit<PatientInBlock, "id" | "order">[] = valid.map((p, i) => ({
+      name: p.name,
+      numeroHistoria: p.numeroHistoria!.trim(),
+      procedure: p.procedure!.trim(),
+      estimatedDurationMinutes: p.estimatedDurationMinutes!,
+      anesthesiaType: p.anesthesiaType!.trim(),
+      entidadFinanciadora: p.entidadFinanciadora!.trim(),
+      admissionType: (p.admissionType as AdmissionType) ?? "ambulatorio",
+      notes: p.notes?.trim() ?? "",
+      solicitudRecursos: p.solicitudRecursos!,
+      order: i,
+    }));
 
     let coSurgeonIds: string[] | undefined;
     const nameTrim = secondSurgeonName.trim();
@@ -688,31 +358,12 @@ export function ProgramarPacientesModal({
       await onSave(
         withOrder,
         coSurgeonIds,
-        requireResponsibleSurgeon
-          ? {
-              responsibleSurgeonId: responsibleSurgeonId.trim() || undefined,
-              externalSurgeonName: responsibleSurgeonId.trim() ? undefined : externalSurgeonName.trim() || undefined,
-            }
-          : undefined
+        requireResponsibleSurgeon ? { responsibleSurgeonId: responsibleSurgeonId.trim() } : undefined
       );
       onClose();
-    } catch (err) {
-      const msg = err instanceof Error && err.message ? err.message : "Error al guardar. Compruebe que el hueco sigue libre e intente de nuevo.";
-      setError(msg);
+    } catch {
+      setError("Error al guardar. Compruebe que el hueco sigue libre e intente de nuevo.");
     }
-  };
-
-  const handleExpandReservation = async () => {
-    if (!onRequestExpandReservation || needExtraMinutes <= 0 || expandingReservation) return;
-    setExpandingReservation(true);
-    setQuickParseMessage(null);
-    const result = await onRequestExpandReservation(needExtraMinutes);
-    setExpandingReservation(false);
-    setQuickParseMessage(
-      result.ok
-        ? "Reserva ampliada correctamente"
-        : result.message ?? "No se pudo ampliar la reserva"
-    );
   };
 
   return (
@@ -748,61 +399,22 @@ export function ProgramarPacientesModal({
             Cada procedimiento suma su tiempo estimado + {TRANSITION_MINUTES_PER_PROCEDURE} min de limpieza/anestesia.
           </p>
         </div>
-        {requireResponsibleSurgeon && (
-          <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/80 p-4">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h3 className="mr-2 text-sm font-semibold text-slate-800">Titular del bloque (1 vez por bloque)</h3>
-              <StatusBadge tone={responsibleSurgeonId.trim() ? "success" : "neutral"}>
-                Titular por ID: {responsibleSurgeonId.trim() ? "sí" : "no"}
-              </StatusBadge>
-              <StatusBadge tone={!responsibleSurgeonId.trim() && externalSurgeonName.trim() ? "warning" : "neutral"}>
-                Titular libre: {(!responsibleSurgeonId.trim() && externalSurgeonName.trim()) ? "sí" : "no"}
-              </StatusBadge>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista responsable</span>
-              <select
-                value={responsibleSurgeonId}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setResponsibleSurgeonId(next);
-                  if (next.trim()) setExternalSurgeonName("");
-                }}
-                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
-              >
-                <option value="">No seleccionado (usar nombre libre)</option>
-                {responsibleSurgeonCandidates.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-xs text-gray-600">
-                Prioridad: cirujano reconocido por ID. Si no existe en BD, use el campo libre inferior.
-              </span>
-            </label>
-            <label className="block">
-              <span className="block text-sm font-medium text-gray-800">Nombre libre de cirujano (si no hay ID)</span>
-              <input
-                type="text"
-                value={externalSurgeonName}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setExternalSurgeonName(next);
-                  if (next.trim()) setResponsibleSurgeonId("");
-                }}
-                placeholder="Ej. Dr. Pérez (externo)"
-                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
-                maxLength={120}
-              />
-              <span className="mt-1 block text-xs text-gray-600">
-                El titular del bloque se define una sola vez y se aplica a todos los pacientes del bloque.
-              </span>
-            </label>
-            </div>
-          </div>
-        )}
+        <div className="mb-4 flex gap-1 border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => setActiveTab("datos")}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "datos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            Datos del paciente
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("recursos")}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "recursos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            Solicitud de recursos
+          </button>
+        </div>
         <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
           <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
             <input
@@ -827,10 +439,7 @@ export function ProgramarPacientesModal({
                   <StatusBadge tone="neutral">Entidad: {quickParsedPreview.detectedFundingLabels.join(", ")}</StatusBadge>
                 )}
                 {quickParsedPreview.detectedSurgeonName && (
-                  <StatusBadge tone="success">Cirujano detectado (interno): {quickParsedPreview.detectedSurgeonName}</StatusBadge>
-                )}
-                {!quickParsedPreview.detectedSurgeonId && quickParsedPreview.detectedExternalSurgeonName && (
-                  <StatusBadge tone="warning">Cirujano detectado (libre): {quickParsedPreview.detectedExternalSurgeonName}</StatusBadge>
+                  <StatusBadge tone="neutral">Cirujano: {quickParsedPreview.detectedSurgeonName}</StatusBadge>
                 )}
                 {quickParsedPreview.noiseRemovedCount > 0 && (
                   <StatusBadge tone="warning">Ruido limpiado: {quickParsedPreview.noiseRemovedCount}</StatusBadge>
@@ -850,33 +459,6 @@ export function ProgramarPacientesModal({
                   {quickParsedPreview.normalizedTerms.length > 5 ? "..." : ""}.
                 </p>
               )}
-              {quickParsedPreview.parseMode === "structured" ? (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Previsualización estructurada</p>
-                  <p className="mt-1 text-sm text-slate-700">
-                    <span className="font-medium">Cirujano detectado:</span>{" "}
-                    {quickParsedPreview.detectedSurgeonSource === "internal"
-                      ? quickParsedPreview.detectedSurgeonName
-                      : quickParsedPreview.detectedExternalSurgeonName ?? "Sin detección"}
-                  </p>
-                  <p className="text-sm text-slate-700">
-                    <span className="font-medium">Pacientes detectados:</span> {quickParsedPreview.parsedPatients.length}
-                  </p>
-                  <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-                    {quickParsedPreview.parsedPatients.map((patient, index) => (
-                      <li key={`${patient.procedure ?? "proc"}-${index}`}>
-                        <span className="font-medium">{patient.procedure?.trim() || "Procedimiento pendiente"}</span>
-                        {" \u2014 "}
-                        <span>{patient.entidadFinanciadora?.trim() || "Financiación no indicada"}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : quickText.trim() ? (
-                <InlineNotice variant="info">
-                  Se usará interpretación heurística al convertir.
-                </InlineNotice>
-              ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={applyQuickParse} className="btn-ribera-primary">
                   Convertir a pacientes
@@ -896,6 +478,27 @@ export function ProgramarPacientesModal({
             </div>
           )}
         </div>
+        {requireResponsibleSurgeon && (
+          <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/80 p-3">
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista responsable *</span>
+              <select
+                value={responsibleSurgeonId}
+                onChange={(e) => setResponsibleSurgeonId(e.target.value)}
+                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                required
+              >
+                <option value="">Seleccione…</option>
+                {responsibleSurgeonCandidates.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-gray-600">La reserva quedará a nombre de este profesional.</span>
+            </label>
+          </div>
+        )}
         <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
           <label className="block">
             <span className="block text-sm font-medium text-gray-700">2º cirujano (opcional)</span>
@@ -915,32 +518,8 @@ export function ProgramarPacientesModal({
           </label>
         </div>
         {over && (
-          <InlineNotice variant="warning" className="mb-4 font-medium">
-            Tiempo necesario: {currentTotal} min · reservado: {totalReserved} min. Se intentará ampliación automática
-            {slotsContext && expansionPreview.canEstimate ? ` (+${expansionPreview.neededSlots} hueco(s))` : ""} al guardar.
-            <span className="block text-xs font-normal">
-              El tiempo introducido supera el bloque reservado.
-            </span>
-            {onRequestExpandReservation && (
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={handleExpandReservation}
-                  disabled={expandingReservation}
-                  className="rounded border border-[var(--ribera-red)] bg-[var(--ribera-red)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50"
-                >
-                  {expandingReservation ? "Ampliando..." : "Ampliar automáticamente"}
-                </button>
-                <span className="mt-1 block text-[11px] font-normal text-amber-900/90">
-                  El sistema ampliará el siguiente hueco disponible.
-                </span>
-              </div>
-            )}
-          </InlineNotice>
-        )}
-        {over && slotsContext && !expansionPreview.canEstimate && (
           <InlineNotice variant="error" className="mb-4 font-medium">
-            No hay hueco consecutivo suficiente en este turno para ampliar la reserva.
+            El tiempo total introducido ({currentTotal} min) supera el reservado ({totalReserved} min). Debe reducir pacientes o tiempos.
           </InlineNotice>
         )}
         {showWideRemainder && (
@@ -950,19 +529,9 @@ export function ProgramarPacientesModal({
             corto o revisar el rango reservado si sobra mucho tiempo.
           </InlineNotice>
         )}
-        {!over && remainderMinutes > 0 && !showWideRemainder && (
-          <InlineNotice variant="info" className="mb-4">
-            Este bloque tiene tiempo no utilizado (~{remainderMinutes} min).
-          </InlineNotice>
-        )}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {(pendingRowsCount > 0 || nonEmptyRowsCount === 0) && (
-            <InlineNotice variant={nonEmptyRowsCount === 0 ? "info" : "warning"} className="mb-2">
-              {nonEmptyRowsCount === 0
-                ? "Puede guardar el bloque aunque no haya pacientes. Quedará reservado para completar después."
-                : `Hay ${pendingRowsCount} fila(s) pendientes. Son obligatorios procedimiento, financiación y recursos limitados.`}
-            </InlineNotice>
-          )}
+          {activeTab === "datos" && (
+          <>
           {patients.map((p, index) => (
             <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -978,9 +547,9 @@ export function ProgramarPacientesModal({
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusBadge
-                    tone={p.procedure?.trim() && p.entidadFinanciadora?.trim() && (resourceSelections[index]?.length ?? 0) > 0 ? "success" : "warning"}
+                    tone={p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0 ? "success" : "warning"}
                   >
-                    {p.procedure?.trim() && p.entidadFinanciadora?.trim() && (resourceSelections[index]?.length ?? 0) > 0
+                    {p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0
                       ? "Completo"
                       : "Pendiente"}
                   </StatusBadge>
@@ -999,65 +568,32 @@ export function ProgramarPacientesModal({
                     value={p.numeroHistoria ?? ""}
                     onChange={(e) => updatePatient(index, "numeroHistoria", e.target.value)}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
                   />
                 </label>
-                <label className="rounded-lg bg-amber-50/60 p-2">
-                  <span className="block text-sm font-semibold text-gray-800">Entidad financiadora (Obligatorio)</span>
+                <label>
+                  <span className="block text-sm font-medium text-gray-700">Entidad gestora *</span>
                   <input
                     type="text"
                     value={p.entidadFinanciadora ?? ""}
                     onChange={(e) => updatePatient(index, "entidadFinanciadora", e.target.value)}
                     placeholder="Ej. Mutua, Privado, SAS..."
-                    className="mt-1 w-full rounded border border-amber-300 px-3 py-2 text-sm"
-                    ref={(el) => {
-                      fundingRefs.current[index] = el;
-                    }}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
                   />
-                  {(submitAttempted || p.entidadFinanciadora?.trim()) && !p.entidadFinanciadora?.trim() && (
-                    <p className="mt-1 text-xs text-rose-700">Selecciona la financiación.</p>
-                  )}
                 </label>
-                <label className="sm:col-span-2 rounded-lg bg-amber-50/60 p-2">
-                  <span className="block text-sm font-semibold text-gray-800">Procedimiento (Obligatorio)</span>
+                <label className="sm:col-span-2">
+                  <span className="block text-sm font-medium text-gray-700">Procedimiento *</span>
                   <input
                     type="text"
                     value={p.procedure ?? ""}
                     onChange={(e) => updatePatient(index, "procedure", e.target.value)}
-                    className="mt-1 w-full rounded border border-amber-300 px-3 py-2 text-sm"
-                    ref={(el) => {
-                      procedureRefs.current[index] = el;
-                    }}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
                   />
-                  {(submitAttempted || p.procedure?.trim()) && !p.procedure?.trim() && (
-                    <p className="mt-1 text-xs text-rose-700">Selecciona el procedimiento.</p>
-                  )}
                 </label>
-                <div className="sm:col-span-2 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
-                  <p className="text-sm font-semibold text-gray-800">Recursos limitados (Obligatorio)</p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {SOLICITUD_RECURSOS_OPTIONS.map((opt, optIndex) => {
-                      const selected = resourceSelections[index]?.includes(opt.id) ?? false;
-                      return (
-                        <label key={opt.id} className="inline-flex items-center gap-2 rounded border border-amber-100 bg-white px-2 py-1 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() => updateResourceSelection(index, opt.id)}
-                            ref={(el) => {
-                              if (optIndex === 0) resourceRefs.current[index] = el;
-                            }}
-                          />
-                          {opt.label}
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {(submitAttempted || (resourceSelections[index]?.length ?? 0) > 0) && (resourceSelections[index]?.length ?? 0) === 0 && (
-                    <p className="mt-1 text-xs text-rose-700">Selecciona los recursos necesarios.</p>
-                  )}
-                </div>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Ingreso o ambulatorio</span>
+                  <span className="block text-sm font-medium text-gray-700">Ingreso o ambulatorio *</span>
                   <select
                     value={p.admissionType ?? "ambulatorio"}
                     onChange={(e) => updatePatient(index, "admissionType", e.target.value as AdmissionType)}
@@ -1068,11 +604,12 @@ export function ProgramarPacientesModal({
                   </select>
                 </label>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Tipo de anestesia</span>
+                  <span className="block text-sm font-medium text-gray-700">Tipo de anestesia *</span>
                   <select
                     value={p.anesthesiaType ?? ""}
                     onChange={(e) => updatePatient(index, "anesthesiaType", e.target.value)}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
                   >
                     <option value="">Seleccione</option>
                     {ANESTHESIA_OPTIONS.map((opt) => (
@@ -1081,7 +618,7 @@ export function ProgramarPacientesModal({
                   </select>
                 </label>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Tiempo estimado (min)</span>
+                  <span className="block text-sm font-medium text-gray-700">Tiempo estimado (min) *</span>
                   <input
                     type="number"
                     min={1}
@@ -1093,6 +630,7 @@ export function ProgramarPacientesModal({
                   updatePatient(index, "estimatedDurationMinutes", val);
                 }}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
                   />
                 </label>
                 <label className="sm:col-span-2">
@@ -1110,6 +648,37 @@ export function ProgramarPacientesModal({
           <button type="button" onClick={addPatient} className="btn-ribera-secondary">
             + Añadir otro paciente
           </button>
+          </>
+          )}
+          {activeTab === "recursos" && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Seleccione la solicitud de recursos para cada paciente. Este campo es obligatorio para guardar.</p>
+            {patients.map((p, index) => (
+              <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-medium text-slate-700">Paciente {index + 1}{p.procedure?.trim() ? ` · ${p.procedure}` : ""}</div>
+                  <StatusBadge tone={p.solicitudRecursos ? "success" : "warning"}>
+                    {p.solicitudRecursos ? "Recurso OK" : "Falta recurso"}
+                  </StatusBadge>
+                </div>
+                <label>
+                  <span className="block text-sm font-medium text-gray-700">Solicitud de recursos *</span>
+                  <select
+                    value={p.solicitudRecursos ?? ""}
+                    onChange={(e) => updateSolicitudRecursos(index, e.target.value as SolicitudRecursosId)}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    required
+                  >
+                    <option value="">Seleccione</option>
+                    {SOLICITUD_RECURSOS_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </fieldset>
+            ))}
+          </div>
+          )}
           {error && (
             <InlineNotice variant="error" role="alert">
               {error}
@@ -1119,15 +688,13 @@ export function ProgramarPacientesModal({
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
               <span>Pacientes en formulario: <strong>{patients.length}</strong></span>
               <span>Completos para guardar: <strong>{validRowsCount}</strong></span>
-              <span>Necesario: <strong>{currentTotal}</strong> min</span>
-              <span>Ampliación automática: <strong>{over ? `+${expansionPreview.neededSlots} hueco(s)` : "+0 huecos"}</strong></span>
-              <span>Tiempo libre: <strong>~{remainderMinutes}</strong> min</span>
+              <span>Pestaña actual: <strong>{activeTab === "datos" ? "Datos clínicos" : "Recursos"}</strong></span>
             </div>
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
             <button
               type="submit"
               className="btn-ribera-primary min-h-11 px-6 text-base shadow-md shadow-slate-900/10"
-              disabled={saving}
+              disabled={over || saving}
             >
               {saving ? "Guardando…" : "Guardar y programar"}
             </button>

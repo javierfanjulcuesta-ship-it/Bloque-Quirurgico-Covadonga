@@ -12,11 +12,6 @@ import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
 import { toApiReservation } from "@/lib/reservations/reservationApiHelpers";
-import {
-  assertValidApiReservation,
-  assertValidApiReservations,
-  logApiReservationsValidationBySeverity,
-} from "@/lib/reservations/apiContract";
 import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +23,6 @@ const RESERVATION_SELECT = {
   shift: true,
   slotIndex: true,
   surgeonId: true,
-  externalSurgeonName: true,
   status: true,
   anesthetistId: true,
   createdByUserId: true,
@@ -100,17 +94,9 @@ export async function GET(request: Request) {
     return {
       ...api,
       surgeonId: "[otro]",
-      externalSurgeonName: undefined,
       patients: [],
     };
   });
-  if (process.env.NODE_ENV !== "production") {
-    const summary = logApiReservationsValidationBySeverity(reservations, "GET /api/reservations");
-    if (summary.hasIrrecoverable) {
-      console.error("[reservations contract] GET blocked by irrecoverable contract issues", summary);
-      return NextResponse.json({ error: "Contrato inválido de reservas (estructura irrecuperable)" }, { status: 500 });
-    }
-  }
 
   return NextResponse.json({ reservations });
 }
@@ -131,7 +117,7 @@ export async function POST(request: Request) {
   }
 
   const raw = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
-  const { surgeonId: rawSurgeonId, externalSurgeonName: rawExternalSurgeonName, ...reservationFields } = raw;
+  const { surgeonId: rawSurgeonId, ...reservationFields } = raw;
   const parsed = createReservationSchema.safeParse(reservationFields);
   if (!parsed.success) {
     const msg = parsed.error.errors[0]?.message ?? "Datos inválidos";
@@ -140,49 +126,39 @@ export async function POST(request: Request) {
 
   const responsibleSurgeonFromBody =
     typeof rawSurgeonId === "string" && rawSurgeonId.trim().length > 0 ? rawSurgeonId.trim() : undefined;
-  const externalSurgeonName =
-    typeof rawExternalSurgeonName === "string" && rawExternalSurgeonName.trim().length > 0
-      ? rawExternalSurgeonName.trim()
-      : undefined;
   const reservationPayload = parsed.data;
   const roleNorm = session!.role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
   const isCoordinator = roleNorm === "gestor" || roleNorm === "gestor-anestesista";
 
   let effectiveSurgeonId = session!.userId;
   if (isCoordinator) {
-    if (!responsibleSurgeonFromBody && !externalSurgeonName) {
+    if (!responsibleSurgeonFromBody) {
       return NextResponse.json(
-        { error: "Debe indicar un cirujano responsable (surgeonId) o escribir un nombre libre." },
+        { error: "Debe indicar el cirujano o endoscopista responsable (campo surgeonId)." },
         { status: 400 }
       );
     }
-    if (responsibleSurgeonFromBody) {
-      const surgeonUser = await prisma.user.findFirst({
-        where: {
-          id: responsibleSurgeonFromBody,
-          approved: true,
-          deletedAt: null,
-          role: { in: [UserRole.CIRUJANO, UserRole.ENDOSCOPISTA] },
-        },
-        select: { id: true },
-      });
-      if (!surgeonUser) {
-        return NextResponse.json(
-          { error: "El cirujano responsable no es válido, no está aprobado o no tiene perfil cirujano/endoscopista." },
-          { status: 400 }
-        );
-      }
-      effectiveSurgeonId = surgeonUser.id;
-    } else {
-      // Fallback controlado: mantiene integridad del modelo (surgeonId obligatorio) y conserva el nombre libre.
-      effectiveSurgeonId = session!.userId;
+    const surgeonUser = await prisma.user.findFirst({
+      where: {
+        id: responsibleSurgeonFromBody,
+        approved: true,
+        deletedAt: null,
+        role: { in: [UserRole.CIRUJANO, UserRole.ENDOSCOPISTA] },
+      },
+      select: { id: true },
+    });
+    if (!surgeonUser) {
+      return NextResponse.json(
+        { error: "El cirujano responsable no es válido, no está aprobado o no tiene perfil cirujano/endoscopista." },
+        { status: 400 }
+      );
     }
+    effectiveSurgeonId = surgeonUser.id;
   }
 
   const result = await createReservationInDb(reservationPayload, effectiveSurgeonId, {
     origin: isCoordinator ? "GESTOR" : "APP",
     actorUserId: session!.userId,
-    externalSurgeonName,
   });
 
   if (!result.ok) {
@@ -198,8 +174,5 @@ export async function POST(request: Request) {
   }
 
   const apiReservation = toApiReservation(reservation as Parameters<typeof toApiReservation>[0]);
-  if (process.env.NODE_ENV !== "production") {
-    assertValidApiReservation(apiReservation, "POST /api/reservations");
-  }
   return NextResponse.json({ reservation: apiReservation });
 }

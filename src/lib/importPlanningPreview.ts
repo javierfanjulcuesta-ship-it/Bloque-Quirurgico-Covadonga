@@ -34,29 +34,11 @@ export interface PlanningPreviewBlock {
   correctedSurgeon?: string;
   correctedFunding?: "SESPA" | "Privado" | "Mutua" | "Mixto" | "Desconocido";
   correctedText?: string;
-  /** Corrección manual del span (número de slots del bloque importado). */
-  correctedSlotSpan?: number;
 }
 
 export interface PlanningPreviewResult {
   blocks: PlanningPreviewBlock[];
   issues: string[];
-}
-
-interface PdfLine {
-  text: string;
-  y: number;
-}
-
-let pdfWorkerConfigured = false;
-
-function configurePdfWorker(pdfjsLib: { GlobalWorkerOptions?: { workerSrc: string }; version?: string }) {
-  if (pdfWorkerConfigured) return;
-  if (typeof window === "undefined") return;
-  if (!pdfjsLib.GlobalWorkerOptions) return;
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  console.log("PDF worker:", pdfjsLib.GlobalWorkerOptions.workerSrc);
-  pdfWorkerConfigured = true;
 }
 
 function normalize(value: string): string {
@@ -175,152 +157,30 @@ function parseExcel(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; name
 }
 
 async function parsePdf(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; name: string }>): Promise<PlanningPreviewResult> {
+  const { getDocument } = await import("pdfjs-dist");
   const issues: string[] = [];
   const blocks: PlanningPreviewBlock[] = [];
-  let totalLines = 0;
-  let ignoredLines = 0;
-  let doc: { numPages: number; getPage: (n: number) => Promise<any> } | null = null;
-
-  const NOISE_PATTERNS: RegExp[] = [
-    /^\d+\s*\/\s*\d+$/,
-    /^pagina\s+\d+/i,
-    /^planificacion/i,
-    /^semana/i,
-    /^bloque/i,
-    /^quir[oó]fano/i,
-    /^turno/i,
-    /^recurso/i,
-    /^observaciones?:?$/i,
-  ];
-
-  function isNoiseLine(line: string): boolean {
-    const compact = line.trim();
-    if (!compact) return true;
-    if (compact.length < 4) return true;
-    if (/^[\W_]+$/.test(compact)) return true;
-    return NOISE_PATTERNS.some((p) => p.test(compact));
-  }
-
-  function buildLinesFromTextItems(items: Array<{ str?: unknown; transform?: unknown }>): PdfLine[] {
-    const positioned = items
-      .map((item) => {
-        const text = typeof item.str === "string" ? item.str.trim() : "";
-        const transform = Array.isArray(item.transform) ? item.transform : [];
-        const x = typeof transform[4] === "number" ? transform[4] : 0;
-        const y = typeof transform[5] === "number" ? transform[5] : 0;
-        return { text, x, y };
-      })
-      .filter((t) => t.text.length > 0);
-
-    if (!positioned.length) return [];
-
-    const yTolerance = 3;
-    const rows: Array<{ y: number; items: Array<{ x: number; text: string }> }> = [];
-    for (const item of positioned) {
-      const row = rows.find((r) => Math.abs(r.y - item.y) <= yTolerance);
-      if (row) {
-        row.items.push({ x: item.x, text: item.text });
-      } else {
-        rows.push({ y: item.y, items: [{ x: item.x, text: item.text }] });
-      }
-    }
-
-    const columnGapThreshold = 120;
-    const splitByColumns = (sortedItems: Array<{ x: number; text: string }>): string[] => {
-      if (!sortedItems.length) return [];
-      const segments: string[] = [];
-      let currentSegment: string[] = [sortedItems[0]!.text];
-      let prevX = sortedItems[0]!.x;
-      for (let i = 1; i < sortedItems.length; i++) {
-        const item = sortedItems[i]!;
-        const gap = item.x - prevX;
-        if (gap > columnGapThreshold) {
-          segments.push(currentSegment.join(" ").replace(/\s+/g, " ").trim());
-          currentSegment = [item.text];
-        } else {
-          currentSegment.push(item.text);
-        }
-        prevX = item.x;
-      }
-      segments.push(currentSegment.join(" ").replace(/\s+/g, " ").trim());
-      return segments.filter((s) => s.length > 0);
-    };
-
-    return rows
-      .sort((a, b) => b.y - a.y)
-      .flatMap((row) => {
-        const sorted = row.items.sort((a, b) => a.x - b.x);
-        const segments = splitByColumns(sorted);
-        return segments.map((segment) => ({ text: segment, y: row.y }));
-      })
-      .filter((l) => l.text.length > 0);
-  }
-
-  try {
-    const pdfjsLib = await import("pdfjs-dist");
-    configurePdfWorker(pdfjsLib as unknown as { GlobalWorkerOptions?: { workerSrc: string }; version?: string });
-    const { getDocument } = pdfjsLib;
-    const data = new Uint8Array(arrayBuffer);
-    doc = await (getDocument as unknown as (params: { data: Uint8Array }) => { promise: Promise<any> })({
-      data,
-    }).promise;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const lower = msg.toLowerCase();
-    if (lower.includes("worker")) {
-      issues.push(`No se pudo procesar el PDF (worker local): ${msg}`);
-    } else {
-      issues.push(`No se pudo procesar el PDF (archivo o formato): ${msg}`);
-    }
-    return { blocks: [], issues };
-  }
-
-  if (!doc) {
-    issues.push("No se pudo procesar el PDF.");
-    return { blocks: [], issues };
-  }
-
+  const data = new Uint8Array(arrayBuffer);
+  const doc = await (getDocument as unknown as (params: { data: Uint8Array; disableWorker: boolean }) => { promise: Promise<any> })({
+    data,
+    disableWorker: true,
+  }).promise;
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const textContent = await page.getTextContent();
-    const lines = buildLinesFromTextItems(textContent.items as Array<{ str?: unknown; transform?: unknown }>);
-    totalLines += lines.length;
-
-    let currentDay: string | undefined;
-    let currentShift: "morning" | "afternoon" | "unknown" = "unknown";
-    let currentResource: { id: ResourceId | "unknown"; label: string } = { id: "unknown", label: "Sin recurso identificado" };
-
-    lines.forEach((lineObj, idx: number) => {
-      const line = lineObj.text;
+    const lines = textContent.items
+      .map((i: { str?: unknown }) => (typeof i.str === "string" ? i.str : ""))
+      .join("\n")
+      .split("\n")
+      .map((l: string) => l.trim())
+      .filter(Boolean);
+    lines.forEach((line: string, idx: number) => {
       if (line.length < 6) return;
-
-      if (isNoiseLine(line)) {
-        ignoredLines += 1;
-        return;
-      }
-
-      const detectedDay = detectWeekday(line);
-      if (detectedDay) currentDay = detectedDay;
-      const detectedShift = detectShift(line);
-      if (detectedShift !== "unknown") currentShift = detectedShift;
-      const detectedResource = detectResource(line);
-      if (detectedResource.id !== "unknown") currentResource = detectedResource;
-
-      const day = detectedDay ?? currentDay ?? "día no identificado";
-      const shift = detectedShift !== "unknown" ? detectedShift : currentShift;
-      const resource = detectedResource.id !== "unknown" ? detectedResource : currentResource;
+      const day = detectWeekday(line) ?? "día no identificado";
+      const shift = detectShift(line);
+      const resource = detectResource(line);
       const funding = detectFunding(line);
       const surgeon = detectSurgeon(line, surgeons);
-
-      const looksLikeContextOnly =
-        (detectedDay !== undefined || detectedShift !== "unknown" || detectedResource.id !== "unknown") &&
-        !surgeon &&
-        funding === "Desconocido";
-      if (looksLikeContextOnly) {
-        ignoredLines += 1;
-        return;
-      }
-
       const hasIssue = day === "día no identificado" || resource.id === "unknown" || funding === "Desconocido" || !surgeon;
       blocks.push({
         id: `pdf-${p}-${idx}`,
@@ -339,7 +199,6 @@ async function parsePdf(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; 
     });
   }
   if (!blocks.length) issues.push("No se detectaron líneas útiles en el PDF.");
-  issues.unshift(`Calidad parseo PDF: líneas=${totalLines}, ignoradas=${ignoredLines}, bloques=${blocks.length}, incidencias=${issues.length}`);
   return { blocks, issues };
 }
 

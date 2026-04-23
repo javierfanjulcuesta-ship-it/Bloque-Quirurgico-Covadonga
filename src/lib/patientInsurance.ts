@@ -3,35 +3,12 @@
  * entidadFinanciadora (frontend) / insuranceType (API) = "SESPA" exacto (case-insensitive).
  */
 
-function normalizeFunding(value: string | undefined): string {
-  return (value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-}
-
-export type FundingCategory = "sespa" | "private" | "mutual" | "other";
-
-export function classifyFunding(entidadFinanciadora: string | undefined): FundingCategory {
-  const normalized = normalizeFunding(entidadFinanciadora);
-  if (!normalized) return "other";
-  if (normalized === "sespa") return "sespa";
-  if (/privad|private|autopago|particular/.test(normalized)) return "private";
-  if (/mutua|mutual|asegur|mapfre|adeslas|asisa|dkv|sanitas|axa|fremap/.test(normalized)) return "mutual";
-  return "other";
-}
-
 export function isSespa(entidadFinanciadora: string | undefined): boolean {
-  return classifyFunding(entidadFinanciadora) === "sespa";
+  return !!(entidadFinanciadora?.trim() && /^sespa$/i.test(entidadFinanciadora.trim()));
 }
 
 export function isPrivateFunding(entidadFinanciadora: string | undefined): boolean {
-  return classifyFunding(entidadFinanciadora) === "private";
-}
-
-export function isMutualFunding(entidadFinanciadora: string | undefined): boolean {
-  return classifyFunding(entidadFinanciadora) === "mutual";
+  return !!(entidadFinanciadora?.trim() && /privad/i.test(entidadFinanciadora.trim()));
 }
 
 /** true si la reserva tiene al menos un paciente SESPA */

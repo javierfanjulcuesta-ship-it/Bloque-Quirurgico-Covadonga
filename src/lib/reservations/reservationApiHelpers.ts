@@ -11,7 +11,6 @@ export interface ReservationWithPatients {
   shift: string;
   slotIndex: number;
   surgeonId: string;
-  externalSurgeonName: string | null;
   status: string;
   anesthetistId: string | null;
   createdByUserId: string | null;
@@ -40,7 +39,6 @@ export function toApiReservation(r: ReservationWithPatients) {
     shift: r.shift === "MORNING" ? "morning" : "afternoon",
     slotIndex: r.slotIndex,
     surgeonId: r.surgeonId,
-    externalSurgeonName: r.externalSurgeonName ?? undefined,
     status: r.status.toLowerCase(),
     anesthetistId: r.anesthetistId ?? undefined,
     createdAt: r.createdAt.toISOString(),
@@ -67,7 +65,6 @@ const RESERVATION_SELECT = {
   shift: true,
   slotIndex: true,
   surgeonId: true,
-  externalSurgeonName: true,
   status: true,
   anesthetistId: true,
   createdByUserId: true,

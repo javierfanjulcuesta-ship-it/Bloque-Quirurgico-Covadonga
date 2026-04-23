@@ -31,20 +31,6 @@ const patientSchema = z.object({
   solicitudRecursos: z.string().optional(),
 });
 
-const reservationSlotSchema = z.object({
-  date: dateSchema,
-  resourceId: z.enum(RESOURCE_IDS, { errorMap: () => ({ message: "resourceId inválido" }) }),
-  shift: z.enum(SHIFTS, { errorMap: () => ({ message: "shift inválido (morning|afternoon)" }) }),
-  slotIndex: z.number().int().min(0, "slotIndex debe ser >= 0"),
-}).refine(
-  (data) => {
-    if (data.shift === "morning" && data.slotIndex > 5) return false;
-    if (data.shift === "afternoon" && data.slotIndex > 4) return false;
-    return true;
-  },
-  { message: "slotIndex fuera de rango (mañana: 0-5, tarde: 0-4)", path: ["slotIndex"] }
-);
-
 export const createReservationSchema = z.object({
   date: dateSchema,
   resourceId: z.enum(RESOURCE_IDS, { errorMap: () => ({ message: "resourceId inválido" }) }),
@@ -60,12 +46,6 @@ export const createReservationSchema = z.object({
   { message: "slotIndex fuera de rango (mañana: 0-5, tarde: 0-4)", path: ["slotIndex"] }
 );
 
-export const createReservationBatchSchema = z.object({
-  slots: z.array(reservationSlotSchema).min(1, "Debe indicar al menos un slot"),
-  patients: z.array(patientSchema).optional().default([]),
-  isBatchCreation: z.boolean().optional(),
-});
-
 export const getReservationsQuerySchema = z.object({
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -77,9 +57,6 @@ export const getReservationsQuerySchema = z.object({
 export const updateReservationSchema = z.object({
   patients: z.array(patientSchema).optional(),
   coSurgeonIds: z.array(z.string().min(1)).optional(),
-  replacePatients: z.boolean().optional(),
-  surgeonId: z.string().min(1).optional(),
-  externalSurgeonName: z.string().max(120).optional(),
 });
 
 // --- PATCH patient: actualizar o sustituir un paciente ---
@@ -113,18 +90,9 @@ export const cancelReservationSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
-/** POST /api/reservations/move-patients — mover pacientes entre reservas (mismo día). */
-export const movePatientsBetweenReservationsSchema = z.object({
-  sourceReservationId: z.string().min(1, "sourceReservationId obligatorio"),
-  targetReservationId: z.string().min(1, "targetReservationId obligatorio"),
-  patientIds: z.array(z.string().min(1)).min(1, "Indique al menos un paciente"),
-});
-
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
-export type CreateReservationBatchInput = z.infer<typeof createReservationBatchSchema>;
 export type GetReservationsQuery = z.infer<typeof getReservationsQuerySchema>;
 export type UpdateReservationInput = z.infer<typeof updateReservationSchema>;
 export type UpdatePatientInput = z.infer<typeof updatePatientSchema>;
 export type CancelPatientInput = z.infer<typeof cancelPatientSchema>;
 export type CancelReservationInput = z.infer<typeof cancelReservationSchema>;
-export type MovePatientsBetweenReservationsInput = z.infer<typeof movePatientsBetweenReservationsSchema>;

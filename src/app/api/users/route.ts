@@ -12,9 +12,15 @@ import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
 import type { User, UserRole } from "@/lib/types";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const TEMP_PASSWORD_LENGTH = 10;
+const CHARS = "abcdefghjkmnpqrstuvwxyz23456789";
+
 function generateTempPassword(): string {
-  const randomFourDigits = Math.floor(1000 + Math.random() * 9000);
-  return `QxFlow${randomFourDigits}`;
+  let result = "";
+  for (let i = 0; i < TEMP_PASSWORD_LENGTH; i++) {
+    result += CHARS[Math.floor(Math.random() * CHARS.length)];
+  }
+  return result;
 }
 
 function emailToDisplayName(email: string): string {
@@ -63,9 +69,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const passwordFromBody = typeof body.password === "string" ? body.password.trim() : "";
-    const generatedPassword = !passwordFromBody;
-    const tempPassword = generatedPassword ? generateTempPassword() : passwordFromBody;
+    const tempPassword = generateTempPassword();
     const passwordHash = await hashPassword(tempPassword);
 
     const canSespa = typeof body.canSespa === "boolean" ? body.canSespa : false;
@@ -90,7 +94,7 @@ export async function POST(request: Request) {
         approved: dbUser.approved,
         canSespa: dbUser.canSespa,
       },
-      tempPassword: generatedPassword ? tempPassword : undefined,
+      tempPassword,
     });
   } catch (err) {
     console.error("[USERS] ERROR", err);

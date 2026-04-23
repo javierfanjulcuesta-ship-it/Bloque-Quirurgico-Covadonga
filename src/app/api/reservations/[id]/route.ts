@@ -4,7 +4,6 @@
  */
 
 import { NextResponse } from "next/server";
-import { UserRole } from "@prisma/client";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canAccessBooking } from "@/lib/auth";
@@ -60,7 +59,7 @@ export async function PATCH(
     const denyAuth = requireAuth(session);
     if (denyAuth) return denyAuth;
 
-    const denyPerm = requireAnyPermission(session!, ["patient:create", "booking:update", "booking:view:all"]);
+    const denyPerm = requireAnyPermission(session!, ["patient:create", "booking:view:all"]);
     if (denyPerm) return denyPerm;
 
     const { id } = await params;
@@ -69,10 +68,8 @@ export async function PATCH(
     const reservation = await fetchReservationForAccess(id);
     if (!reservation) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
 
-    const canModifyBooking = canAccessBooking(session!, toBookingLike(reservation), "booking:update");
-    const canAddPatients = canAccessBooking(session!, toBookingLike(reservation), "booking:view:own");
-    if (!canModifyBooking && !canAddPatients) {
-      return NextResponse.json({ error: "No tiene permiso para editar esta reserva" }, { status: 403 });
+    if (!canAccessBooking(session!, toBookingLike(reservation), "booking:view:own")) {
+      return NextResponse.json({ error: "No tiene permiso para añadir pacientes a esta reserva" }, { status: 403 });
     }
 
     let body: unknown;
@@ -88,95 +85,9 @@ export async function PATCH(
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const { patients, replacePatients, surgeonId, externalSurgeonName } = parsed.data;
-    const wantsOwnerUpdate = surgeonId !== undefined || externalSurgeonName !== undefined;
-    const wantsPatientsReplace = replacePatients === true;
-
-    if (wantsOwnerUpdate || wantsPatientsReplace) {
-      if (!canModifyBooking) {
-        return NextResponse.json({ error: "No tiene permiso para modificar datos del bloque." }, { status: 403 });
-      }
-
-      let effectiveSurgeonId = reservation.surgeonId;
-      if (surgeonId) {
-        const surgeonUser = await prisma.user.findFirst({
-          where: {
-            id: surgeonId,
-            approved: true,
-            deletedAt: null,
-            role: { in: [UserRole.CIRUJANO, UserRole.ENDOSCOPISTA] },
-          },
-          select: { id: true },
-        });
-        if (!surgeonUser) {
-          return NextResponse.json(
-            { error: "El cirujano responsable no es válido, no está aprobado o no tiene perfil cirujano/endoscopista." },
-            { status: 400 }
-          );
-        }
-        effectiveSurgeonId = surgeonUser.id;
-      }
-
-      await prisma.$transaction(async (tx) => {
-        if (wantsPatientsReplace) {
-          await tx.patientInBlock.deleteMany({ where: { reservationId: id } });
-          for (let i = 0; i < (patients ?? []).length; i++) {
-            const p = (patients ?? [])[i]!;
-            await tx.patientInBlock.create({
-              data: {
-                reservationId: id,
-                historyNumber: p.historyNumber,
-                fullName: p.fullName ?? null,
-                procedure: p.procedure,
-                estimatedDurationMinutes: p.estimatedDurationMinutes,
-                anesthesiaType: p.anesthesiaType,
-                insuranceType: p.insuranceType,
-                admissionType: p.admissionType ?? null,
-                orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
-                notes: p.notes ?? null,
-                solicitudRecursos: p.solicitudRecursos ?? null,
-              },
-            });
-          }
-        }
-        await tx.reservation.update({
-          where: { id },
-          data: {
-            surgeonId: effectiveSurgeonId,
-            externalSurgeonName:
-              surgeonId && surgeonId.trim().length > 0
-                ? null
-                : externalSurgeonName !== undefined
-                  ? (externalSurgeonName.trim() || null)
-                  : reservation.externalSurgeonName,
-            status: (patients?.length ?? 0) > 0 || wantsPatientsReplace ? "CONFIRMED" : reservation.status,
-            updatedByUserId: session!.userId,
-          },
-        });
-      });
-
-      await logReservationEvent({
-        eventType: "RESERVATION_UPDATED",
-        reservationId: id,
-        actorUserId: session!.userId,
-        origin: "app",
-        detailsJson: {
-          action: "update_block",
-          replacePatients: wantsPatientsReplace,
-          ownerUpdated: wantsOwnerUpdate,
-          patientsCount: patients?.length ?? null,
-        },
-      });
-
-      const updated = await fetchReservationForAccess(id);
-      if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
-      const apiReservation = toApiReservation(updated as Parameters<typeof toApiReservation>[0]);
-      return NextResponse.json({ reservation: apiReservation });
-    }
-
+    const { patients } = parsed.data;
     if (!patients?.length) return NextResponse.json({ error: "Indique al menos un paciente" }, { status: 400 });
 
-    const currentMaxOrder = reservation.patients.reduce((max, p) => Math.max(max, p.orderIndex), -1);
     for (let i = 0; i < patients.length; i++) {
       const p = patients[i]!;
       await prisma.patientInBlock.create({
@@ -189,7 +100,7 @@ export async function PATCH(
           anesthesiaType: p.anesthesiaType,
           insuranceType: p.insuranceType,
           admissionType: p.admissionType ?? null,
-          orderIndex: (p as { orderIndex?: number }).orderIndex ?? (currentMaxOrder + i + 1),
+          orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
           notes: p.notes ?? null,
           solicitudRecursos: p.solicitudRecursos ?? null,
         },
