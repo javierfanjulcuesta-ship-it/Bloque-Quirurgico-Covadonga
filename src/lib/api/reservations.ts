@@ -337,7 +337,31 @@ export async function fetchReservations(filters?: FetchReservationsFilters): Pro
 
   const rawReservations = (data as { reservations?: unknown }).reservations;
   const normalized = normalizeReservations(rawReservations, url);
-  return normalized.map(mapReservationFromApi);
+  const mapped: Reservation[] = [];
+  const mapErrors: string[] = [];
+  for (const nr of normalized) {
+    try {
+      mapped.push(mapReservationFromApi(nr));
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      mapErrors.push(`${nr.id}: ${detail}`);
+      console.error("[reservations fetch] mapReservationFromApi falló", { reservationId: nr.id, detail, err });
+    }
+  }
+  if (normalized.length > 0 && mapped.length === 0) {
+    throw new ReservationsApiError(
+      `No se pudieron interpretar las reservas recibidas (${mapErrors.length}). Detalle: ${mapErrors[0] ?? "sin detalle"}`,
+      502
+    );
+  }
+  if (mapErrors.length > 0) {
+    console.warn("[reservations fetch] Algunas reservas se omitieron tras la normalización", {
+      omitted: mapErrors.length,
+      kept: mapped.length,
+      sample: mapErrors.slice(0, 5),
+    });
+  }
+  return mapped;
 }
 
 export async function createReservation(payload: CreateReservationPayload): Promise<Reservation> {
