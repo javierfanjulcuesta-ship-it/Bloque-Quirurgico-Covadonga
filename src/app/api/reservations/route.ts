@@ -12,6 +12,11 @@ import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
 import { toApiReservation } from "@/lib/reservations/reservationApiHelpers";
+import {
+  assertValidApiReservation,
+  assertValidApiReservations,
+  logApiReservationsValidationBySeverity,
+} from "@/lib/reservations/apiContract";
 import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
 
 export const dynamic = "force-dynamic";
@@ -99,6 +104,13 @@ export async function GET(request: Request) {
       patients: [],
     };
   });
+  if (process.env.NODE_ENV !== "production") {
+    const summary = logApiReservationsValidationBySeverity(reservations, "GET /api/reservations");
+    if (summary.hasIrrecoverable) {
+      console.error("[reservations contract] GET blocked by irrecoverable contract issues", summary);
+      return NextResponse.json({ error: "Contrato inválido de reservas (estructura irrecuperable)" }, { status: 500 });
+    }
+  }
 
   return NextResponse.json({ reservations });
 }
@@ -186,5 +198,8 @@ export async function POST(request: Request) {
   }
 
   const apiReservation = toApiReservation(reservation as Parameters<typeof toApiReservation>[0]);
+  if (process.env.NODE_ENV !== "production") {
+    assertValidApiReservation(apiReservation, "POST /api/reservations");
+  }
   return NextResponse.json({ reservation: apiReservation });
 }
