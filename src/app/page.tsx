@@ -19,7 +19,6 @@ import type { User } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { modoDemo } from "@/lib/config";
 import { InlineNotice } from "@/components/ui/InlineNotice";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 
 export default function HomePage() {
   const router = useRouter();
@@ -199,39 +198,7 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <div className="grid gap-6 lg:grid-cols-[1.05fr,1fr] lg:items-start">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center gap-2">
-            <StatusBadge tone="info">QxFlow</StatusBadge>
-            <span className="text-xs font-medium text-slate-500">Plataforma de coordinación quirúrgica</span>
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight text-[var(--ribera-navy)]">QxFlow</h1>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-600">
-            Gestión clínica y operativa del bloque quirúrgico con vistas por rol, programación asistida y seguimiento en tiempo real.
-          </p>
-          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <p className="font-semibold text-slate-700">Entorno por rol</p>
-              <p className="mt-1 text-xs text-slate-600">Cada perfil entra directamente en su espacio de trabajo.</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <p className="font-semibold text-slate-700">Contexto clínico claro</p>
-              <p className="mt-1 text-xs text-slate-600">Calendario, estados y programación con jerarquía visual estable.</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <p className="font-semibold text-slate-700">Coordinación segura</p>
-              <p className="mt-1 text-xs text-slate-600">Flujos pensados para gestor, cirujano y anestesista sin fugas de información.</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <p className="font-semibold text-slate-700">Producto hospitalario</p>
-              <p className="mt-1 text-xs text-slate-600">Diseño sobrio, profesional y orientado al uso diario del bloque.</p>
-            </div>
-          </div>
-          <p className="mt-4 text-xs text-slate-500">
-            Bloque Quirúrgico Covadonga · Grupo Ribera
-          </p>
-        </section>
-
+      <div className="mx-auto w-full max-w-xl">
       <div className="card-ribera w-full p-8">
         {modoDemo && (
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
