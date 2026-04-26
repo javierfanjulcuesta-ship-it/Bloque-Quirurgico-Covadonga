@@ -22,6 +22,12 @@ export async function PATCH(
 
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
+    if (id === session!.userId) {
+      return NextResponse.json(
+        { error: "No puede desactivar su propio usuario" },
+        { status: 400 }
+      );
+    }
 
     const user = await prisma.user.findUnique({
       where: { id },
