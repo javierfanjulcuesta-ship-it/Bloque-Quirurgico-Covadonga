@@ -5,7 +5,9 @@
 
 import type { EconomicConfig } from "@/lib/metrics/economicConfig";
 import { DEFAULT_ECONOMIC_CONFIG } from "@/lib/metrics/economicConfig";
-import type { ResourceId, Shift, SlotView } from "@/lib/types";
+import { TRANSITION_MINUTES_PER_PROCEDURE } from "@/lib/constants";
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
+import type { PatientInBlock, Reservation, ResourceId, Shift, SlotView } from "@/lib/types";
 import { getSlotDurationMinutes } from "@/lib/utils";
 
 export type { EconomicConfig } from "@/lib/metrics/economicConfig";
@@ -94,7 +96,71 @@ function emptyEconomicAcc(): EconomicAcc {
   };
 }
 
-function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc, cfg: EconomicConfig): void {
+function patientIngresoRate(
+  p: Pick<PatientInBlock, "entidadFinanciadora"> & { insuranceType?: string },
+  cfg: EconomicConfig
+): number {
+  const funding = (p.entidadFinanciadora ?? p.insuranceType ?? "").trim();
+  if (isPrivateFunding(funding)) return cfg.ingresoPorMinutoPrivado;
+  if (isSespa(funding)) return cfg.ingresoPorMinutoSespa;
+  return cfg.ingresoPorMinutoDefault;
+}
+
+function patientEconomicMinutes(p: Partial<PatientInBlock>): number {
+  const m = p.estimatedDurationMinutes;
+  if (typeof m !== "number" || !Number.isFinite(m) || m <= 0) return 0;
+  return m + TRANSITION_MINUTES_PER_PROCEDURE;
+}
+
+function reservationIngresoEstimado(
+  reservation: Pick<Reservation, "patients">,
+  cfg: EconomicConfig
+): number {
+  // Ingresos por paciente para evitar sobreestimar bloques mixtos privado/SESPA.
+  return (reservation.patients ?? []).reduce((sum, p) => {
+    if (p.scheduleStatus === "CANCELLED") return sum;
+    const minutes = patientEconomicMinutes(p);
+    if (minutes <= 0) return sum;
+    const rate = patientIngresoRate(p, cfg);
+    return sum + minutes * rate;
+  }, 0);
+}
+
+function buildReservationIngresosMap(
+  reservations: Reservation[] | undefined,
+  cfg: EconomicConfig
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of reservations ?? []) {
+    out.set(r.id, reservationIngresoEstimado(r, cfg));
+  }
+  return out;
+}
+
+function ingresoDesdeSlot(
+  v: SlotView,
+  cfg: EconomicConfig,
+  ingresosByReservationId: Map<string, number>,
+  consumedReservationIds: Set<string>
+): number {
+  const rid = v.reservationId;
+  if (rid && ingresosByReservationId.has(rid)) {
+    if (consumedReservationIds.has(rid)) return 0;
+    consumedReservationIds.add(rid);
+    return ingresosByReservationId.get(rid) ?? 0;
+  }
+  const used = v.usedMinutes ?? 0;
+  const rate = ingresoPorMinutoDesdeSlot(v, cfg);
+  return used * rate;
+}
+
+function accumulateEconomicFromSlot(
+  v: SlotView,
+  acc: EconomicAcc,
+  cfg: EconomicConfig,
+  ingresosByReservationId: Map<string, number>,
+  consumedReservationIds: Set<string>
+): void {
   const cap = slotCapMinutes(v);
   if (v.status === "blocked") {
     return;
@@ -111,8 +177,7 @@ function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc, cfg: Economic
     return;
   }
 
-  const rate = ingresoPorMinutoDesdeSlot(v, cfg);
-  acc.ingresosEstimados += used * rate;
+  acc.ingresosEstimados += ingresoDesdeSlot(v, cfg, ingresosByReservationId, consumedReservationIds);
   acc.programmedMinutes += used;
   acc.pacientesContados += v.patientsCount ?? 0;
 }
@@ -148,11 +213,14 @@ function finalizeEconomicAcc(acc: EconomicAcc, cfg: EconomicConfig): EconomicMet
 /** Agregado global de rentabilidad estimada a partir de `slotViews`. */
 export function aggregateEconomicMetrics(
   slotViews: SlotView[],
-  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG,
+  reservations?: Reservation[]
 ): EconomicMetricsTotals {
   const acc = emptyEconomicAcc();
+  const ingresosByReservationId = buildReservationIngresosMap(reservations, cfg);
+  const consumedReservationIds = new Set<string>();
   for (const v of slotViews) {
-    accumulateEconomicFromSlot(v, acc, cfg);
+    accumulateEconomicFromSlot(v, acc, cfg, ingresosByReservationId, consumedReservationIds);
   }
   return finalizeEconomicAcc(acc, cfg);
 }
@@ -161,16 +229,19 @@ export function aggregateEconomicMetrics(
 export function breakdownEconomicByResourceAndShift(
   slotViews: SlotView[],
   resources: { id: ResourceId; label: string }[],
-  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG,
+  reservations?: Reservation[]
 ): EconomicMetricsRow[] {
   const rows: EconomicMetricsRow[] = [];
+  const ingresosByReservationId = buildReservationIngresosMap(reservations, cfg);
   const shifts: Shift[] = ["morning", "afternoon"];
   for (const r of resources) {
     for (const shift of shifts) {
       const acc = emptyEconomicAcc();
+      const consumedReservationIds = new Set<string>();
       for (const v of slotViews) {
         if (v.resourceId !== r.id || v.shift !== shift) continue;
-        accumulateEconomicFromSlot(v, acc, cfg);
+        accumulateEconomicFromSlot(v, acc, cfg, ingresosByReservationId, consumedReservationIds);
       }
       const totals = finalizeEconomicAcc(acc, cfg);
       rows.push({
@@ -198,20 +269,23 @@ export function buildTurnProfitabilityMap(
   slotViews: SlotView[],
   resourceIds: ResourceId[],
   weekDates: string[],
-  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG,
+  reservations?: Reservation[]
 ): Map<string, TurnProfitabilityCell> {
   const raw = new Map<string, TurnAgg>();
+  const ingresosByReservationId = buildReservationIngresosMap(reservations, cfg);
+  const consumedReservationIds = new Set<string>();
   for (const v of slotViews) {
     if (v.status !== "occupied" || v.isOverflowContinuation) continue;
     const key = profitabilityTurnKey(v.date, v.resourceId, v.shift);
     const used = v.usedMinutes ?? 0;
-    const rate = ingresoPorMinutoDesdeSlot(v, cfg);
+    const ingreso = ingresoDesdeSlot(v, cfg, ingresosByReservationId, consumedReservationIds);
     let acc = raw.get(key);
     if (!acc) {
       acc = { ingresosTurno: 0, minutosProgramados: 0, pacientes: 0 };
       raw.set(key, acc);
     }
-    acc.ingresosTurno += used * rate;
+    acc.ingresosTurno += ingreso;
     acc.minutosProgramados += used;
     acc.pacientes += v.patientsCount ?? 0;
   }

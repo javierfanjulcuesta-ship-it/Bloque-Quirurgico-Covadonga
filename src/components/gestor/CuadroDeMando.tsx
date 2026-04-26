@@ -331,45 +331,58 @@ function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
+function turnCellDecision(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
+  if (cell.estado === "sin_actividad") return "Revisar por baja actividad";
+  if (cell.estado === "infrautilizado") return "Reagrupar actividad";
+  if (cell.estado === "rentable") return "Mantener abierto";
+  if (cell.estado === "no_rentable") {
+    if (cell.margenTurno <= cfg.umbralNoRentable - 300) return "Probable cierre";
+    return "Revisar continuidad";
+  }
+  if (cell.margenTurno < 0) return "Revisar coste y agenda";
+  return "Mantener y monitorizar";
+}
+
+function turnCellStatusLabel(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
+  if (cell.estado === "sin_actividad") return "Sin actividad";
+  if (cell.estado === "infrautilizado") return "Margen positivo con baja carga";
+  if (cell.estado === "rentable") return "Rentable y con carga suficiente";
+  if (cell.estado === "no_rentable") {
+    if (cell.margenTurno <= cfg.umbralNoRentable - 300) return "Déficit claro";
+    return "Déficit leve";
+  }
+  return cell.margenTurno < 0 ? "Riesgo económico" : "Margen ajustado";
+}
+
 function turnMapTooltip(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
   const minP = Math.round(cell.minutosProgramados);
   const umbralMin = cfg.umbralMinutosRentableMapa;
+  const shift = cell.shift === "morning" ? "Mañana" : "Tarde";
+  const estadoLabel = turnCellStatusLabel(cell, cfg);
+  const decision = turnCellDecision(cell, cfg);
   const base =
     cell.estado === "sin_actividad"
-      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`
-      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(cell.costeApertura)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`;
+      ? `Turno: ${shift} · Estado: ${estadoLabel} · Acción sugerida: ${decision} · Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`
+      : `Turno: ${shift} · Estado: ${estadoLabel} · Acción sugerida: ${decision} · Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(cell.costeApertura)} · Margen: ${formatEur(cell.margenTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`;
   if (cell.estado !== "sin_actividad" && minP > 0 && minP < umbralMin) {
-    return `${base}. Turno con baja carga asistencial (dimensionamiento).`;
+    return `${base}. Turno con baja carga asistencial (dimensionamiento). Modelo estimado no contable.`;
   }
-  return base;
+  return `${base}. Modelo estimado no contable.`;
 }
 
 function TurnMapHalfCell({ cell, economicConfig }: { cell: TurnProfitabilityCell; economicConfig: EconomicConfig }) {
-  const label = cell.shift === "morning" ? "M" : "T";
   const marginText =
     cell.estado === "sin_actividad"
       ? "—"
       : `${cell.margenTurno >= 0 ? "+" : ""}${formatEur(cell.margenTurno).replace("−", "-")}`;
-  const minProgLine =
-    cell.estado === "sin_actividad" ? "—" : `${Math.round(cell.minutosProgramados)} min`;
-  const pacText =
-    cell.estado === "sin_actividad" ? (
-      <>
-        <span className="sm:hidden">Sin prog.</span>
-        <span className="hidden sm:inline">Sin programación</span>
-      </>
-    ) : (
-      `${cell.pacientes} pac.`
-    );
+  const decisionText = turnCellDecision(cell, economicConfig);
   return (
     <div
       title={turnMapTooltip(cell, economicConfig)}
-      className={`flex min-h-[4.25rem] flex-col justify-center gap-0.5 rounded border px-1 py-1 text-center text-[10px] leading-tight sm:text-[11px] ${turnMapHalfCellClasses(cell.estado)}`}
+      className={`flex h-12 flex-col items-center justify-center rounded-lg border px-2 text-center sm:h-14 ${turnMapHalfCellClasses(cell.estado)}`}
     >
-      <span className="font-bold">{label}</span>
-      <span className="text-[9px] font-normal opacity-90 sm:text-[10px]">{minProgLine}</span>
-      <span className="tabular-nums font-semibold">{marginText}</span>
-      <span className="opacity-90">{pacText}</span>
+      <span className="text-sm font-semibold tabular-nums">{marginText}</span>
+      <span className="text-[10px] font-medium leading-tight opacity-90">{decisionText}</span>
     </div>
   );
 }
@@ -400,12 +413,12 @@ export function CuadroDeMando({
   );
 
   const economicTotals = useMemo(
-    () => aggregateEconomicMetrics(slotViews, economicConfig),
-    [slotViews, economicConfig]
+    () => aggregateEconomicMetrics(slotViews, economicConfig, reservations),
+    [slotViews, economicConfig, reservations]
   );
   const economicRows = useMemo(
-    () => breakdownEconomicByResourceAndShift(slotViews, resources, economicConfig),
-    [slotViews, resources, economicConfig]
+    () => breakdownEconomicByResourceAndShift(slotViews, resources, economicConfig, reservations),
+    [slotViews, resources, economicConfig, reservations]
   );
 
   const economicCardTone = (t: EconomicMetricsTotals): "positive" | "warning" | "negative" | "neutral" => {
@@ -443,31 +456,55 @@ export function CuadroDeMando({
         slotViews,
         resources.map((r) => r.id),
         weekDatesIso,
-        economicConfig
+        economicConfig,
+        reservations
       ),
-    [slotViews, resources, weekDatesIso, economicConfig]
+    [slotViews, resources, weekDatesIso, economicConfig, reservations]
   );
 
-  const turnEfficiencyTrends = useMemo(() => {
+  const mapExecutiveStats = useMemo(() => {
     const labelById = new Map(resources.map((r) => [r.id, r.label]));
-    const lines: string[] = [];
+    const grouped = {
+      cerrarProbable: [] as string[],
+      reagrupar: [] as string[],
+      mantener: [] as string[],
+      revisar: [] as string[],
+      bajaActividad: [] as string[],
+    };
+    const counts = {
+      cerrarProbable: 0,
+      reagrupar: 0,
+      mantener: 0,
+      revisar: 0,
+      bajaActividad: 0,
+    };
+    let margenMantenerTotal = 0;
+
     for (const c of turnProfitabilityMap.values()) {
-      if (c.estado === "sin_actividad") continue;
       const lab = labelById.get(c.resourceId) ?? c.resourceId;
-      const turno = c.shift === "morning" ? "Mañana" : "Tarde";
-      const prefix = `${lab}, ${c.date} · ${turno}`;
-      if (c.minutosProgramados > 0 && c.minutosProgramados < 60) {
-        lines.push(`${prefix}: infrautilización severa`);
-      }
-      if (c.pacientes === 1) {
-        lines.push(`${prefix}: reagrupar`);
-      }
-      if (c.margenTurno < 0) {
-        lines.push(`${prefix}: no rentable`);
+      const turno = c.shift === "morning" ? "M" : "T";
+      const prefix = `${lab} · ${c.date} (${turno})`;
+      if (c.estado === "sin_actividad") {
+        counts.bajaActividad += 1;
+        grouped.bajaActividad.push(prefix);
+      } else if (c.estado === "rentable") {
+        counts.mantener += 1;
+        margenMantenerTotal += Math.max(0, c.margenTurno);
+        grouped.mantener.push(`${prefix}: ${formatEur(c.margenTurno)}`);
+      } else if (c.estado === "infrautilizado") {
+        counts.reagrupar += 1;
+        grouped.reagrupar.push(`${prefix}: ${Math.round(c.minutosProgramados)} min`);
+      } else if (c.estado === "no_rentable" && c.margenTurno <= economicConfig.umbralNoRentable - 300) {
+        counts.cerrarProbable += 1;
+        grouped.cerrarProbable.push(`${prefix}: ${formatEur(c.margenTurno)}`);
+      } else {
+        counts.revisar += 1;
+        grouped.revisar.push(`${prefix}: ${formatEur(c.margenTurno)}`);
       }
     }
-    return lines;
-  }, [turnProfitabilityMap, resources]);
+
+    return { grouped, counts, margenMantenerTotal };
+  }, [turnProfitabilityMap, resources, economicConfig.umbralNoRentable]);
 
   const weekRangeLabel = useMemo(() => {
     const days = getWeekDays(weekStart);
@@ -503,20 +540,38 @@ export function CuadroDeMando({
     <section className="space-y-6">
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-lg font-bold text-[var(--ribera-navy)]">Cuadro de mando</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Semana del <span className="font-medium text-slate-800">{toISODate(weekStart)}</span> · {weekRangeLabel}.
-        </p>
-        {updatedAt ? (
-          <p className="mt-1 text-xs text-slate-500">Datos actualizados a las {updatedAt}.</p>
-        ) : (
-          <p className="mt-1 text-xs text-slate-500">Aún no hay marca de hora de actualización (sin refresco de reservas).</p>
-        )}
+        <p className="mt-1 text-sm text-slate-600">Seguimiento operativo y económico semanal del bloque quirúrgico.</p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
+            <p className="mt-1 text-sm text-slate-700">
+              Vista semanal para decidir qué turnos abrir, reagrupar o revisar.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Semana del <span className="font-medium text-slate-700">{toISODate(weekStart)}</span> · {weekRangeLabel}
+            </p>
+            {updatedAt ? (
+              <p className="mt-1 text-xs text-slate-500">Datos actualizados a las {updatedAt}.</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Aún no hay marca de hora de actualización.</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p className="font-semibold text-slate-700">Turnos</p>
+            <p>M = Mañana</p>
+            <p>T = Tarde</p>
+          </div>
+        </div>
+
         {onWeekStartChange ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => shiftWeek(-1)}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
             >
               Semana anterior
             </button>
@@ -524,53 +579,46 @@ export function CuadroDeMando({
               type="button"
               onClick={goToCurrentWeek}
               disabled={isCurrentCalendarWeek}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Semana actual
             </button>
             <button
               type="button"
               onClick={() => shiftWeek(1)}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
             >
               Semana siguiente
             </button>
           </div>
         ) : null}
-      </div>
 
-      <div className="rounded-xl border-2 border-[var(--ribera-navy)]/25 bg-white p-4 shadow-md">
-        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
-        <p className="mt-1 text-sm text-slate-700">
-          Vista semanal para decidir qué turnos abrir, reagrupar o revisar.
-        </p>
-        <p className="mt-1 text-xs text-slate-600">
-          <span className="font-medium text-slate-800">M = mañana, T = tarde.</span> No es la rentabilidad marginal por
-          sala: aquí se imputa un coste fijo de apertura por turno con actividad (
-          {formatEur(economicConfig.costeAperturaTurnoDefault)}).
-        </p>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-          <span>
-            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />{" "}
-            Verde: rentable (margen ≥ {formatEur(economicConfig.umbralRentable)} y ≥{" "}
-            {economicConfig.umbralMinutosRentableMapa} min programados)
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" /> Mantener (margen y carga)
           </span>
-          <span>
-            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-amber-200 bg-amber-50" /> Ámbar:
-            dudoso o infrautilizado (menos de {economicConfig.umbralMinutosRentableMapa} min con margen no negativo, u
-            otros casos intermedios)
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">
+            <span className="h-2 w-2 rounded-full bg-amber-500" /> Reagrupar o revisar
           </span>
-          <span>
-            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Rojo: no
-            rentable
+          <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-800">
+            <span className="h-2 w-2 rounded-full bg-rose-500" /> Probable cierre (déficit claro)
           </span>
-          <span>
-            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" /> Gris: sin
-            programación
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-500">
+            <span className="h-2 w-2 rounded-full bg-slate-400" /> Sin actividad
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-600">
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">Estimación operativa</span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">Modelo no contable</span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+            Sin costes de material/farmacia
+          </span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
+            Ingreso estimado por minuto
           </span>
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
@@ -613,22 +661,133 @@ export function CuadroDeMando({
             </tbody>
           </table>
         </div>
-      </div>
 
-      <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-3">
-        <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
-        <p className="mt-1 text-xs text-slate-600">
-          Alertas derivadas del mapa y umbrales de minutos y margen (misma semana que arriba).
-        </p>
-        {turnEfficiencyTrends.length === 0 ? (
-          <p className="mt-2 text-xs text-slate-500">Sin alertas para esta semana según los criterios configurados.</p>
-        ) : (
-          <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-slate-700">
-            {turnEfficiencyTrends.map((line, i) => (
-              <li key={`${line}-${i}`}>{line}</li>
-            ))}
-          </ul>
-        )}
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-emerald-800">Mantener abiertos</p>
+            <p className="text-xl font-bold text-emerald-900">{mapExecutiveStats.counts.mantener}</p>
+            <p className="text-xs text-emerald-800">Margen +{formatEur(mapExecutiveStats.margenMantenerTotal)}</p>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-amber-900">Reagrupar actividad</p>
+            <p className="text-xl font-bold text-amber-950">{mapExecutiveStats.counts.reagrupar}</p>
+          </div>
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-rose-800">Probable cierre</p>
+            <p className="text-xl font-bold text-rose-900">{mapExecutiveStats.counts.cerrarProbable}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[11px] font-medium text-slate-600">Revisión de baja actividad</p>
+            <p className="text-xl font-bold text-slate-700">{mapExecutiveStats.counts.bajaActividad}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2">
+            <p className="text-sm font-semibold text-rose-900">🔴 Probable cierre</p>
+            <p className="text-xs text-rose-800">{mapExecutiveStats.grouped.cerrarProbable.length} turnos con déficit claro.</p>
+            <p className="mt-1 text-[11px] text-rose-700">Ver detalle en tendencias.</p>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+            <p className="text-sm font-semibold text-amber-950">🟠 Reagrupar actividad</p>
+            <p className="text-xs text-amber-900">{mapExecutiveStats.grouped.reagrupar.length} turnos con margen positivo pero baja carga.</p>
+            <p className="mt-1 text-[11px] text-amber-800">Ver detalle en tendencias.</p>
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+            <p className="text-sm font-semibold text-emerald-900">🟢 Mantener</p>
+            <p className="text-xs text-emerald-800">{mapExecutiveStats.grouped.mantener.length} turnos con señal favorable.</p>
+            <p className="mt-1 text-[11px] text-emerald-700">Ver detalle en tendencias.</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+            <p className="text-sm font-semibold text-slate-700">⚪ Revisar por baja actividad</p>
+            <p className="text-xs text-slate-600">{mapExecutiveStats.grouped.bajaActividad.length} turnos sin programación.</p>
+            <p className="mt-1 text-[11px] text-slate-500">Ver detalle en tendencias.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-3">
+          <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
+          <p className="mt-1 text-xs text-slate-600">
+            Los valores son estimaciones basadas en los supuestos económicos activos.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2">
+              <p className="text-xs font-semibold text-rose-900">Probable cierre (déficit claro)</p>
+              {mapExecutiveStats.grouped.cerrarProbable.length === 0 ? (
+                <p className="mt-1 text-xs text-rose-700/70">Sin alertas.</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-xs text-rose-800">
+                  {mapExecutiveStats.grouped.cerrarProbable.slice(0, 6).map((line, i) => (
+                    <li key={`nr-${i}`}>• {line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+              <p className="text-xs font-semibold text-amber-950">Reagrupar (margen positivo, baja carga)</p>
+              {mapExecutiveStats.grouped.reagrupar.length === 0 ? (
+                <p className="mt-1 text-xs text-amber-800/70">Sin alertas.</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-xs text-amber-900">
+                  {mapExecutiveStats.grouped.reagrupar.slice(0, 6).map((line, i) => (
+                    <li key={`inf-${i}`}>• {line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+              <p className="text-xs font-semibold text-emerald-900">Mantener abiertos</p>
+              {mapExecutiveStats.grouped.mantener.length === 0 ? (
+                <p className="mt-1 text-xs text-emerald-700/70">Sin turnos destacados.</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-xs text-emerald-800">
+                  {mapExecutiveStats.grouped.mantener.slice(0, 6).map((line, i) => (
+                    <li key={`ren-${i}`}>• {line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-100/70 px-3 py-2">
+              <p className="text-xs font-semibold text-slate-700">Revisar por baja actividad</p>
+              {mapExecutiveStats.grouped.bajaActividad.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-500">Sin turnos vacíos.</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-xs text-slate-600">
+                  {mapExecutiveStats.grouped.bajaActividad.slice(0, 6).map((line, i) => (
+                    <li key={`sa-${i}`}>• {line}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+            <p className="text-xs font-semibold text-amber-950">🟡 Revisión (no cierre inmediato)</p>
+            {mapExecutiveStats.grouped.revisar.length === 0 ? (
+              <p className="mt-1 text-xs text-amber-900/70">Sin turnos en revisión económica puntual.</p>
+            ) : (
+              <ul className="mt-1 space-y-1 text-xs text-amber-900">
+                {mapExecutiveStats.grouped.revisar.slice(0, 6).map((line, i) => (
+                  <li key={`rev-${i}`}>• {line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <details className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">Cómo interpretar este mapa</summary>
+            <div className="mt-2 space-y-1 text-xs text-slate-600">
+              <p>No sustituye facturación real: es una estimación para priorización operativa.</p>
+              <p>La acción sugerida en cada celda prioriza decisiones ejecutivas (mantener, reagrupar, revisar o cerrar).</p>
+              <p>
+                El mapa usa coste de apertura por turno y no equivale a la rentabilidad marginal por sala de la sección
+                económica.
+              </p>
+              <p>
+                Umbrales activos: rentable ≥ {formatEur(economicConfig.umbralRentable)}, no rentable &lt;{" "}
+                {formatEur(economicConfig.umbralNoRentable)} y mínimo {economicConfig.umbralMinutosRentableMapa} min.
+              </p>
+            </div>
+          </details>
+        </div>
       </div>
 
       <div className="border-t border-slate-200 pt-6">
