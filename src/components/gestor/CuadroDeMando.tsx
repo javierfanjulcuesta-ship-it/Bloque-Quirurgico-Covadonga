@@ -2,16 +2,19 @@
 
 // FUTURO: listados de reservas en el cuadro pueden usar `getDisplaySurgeonName` desde `@/lib/surgeonTitular`.
 
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import {
   ASSIGNMENT_FULL_SHIFT,
   type AnesthetistAssignment,
+  type PatientInBlock,
   type Reservation,
   type ResourceId,
   type Shift,
   type SlotView,
   type User,
 } from "@/lib/types";
+import { isPrivateFunding, isSespa } from "@/lib/patientInsurance";
+import { QUIRUFANO_IDS } from "@/lib/constants";
 import { getEffectiveTotalMinutes, getSlots, getWeekDays, getWeekStart, toISODate } from "@/lib/utils";
 import {
   aggregateOperatingRoomMetrics,
@@ -310,6 +313,27 @@ function EconomicSummaryCard({
   );
 }
 
+/** Pacientes en reservas de la semana visible: programados vs cancelados/anulados (reserva liberada o paciente CANCELLED). */
+function weekReservationPatientCounts(
+  reservations: Reservation[],
+  weekDateSet: Set<string>
+): { programados: number; canceladosOAnulados: number } {
+  let programados = 0;
+  let canceladosOAnulados = 0;
+  for (const r of reservations) {
+    if (!weekDateSet.has(r.date)) continue;
+    if (r.status === "cancelled" || r.status === "released") {
+      canceladosOAnulados += r.patients?.length ?? 0;
+      continue;
+    }
+    for (const p of r.patients ?? []) {
+      if (p.scheduleStatus === "CANCELLED") canceladosOAnulados += 1;
+      else programados += 1;
+    }
+  }
+  return { programados, canceladosOAnulados };
+}
+
 function metricsCards(t: OperatingRoomMetricsTotals) {
   return [
     { label: "Disponible", value: formatMinutes(t.availableMinutes) },
@@ -331,7 +355,101 @@ function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
-function turnCellDecision(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
+type ConfianzaEstimada = "alta" | "media" | "baja";
+type OccupancyBand = "alta" | "media" | "baja" | "sin_actividad";
+
+type TurnStrategicReading = {
+  ocupacionTurno: number;
+  occupancyBand: OccupancyBand;
+  lecturaCombinada: string;
+  recomendacion: string;
+};
+
+function patientFundingBucket(p: Pick<PatientInBlock, "entidadFinanciadora" | "scheduleStatus">): string | null {
+  if (p.scheduleStatus === "CANCELLED") return null;
+  const f = (p.entidadFinanciadora ?? "").trim();
+  if (!f) return null;
+  if (isPrivateFunding(f)) return "privado";
+  if (isSespa(f)) return "sespa";
+  return "otro";
+}
+
+/**
+ * Mezcla de financiaciones en el mismo turno (recurso + día + mañana/tarde): más de un tipo entre privado, SESPA u otro.
+ * Solo lectura de `slotViews` y `reservations`; no altera métricas económicas.
+ */
+function buildTurnMixedFundingByKey(
+  slotViews: SlotView[],
+  reservations: Reservation[],
+  weekDateSet: Set<string>
+): Map<string, boolean> {
+  const resById = new Map(reservations.map((r) => [r.id, r]));
+  const bucketsByKey = new Map<string, Set<string>>();
+
+  const ensureBuckets = (key: string): Set<string> => {
+    let s = bucketsByKey.get(key);
+    if (!s) {
+      s = new Set();
+      bucketsByKey.set(key, s);
+    }
+    return s;
+  };
+
+  for (const v of slotViews) {
+    if (v.status !== "occupied" || v.isOverflowContinuation) continue;
+    if (!weekDateSet.has(v.date)) continue;
+    const key = profitabilityTurnKey(v.date, v.resourceId, v.shift);
+    const set = ensureBuckets(key);
+    if (v.reservationId) {
+      const res = resById.get(v.reservationId);
+      let anyPatientBucket = false;
+      for (const p of res?.patients ?? []) {
+        const b = patientFundingBucket(p);
+        if (b) {
+          set.add(b);
+          anyPatientBucket = true;
+        }
+      }
+      if (!anyPatientBucket) {
+        if (v.hasPrivate) set.add("privado");
+        if (v.hasSespa) set.add("sespa");
+      }
+    } else {
+      if (v.hasPrivate) set.add("privado");
+      if (v.hasSespa) set.add("sespa");
+    }
+  }
+
+  const out = new Map<string, boolean>();
+  for (const [key, set] of bucketsByKey) {
+    out.set(key, set.size >= 2);
+  }
+  return out;
+}
+
+/** Prioridad: baja (poca muestra o mezcla) → alta (margen y minutos) → media (banda de margen) → baja. */
+function turnCellConfidence(cell: TurnProfitabilityCell, mixedFunding: boolean): ConfianzaEstimada {
+  const min = cell.minutosProgramados;
+  const m = cell.margenTurno;
+  if (min < 120 || mixedFunding) return "baja";
+  if (m >= 300 && min >= 120) return "alta";
+  if (m >= -200 && m <= 300) return "media";
+  return "baja";
+}
+
+function confianzaEstimadaLabel(c: ConfianzaEstimada): string {
+  if (c === "alta") return "alta";
+  if (c === "media") return "media";
+  return "baja";
+}
+
+function confianzaCeldaSuffix(c: ConfianzaEstimada): string {
+  if (c === "alta") return "alta";
+  if (c === "media") return "media";
+  return "baja";
+}
+
+function turnCellDecisionFull(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
   if (cell.estado === "sin_actividad") return "Revisar por baja actividad";
   if (cell.estado === "infrautilizado") return "Reagrupar actividad";
   if (cell.estado === "rentable") return "Mantener abierto";
@@ -341,6 +459,18 @@ function turnCellDecision(cell: TurnProfitabilityCell, cfg: EconomicConfig): str
   }
   if (cell.margenTurno < 0) return "Revisar coste y agenda";
   return "Mantener y monitorizar";
+}
+
+function turnCellDecisionShort(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
+  if (cell.estado === "sin_actividad") return "Sin actividad";
+  if (cell.estado === "infrautilizado") return "Reagrupar";
+  if (cell.estado === "rentable") return "Mantener";
+  if (cell.estado === "no_rentable") {
+    if (cell.margenTurno <= cfg.umbralNoRentable - 300) return "Revisar";
+    return "Revisar";
+  }
+  if (cell.margenTurno < 0) return "Revisar";
+  return "Mantener";
 }
 
 function turnCellStatusLabel(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
@@ -354,35 +484,251 @@ function turnCellStatusLabel(cell: TurnProfitabilityCell, cfg: EconomicConfig): 
   return cell.margenTurno < 0 ? "Riesgo económico" : "Margen ajustado";
 }
 
-function turnMapTooltip(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
-  const minP = Math.round(cell.minutosProgramados);
-  const umbralMin = cfg.umbralMinutosRentableMapa;
-  const shift = cell.shift === "morning" ? "Mañana" : "Tarde";
-  const estadoLabel = turnCellStatusLabel(cell, cfg);
-  const decision = turnCellDecision(cell, cfg);
-  const base =
-    cell.estado === "sin_actividad"
-      ? `Turno: ${shift} · Estado: ${estadoLabel} · Acción sugerida: ${decision} · Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`
-      : `Turno: ${shift} · Estado: ${estadoLabel} · Acción sugerida: ${decision} · Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(cell.costeApertura)} · Margen: ${formatEur(cell.margenTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`;
-  if (cell.estado !== "sin_actividad" && minP > 0 && minP < umbralMin) {
-    return `${base}. Turno con baja carga asistencial (dimensionamiento). Modelo estimado no contable.`;
+function turnCellConfidenceReason(
+  cell: TurnProfitabilityCell,
+  mixedFunding: boolean,
+  confidence: ConfianzaEstimada
+): string | null {
+  if (confidence === "baja") {
+    const lowMinutes = cell.minutosProgramados < 120;
+    if (lowMinutes && mixedFunding) return "ambos";
+    if (lowMinutes) return "menos de 120 min programados";
+    if (mixedFunding) return "mezcla de financiaciones";
+    return "menos de 120 min programados";
   }
-  return `${base}. Modelo estimado no contable.`;
+  if (confidence === "media") return "margen en banda intermedia (-200 a 300)";
+  return null;
 }
 
-function TurnMapHalfCell({ cell, economicConfig }: { cell: TurnProfitabilityCell; economicConfig: EconomicConfig }) {
+function expectedShiftMinutes(shift: Shift): number {
+  return getSlots(shift).reduce((sum, s) => sum + s.durationMinutes, 0);
+}
+
+/** Quirófanos principales (Q1–Q3) presentes en la lista de recursos del cuadro. */
+function mainOperatingRoomIds(resources: { id: ResourceId }[]): ResourceId[] {
+  const allowed = new Set<ResourceId>(QUIRUFANO_IDS);
+  return resources.map((r) => r.id).filter((id) => allowed.has(id));
+}
+
+/**
+ * Parámetros de la capa interpretativa «anestesia laboral vs mercantil» en lectura por bloque (Q1–Q3).
+ * No forma parte del modelo económico principal (`buildTurnProfitabilityMap`, `aggregateEconomicMetrics`, etc.).
+ *
+ * Limitaciones (solo capacidad de decisión, no contabilidad):
+ * - No se modelan complejidad del caso, número de anestesistas simultáneos, tiempos muertos intra-turno,
+ *   ni mínimos reales de mercado para mercantiles.
+ * - Sustituye únicamente una fracción hipotética del coste (anestesia) frente a ingresos agregados del bloque;
+ *   no incluye enfermería, TCAE, coste de apertura por sala del mapa, ni condiciones contractuales reales.
+ * - `costeTurnoLaboralAnestesia` se aplica una sola vez por bloque (día + turno), no por quirófano, alineado con
+ *   «no se puede contratar medio turno» a nivel de bloque abierto.
+ */
+const ANESTHESIA_BLOCK_SCENARIO_PARAMS: {
+  costeTurnoLaboralAnestesia: number;
+  porcentajeMercantilAnestesia: number;
+  /** Umbral mínimo de ingresos del bloque para considerar viable el escenario mercantil; `null` desactiva la regla. */
+  ingresoMinimoMercantil: number | null;
+  /** Diferencia mínima (€) entre saldos simulados para considerar «mejora clara» a favor del mercantil. */
+  umbralMejoraMercantilEur: number;
+} = {
+  costeTurnoLaboralAnestesia: 500,
+  porcentajeMercantilAnestesia: 0.2,
+  ingresoMinimoMercantil: 400,
+  umbralMejoraMercantilEur: 50,
+};
+
+/** Ingresos de bloque donde coste fijo laboral = coste mercantil proporcional (solo modelo anestesia). */
+const ANESTHESIA_EQUILIBRIO_LABORAL_MERCANTIL_TOOLTIP =
+  "Por debajo de este ingreso, el coste mercantil porcentual es menor que el fijo laboral; por encima, el fijo laboral puede ser más eficiente.";
+
+function computePuntoEquilibrioMercantilVsLaboralIngresos(
+  p: typeof ANESTHESIA_BLOCK_SCENARIO_PARAMS
+): number | null {
+  const pct = p.porcentajeMercantilAnestesia;
+  if (!(pct > 0) || !Number.isFinite(pct) || !Number.isFinite(p.costeTurnoLaboralAnestesia)) return null;
+  const v = p.costeTurnoLaboralAnestesia / pct;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+type BlockAnesthesiaScenarioReading = {
+  ingresosTotalesTurno: number;
+  margenActualBloque: number;
+  costeAnestesiaLaboral: number;
+  costeAnestesiaMercantil: number;
+  /** Ingresos del bloque menos solo el coste hipotético de anestesia laboral (no es margen económico completo). */
+  saldoTrasAnestesiaLaboral: number;
+  /** Ingresos del bloque menos solo el coste hipotético de anestesia mercantil (no es margen económico completo). */
+  saldoTrasAnestesiaMercantil: number;
+  mercantilNoViable: boolean;
+  /** saldo mercantil − saldo laboral; null si el escenario mercantil se marca como no viable. */
+  diferenciaPorModeloAnestesia: number | null;
+  /** Ingresos del bloque en los que coinciden coste fijo laboral y coste % mercantil; `null` si el % es inválido. */
+  puntoEquilibrioMercantilVsLaboral: number | null;
+  recomendacionAnestesia: string;
+};
+
+function computeBlockAnesthesiaScenarioReading(
+  ingresosTotalesTurno: number,
+  margenActualBloque: number
+): BlockAnesthesiaScenarioReading {
+  const p = ANESTHESIA_BLOCK_SCENARIO_PARAMS;
+  const puntoEquilibrioMercantilVsLaboral = computePuntoEquilibrioMercantilVsLaboralIngresos(p);
+  const costeAnestesiaLaboral = p.costeTurnoLaboralAnestesia;
+  const costeAnestesiaMercantil = ingresosTotalesTurno * p.porcentajeMercantilAnestesia;
+  const saldoTrasAnestesiaLaboral = ingresosTotalesTurno - costeAnestesiaLaboral;
+  const saldoTrasAnestesiaMercantil = ingresosTotalesTurno - costeAnestesiaMercantil;
+  const mercantilNoViable =
+    p.ingresoMinimoMercantil != null && ingresosTotalesTurno < p.ingresoMinimoMercantil;
+
+  let recomendacionAnestesia: string;
+  if (mercantilNoViable) {
+    recomendacionAnestesia = "Modelo anestesia: actividad insuficiente para opción mercantil";
+  } else if (saldoTrasAnestesiaMercantil > saldoTrasAnestesiaLaboral + p.umbralMejoraMercantilEur) {
+    recomendacionAnestesia = "Modelo anestesia: mercantil potencialmente más eficiente";
+  } else {
+    recomendacionAnestesia = "Modelo anestesia: laboral más adecuado para este nivel de actividad";
+  }
+
+  const diferenciaPorModeloAnestesia = mercantilNoViable
+    ? null
+    : saldoTrasAnestesiaMercantil - saldoTrasAnestesiaLaboral;
+
+  return {
+    ingresosTotalesTurno,
+    margenActualBloque,
+    costeAnestesiaLaboral,
+    costeAnestesiaMercantil,
+    saldoTrasAnestesiaLaboral,
+    saldoTrasAnestesiaMercantil,
+    mercantilNoViable,
+    diferenciaPorModeloAnestesia,
+    puntoEquilibrioMercantilVsLaboral,
+    recomendacionAnestesia,
+  };
+}
+
+function formatSignedEurDelta(n: number): string {
+  const abs = formatEur(Math.abs(n)).replace("−", "-");
+  if (n > 0) return `+${abs}`;
+  if (n < 0) return `-${abs}`;
+  return formatEur(0);
+}
+
+function blockOpenRecommendation(margenAgregado: number, ocupacionGlobal: number, minutosProgramadosTotales: number): string {
+  if (minutosProgramadosTotales <= 0 || ocupacionGlobal === 0) {
+    return "No programar salvo necesidad estratégica";
+  }
+  if (ocupacionGlobal >= 0.8 && margenAgregado > 0) return "Bloque bien aprovechado";
+  if (ocupacionGlobal < 0.5 && margenAgregado > 0) return "Completar actividad o reagrupar";
+  if (ocupacionGlobal >= 0.8 && margenAgregado <= 0) return "Revisar cartera/tarifas/costes";
+  if (ocupacionGlobal < 0.5 && margenAgregado <= 0) return "Evitar apertura futura o concentrar actividad";
+  if (margenAgregado > 0) return "Completar actividad o reagrupar";
+  return "Revisar cartera/tarifas/costes o concentrar actividad";
+}
+
+function getTurnStrategicReading(cell: TurnProfitabilityCell, minutosDisponiblesTurno: number): TurnStrategicReading {
+  const ocupacionTurno =
+    minutosDisponiblesTurno > 0 ? Math.max(0, Math.min(1, cell.minutosProgramados / minutosDisponiblesTurno)) : 0;
+  const occupancyBand: OccupancyBand =
+    ocupacionTurno === 0 ? "sin_actividad" : ocupacionTurno >= 0.8 ? "alta" : ocupacionTurno >= 0.5 ? "media" : "baja";
+
+  const econLabel =
+    cell.estado === "rentable"
+      ? "rentable"
+      : cell.estado === "no_rentable"
+        ? "no rentable"
+        : cell.estado === "sin_actividad"
+          ? "sin actividad"
+          : "dudoso";
+  const occLabel =
+    occupancyBand === "alta"
+      ? "ocupación alta"
+      : occupancyBand === "media"
+        ? "ocupación media"
+        : occupancyBand === "baja"
+          ? "ocupación baja"
+          : "sin actividad";
+
+  let recomendacion = "Revisar";
+  if (cell.estado === "sin_actividad" || occupancyBand === "sin_actividad") {
+    recomendacion = "No programar salvo necesidad estratégica";
+  } else if (cell.estado === "rentable" && occupancyBand === "alta") {
+    recomendacion = "Mantener y priorizar";
+  } else if (cell.estado === "rentable" && occupancyBand === "media") {
+    recomendacion = "Mantener y completar huecos";
+  } else if (cell.estado === "rentable" && occupancyBand === "baja") {
+    recomendacion = "Reagrupar actividad rentable";
+  } else if ((cell.estado === "dudoso" || cell.estado === "infrautilizado") && occupancyBand === "alta") {
+    recomendacion = "Revisar tarifas o costes";
+  } else if ((cell.estado === "dudoso" || cell.estado === "infrautilizado") && occupancyBand === "media") {
+    recomendacion = "Optimizar programación";
+  } else if ((cell.estado === "dudoso" || cell.estado === "infrautilizado") && occupancyBand === "baja") {
+    recomendacion = "Reagrupar";
+  } else if (cell.estado === "no_rentable" && occupancyBand === "alta") {
+    recomendacion = "Problema estructural";
+  } else if (cell.estado === "no_rentable" && occupancyBand === "media") {
+    recomendacion = "Revisar o reagrupar";
+  } else if (cell.estado === "no_rentable" && occupancyBand === "baja") {
+    recomendacion = "Reagrupar o no abrir en futuros turnos";
+  }
+
+  return {
+    ocupacionTurno,
+    occupancyBand,
+    lecturaCombinada: `${econLabel} con ${occLabel}`,
+    recomendacion,
+  };
+}
+
+function turnMapTooltip(
+  cell: TurnProfitabilityCell,
+  cfg: EconomicConfig,
+  mixedFunding: boolean,
+  minutosDisponiblesTurno: number
+): string {
+  const minP = Math.round(cell.minutosProgramados);
+  const shift = cell.shift === "morning" ? "Mañana" : "Tarde";
+  const estadoLabel = turnCellStatusLabel(cell, cfg);
+  const decision = turnCellDecisionFull(cell, cfg);
+  const confidence = turnCellConfidence(cell, mixedFunding);
+  const conf = confianzaEstimadaLabel(confidence);
+  const reason = turnCellConfidenceReason(cell, mixedFunding, confidence);
+  const strategic = getTurnStrategicReading(cell, minutosDisponiblesTurno);
+  const ocupacionPct = `${(strategic.ocupacionTurno * 100).toFixed(0)}%`;
+  const confidenceLine =
+    confidence === "baja"
+      ? "Confianza estimada: baja. La recomendación requiere revisión manual."
+      : `Confianza estimada: ${conf}.`;
+  const reasonLine = reason ? ` Motivo: ${reason}.` : "";
+  const bloqueNota =
+    "Nota: La decisión real puede depender del bloque completo abierto, no solo de una sala aislada.";
+  return `Turno: ${shift} · Estado: ${estadoLabel} · Acción sugerida: ${decision} · Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(cell.costeApertura)} · Margen: ${formatEur(cell.margenTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}. Ocupación: ${ocupacionPct}. Lectura combinada: ${strategic.lecturaCombinada}. Recomendación estratégica: ${strategic.recomendacion}. ${bloqueNota} ${confidenceLine}${reasonLine} Modelo estimado no contable.`;
+}
+
+function TurnMapHalfCell({
+  cell,
+  economicConfig,
+  mixedFunding,
+  minutosDisponiblesTurno,
+}: {
+  cell: TurnProfitabilityCell;
+  economicConfig: EconomicConfig;
+  mixedFunding: boolean;
+  minutosDisponiblesTurno: number;
+}) {
   const marginText =
     cell.estado === "sin_actividad"
       ? "—"
       : `${cell.margenTurno >= 0 ? "+" : ""}${formatEur(cell.margenTurno).replace("−", "-")}`;
-  const decisionText = turnCellDecision(cell, economicConfig);
+  const decisionText = turnCellDecisionShort(cell, economicConfig);
+  const conf = turnCellConfidence(cell, mixedFunding);
+  const secondLine = `${decisionText} · ${confianzaCeldaSuffix(conf)}`;
   return (
     <div
-      title={turnMapTooltip(cell, economicConfig)}
+      title={turnMapTooltip(cell, economicConfig, mixedFunding, minutosDisponiblesTurno)}
       className={`flex h-12 flex-col items-center justify-center rounded-lg border px-2 text-center sm:h-14 ${turnMapHalfCellClasses(cell.estado)}`}
     >
       <span className="text-sm font-semibold tabular-nums">{marginText}</span>
-      <span className="text-[10px] font-medium leading-tight opacity-90">{decisionText}</span>
+      <span className="text-[10px] font-medium leading-tight opacity-90">{secondLine}</span>
     </div>
   );
 }
@@ -406,19 +752,24 @@ export function CuadroDeMando({
     [economicConfig]
   );
 
-  const totals = useMemo(() => aggregateOperatingRoomMetrics(slotViews), [slotViews]);
+  const totals = useMemo(() => aggregateOperatingRoomMetrics(slotViews), [slotViews, weekStart]);
   const rows = useMemo(
     () => breakdownByResourceAndShift(slotViews, resources),
-    [slotViews, resources]
+    [slotViews, resources, weekStart]
   );
 
+  /**
+   * Agregado marginal semanal del modelo económico actual.
+   * `slotViews` se construye en la página del calendario acotado a la semana visible (`weekStart`) y recursos;
+   * al cambiar programación, reservas, `economicConfig` o semana, este `useMemo` (y mapa/bloque que dependen de ello) se recalcula.
+   */
   const economicTotals = useMemo(
     () => aggregateEconomicMetrics(slotViews, economicConfig, reservations),
-    [slotViews, economicConfig, reservations]
+    [slotViews, economicConfig, reservations, weekStart]
   );
   const economicRows = useMemo(
     () => breakdownEconomicByResourceAndShift(slotViews, resources, economicConfig, reservations),
-    [slotViews, resources, economicConfig, reservations]
+    [slotViews, resources, economicConfig, reservations, weekStart]
   );
 
   const economicCardTone = (t: EconomicMetricsTotals): "positive" | "warning" | "negative" | "neutral" => {
@@ -427,6 +778,26 @@ export function CuadroDeMando({
     if (t.estadoRentabilidad === "no_rentable") return "negative";
     return "neutral";
   };
+
+  /** Ocupación % del mismo universo que ingresos/costes marginales (minutos base / capacidad no bloqueada). */
+  const weeklyOccupancyEconomicPct = useMemo(() => {
+    if (economicTotals.availableMinutes <= 0) return null;
+    return (economicTotals.minutosOcupacion / economicTotals.availableMinutes) * 100;
+  }, [economicTotals]);
+
+  const weeklyBalanceMarginVisual = useMemo(() => {
+    const e = economicTotals.estadoRentabilidad;
+    if (e === "rentable") {
+      return { border: "border-emerald-300 bg-emerald-50/95", text: "text-emerald-900" };
+    }
+    if (e === "ajustado") {
+      return { border: "border-amber-300 bg-amber-50/95", text: "text-amber-950" };
+    }
+    if (e === "no_rentable") {
+      return { border: "border-rose-300 bg-rose-50/95", text: "text-rose-900" };
+    }
+    return { border: "border-slate-200 bg-slate-50/90", text: "text-[var(--ribera-navy)]" };
+  }, [economicTotals]);
 
   const anesthetistEfficiencyRows = useMemo(
     () =>
@@ -459,8 +830,114 @@ export function CuadroDeMando({
         economicConfig,
         reservations
       ),
-    [slotViews, resources, weekDatesIso, economicConfig, reservations]
+    [slotViews, resources, weekDatesIso, economicConfig, reservations, weekStart]
   );
+
+  const weekDateSet = useMemo(() => new Set(weekDatesIso), [weekDatesIso]);
+
+  const weekPatientStats = useMemo(
+    () => weekReservationPatientCounts(reservations, weekDateSet),
+    [reservations, weekDateSet]
+  );
+
+  const turnMixedFundingByKey = useMemo(
+    () => buildTurnMixedFundingByKey(slotViews, reservations, weekDateSet),
+    [slotViews, reservations, weekDateSet]
+  );
+
+  const turnAvailableMinutesByKey = useMemo(() => {
+    const morningExpected = expectedShiftMinutes("morning");
+    const afternoonExpected = expectedShiftMinutes("afternoon");
+    const out = new Map<string, number>();
+    for (const date of weekDatesIso) {
+      for (const r of resources) {
+        // Capa estratégica: usamos capacidad teórica estándar del turno (agenda base),
+        // no slots visibles, para no sesgar ocupación por filtros, carga parcial o slots faltantes.
+        // Limitación: no refleja cierres extraordinarios ni capacidad contractual específica por recurso.
+        out.set(profitabilityTurnKey(date, r.id, "morning"), morningExpected);
+        out.set(profitabilityTurnKey(date, r.id, "afternoon"), afternoonExpected);
+      }
+    }
+    return out;
+  }, [weekDatesIso, resources]);
+
+  const strategicExecutiveStats = useMemo(() => {
+    let rentablesBienOcupados = 0;
+    let rentablesInfrautilizados = 0;
+    let llenosPocoRentables = 0;
+    let vaciosCandidatosCierre = 0;
+
+    for (const c of turnProfitabilityMap.values()) {
+      const key = profitabilityTurnKey(c.date, c.resourceId, c.shift);
+      const strategic = getTurnStrategicReading(c, turnAvailableMinutesByKey.get(key) ?? 0);
+      const isDudosoONoRentable =
+        c.estado === "dudoso" || c.estado === "infrautilizado" || c.estado === "no_rentable";
+      if (c.estado === "rentable" && strategic.occupancyBand === "alta") rentablesBienOcupados += 1;
+      if (c.estado === "rentable" && (strategic.occupancyBand === "media" || strategic.occupancyBand === "baja")) {
+        rentablesInfrautilizados += 1;
+      }
+      if (strategic.occupancyBand === "alta" && isDudosoONoRentable) llenosPocoRentables += 1;
+      if (c.estado === "sin_actividad" || (c.estado === "no_rentable" && strategic.occupancyBand === "baja")) {
+        vaciosCandidatosCierre += 1;
+      }
+    }
+
+    return { rentablesBienOcupados, rentablesInfrautilizados, llenosPocoRentables, vaciosCandidatosCierre };
+  }, [turnProfitabilityMap, turnAvailableMinutesByKey, weekStart]);
+
+  const lecturaBloqueAbiertoRows = useMemo(() => {
+    const orIds = mainOperatingRoomIds(resources);
+    if (orIds.length === 0) return [];
+    const shifts: Shift[] = ["morning", "afternoon"];
+    const rows: {
+      date: string;
+      shift: Shift;
+      qConActividad: number;
+      minutosProgramadosTotales: number;
+      capacidadTotalMinutos: number;
+      ocupacionGlobal: number;
+      margenAgregado: number;
+      ingresosTotalesTurno: number;
+      anestesia: BlockAnesthesiaScenarioReading;
+      recomendacion: string;
+    }[] = [];
+
+    for (const date of weekDatesIso) {
+      for (const shift of shifts) {
+        let qConActividad = 0;
+        let minutosProgramadosTotales = 0;
+        let capacidadTotalMinutos = 0;
+        let margenAgregado = 0;
+        let ingresosTotalesTurno = 0;
+        for (const id of orIds) {
+          const key = profitabilityTurnKey(date, id, shift);
+          const cell = turnProfitabilityMap.get(key);
+          if (!cell) continue;
+          if (cell.estado !== "sin_actividad") qConActividad += 1;
+          minutosProgramadosTotales += cell.minutosProgramados;
+          margenAgregado += cell.margenTurno;
+          ingresosTotalesTurno += cell.ingresosTurno;
+          capacidadTotalMinutos += turnAvailableMinutesByKey.get(key) ?? expectedShiftMinutes(shift);
+        }
+        const ocupacionGlobal =
+          capacidadTotalMinutos > 0 ? Math.max(0, Math.min(1, minutosProgramadosTotales / capacidadTotalMinutos)) : 0;
+        const anestesia = computeBlockAnesthesiaScenarioReading(ingresosTotalesTurno, margenAgregado);
+        rows.push({
+          date,
+          shift,
+          qConActividad,
+          minutosProgramadosTotales,
+          capacidadTotalMinutos,
+          ocupacionGlobal,
+          margenAgregado,
+          ingresosTotalesTurno,
+          anestesia,
+          recomendacion: blockOpenRecommendation(margenAgregado, ocupacionGlobal, minutosProgramadosTotales),
+        });
+      }
+    }
+    return rows;
+  }, [resources, weekDatesIso, turnProfitabilityMap, turnAvailableMinutesByKey, weekStart]);
 
   const mapExecutiveStats = useMemo(() => {
     const labelById = new Map(resources.map((r) => [r.id, r.label]));
@@ -479,8 +956,13 @@ export function CuadroDeMando({
       bajaActividad: 0,
     };
     let margenMantenerTotal = 0;
+    let decisionesBajaConfianza = 0;
 
     for (const c of turnProfitabilityMap.values()) {
+      const turnKey = profitabilityTurnKey(c.date, c.resourceId, c.shift);
+      if (turnCellConfidence(c, turnMixedFundingByKey.get(turnKey) ?? false) === "baja") {
+        decisionesBajaConfianza += 1;
+      }
       const lab = labelById.get(c.resourceId) ?? c.resourceId;
       const turno = c.shift === "morning" ? "M" : "T";
       const prefix = `${lab} · ${c.date} (${turno})`;
@@ -503,8 +985,8 @@ export function CuadroDeMando({
       }
     }
 
-    return { grouped, counts, margenMantenerTotal };
-  }, [turnProfitabilityMap, resources, economicConfig.umbralNoRentable]);
+    return { grouped, counts, margenMantenerTotal, decisionesBajaConfianza };
+  }, [turnProfitabilityMap, resources, economicConfig.umbralNoRentable, turnMixedFundingByKey, weekStart]);
 
   const weekRangeLabel = useMemo(() => {
     const days = getWeekDays(weekStart);
@@ -537,29 +1019,97 @@ export function CuadroDeMando({
   const goToCurrentWeek = () => onWeekStartChange?.(getWeekStart(new Date()));
 
   return (
-    <section className="space-y-6">
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-[var(--ribera-navy)]">Cuadro de mando</h2>
+    <section className="space-y-8">
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <h2 className="text-lg font-bold tracking-tight text-[var(--ribera-navy)]">Cuadro de mando</h2>
         <p className="mt-1 text-sm text-slate-600">Seguimiento operativo y económico semanal del bloque quirúrgico.</p>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
-            <p className="mt-1 text-sm text-slate-700">
-              Vista semanal para decidir qué turnos abrir, reagrupar o revisar.
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Semana del <span className="font-medium text-slate-700">{toISODate(weekStart)}</span> · {weekRangeLabel}
-            </p>
-            {updatedAt ? (
-              <p className="mt-1 text-xs text-slate-500">Datos actualizados a las {updatedAt}.</p>
-            ) : (
-              <p className="mt-1 text-xs text-slate-500">Aún no hay marca de hora de actualización.</p>
-            )}
+      <div className="space-y-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 sm:shadow-md">
+        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50/90 to-white px-4 py-5 shadow-sm sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <h3 className="text-lg font-bold tracking-tight text-[var(--ribera-navy)]">Balance estimado de actividad semanal</h3>
+              <p className="mt-1 text-sm text-slate-600">Modelo marginal según programación actual</p>
+              <p className="mt-1 text-xs text-slate-500">
+                <span className="font-medium text-slate-700">{weekRangeLabel}</span> · Lunes{" "}
+                <span className="font-medium text-slate-700">{toISODate(weekStart)}</span>
+                {updatedAt ? (
+                  <>
+                    {" "}
+                    · Actualizado <span className="font-medium text-slate-600">{updatedAt}</span>
+                  </>
+                ) : null}
+              </p>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Se actualiza automáticamente al cambiar programación, anulaciones, ampliaciones o pacientes.
+              </p>
+              <details className="mt-2 rounded-lg border border-slate-200 bg-white/80 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-700">Supuestos y limitaciones del balance</summary>
+                <div className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-slate-600">
+                  <p>Modelo estimativo; no incluye todos los costes reales ni facturación definitiva.</p>
+                  <p>No representa margen neto contable ni coste completo del bloque.</p>
+                  <p>Mismo agregado marginal que la tabla «Rentabilidad marginal» de esta página.</p>
+                </div>
+              </details>
+            </div>
+            <div
+              className={`w-full shrink-0 rounded-xl border px-4 py-3 shadow-sm sm:min-w-[220px] sm:max-w-sm lg:w-auto ${weeklyBalanceMarginVisual.border}`}
+            >
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Margen marginal estimado</p>
+              <p className={`mt-1 text-2xl font-bold tabular-nums sm:text-3xl ${weeklyBalanceMarginVisual.text}`}>
+                {formatEur(economicTotals.margenEstimado)}
+              </p>
+            </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Ingresos estimados</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{formatEur(economicTotals.ingresosEstimados)}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Costes estimados</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{formatEur(economicTotals.costesEstimados)}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Pacientes programados</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{weekPatientStats.programados}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Cancelados / anulados</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">{weekPatientStats.canceladosOAnulados}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Minutos programados</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">
+                {formatMinutes(economicTotals.minutosOcupacion)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Ocupación media estimada</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900">
+                {weeklyOccupancyEconomicPct != null ? `${weeklyOccupancyEconomicPct.toFixed(1)} %` : "—"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold tracking-tight text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
+            <p className="mt-1 text-sm text-slate-700">
+              Vista semanal: qué turnos mantener, reagrupar o revisar.
+            </p>
+            <details className="mt-2 rounded-lg border border-amber-200/80 bg-amber-50/50 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold text-amber-950">
+                Bloque completo vs sala aislada
+              </summary>
+              <p className="mt-2 text-xs leading-relaxed text-amber-950/90">
+                La decisión real puede depender del bloque completo abierto, no solo de una sala aislada.
+              </p>
+            </details>
+          </div>
+          <div className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             <p className="font-semibold text-slate-700">Turnos</p>
             <p>M = Mañana</p>
             <p>T = Tarde</p>
@@ -567,7 +1117,7 @@ export function CuadroDeMando({
         </div>
 
         {onWeekStartChange ? (
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => shiftWeek(-1)}
@@ -593,32 +1143,36 @@ export function CuadroDeMando({
           </div>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap gap-2 text-xs">
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" /> Mantener (margen y carga)
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">
-            <span className="h-2 w-2 rounded-full bg-amber-500" /> Reagrupar o revisar
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-800">
-            <span className="h-2 w-2 rounded-full bg-rose-500" /> Probable cierre (déficit claro)
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-500">
-            <span className="h-2 w-2 rounded-full bg-slate-400" /> Sin actividad
-          </span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-600">
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">Estimación operativa</span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">Modelo no contable</span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
-            Sin costes de material/farmacia
-          </span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">
-            Ingreso estimado por minuto
-          </span>
-        </div>
+        <details className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700">Leyenda y supuestos del mapa</summary>
+          <div className="mt-3 space-y-3">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Mantener (margen y carga)
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-900">
+                <span className="h-2 w-2 rounded-full bg-amber-500" /> Reagrupar o revisar
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-800">
+                <span className="h-2 w-2 rounded-full bg-rose-500" /> Probable cierre (déficit claro)
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-500">
+                <span className="h-2 w-2 rounded-full bg-slate-400" /> Sin actividad
+              </span>
+            </div>
+            <p className="text-xs text-slate-600">
+              La confianza indica fiabilidad de la recomendación, no rentabilidad.
+            </p>
+            <div className="flex flex-wrap gap-2 text-[11px] text-slate-600">
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">Estimación operativa</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">Modelo no contable</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">Sin costes de material/farmacia</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">Ingreso estimado por minuto</span>
+            </div>
+          </div>
+        </details>
 
-        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
@@ -643,12 +1197,32 @@ export function CuadroDeMando({
                       <div className="flex flex-col gap-1">
                         <TurnMapHalfCell
                           economicConfig={economicConfig}
+                          mixedFunding={
+                            turnMixedFundingByKey.get(
+                              profitabilityTurnKey(col.iso, resource.id, "morning")
+                            ) ?? false
+                          }
+                          minutosDisponiblesTurno={
+                            turnAvailableMinutesByKey.get(
+                              profitabilityTurnKey(col.iso, resource.id, "morning")
+                            ) ?? 0
+                          }
                           cell={
                             turnProfitabilityMap.get(profitabilityTurnKey(col.iso, resource.id, "morning"))!
                           }
                         />
                         <TurnMapHalfCell
                           economicConfig={economicConfig}
+                          mixedFunding={
+                            turnMixedFundingByKey.get(
+                              profitabilityTurnKey(col.iso, resource.id, "afternoon")
+                            ) ?? false
+                          }
+                          minutosDisponiblesTurno={
+                            turnAvailableMinutesByKey.get(
+                              profitabilityTurnKey(col.iso, resource.id, "afternoon")
+                            ) ?? 0
+                          }
                           cell={
                             turnProfitabilityMap.get(profitabilityTurnKey(col.iso, resource.id, "afternoon"))!
                           }
@@ -662,56 +1236,165 @@ export function CuadroDeMando({
           </table>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+          <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Lectura por bloque abierto</h4>
+          <p className="mt-1 text-sm text-slate-700">
+            Q1–Q3 agregados por día y turno: ocupación del bloque y anestesia laboral vs mercantil.
+          </p>
+          <details className="mt-2 rounded-lg border border-slate-200 bg-white/90 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+              Metodología y limitaciones (capacidad, anestesia, bloque vs sala)
+            </summary>
+            <div className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-slate-600">
+              <p>
+                Capacidad = suma de minutos teóricos por sala según calendario base. Agregado de quirófanos Q1–Q3 por día
+                y turno.
+              </p>
+              <p className="font-medium text-slate-700">
+                Comparación simplificada de modelo de anestesia. No incluye todos los costes reales ni condiciones
+                contractuales.
+              </p>
+              <p>
+                Los saldos de anestesia comparan coste de anestesia frente a ingresos del bloque; no son margen económico
+                completo.
+              </p>
+              <p>
+                El análisis por sala ayuda a detectar dispersión; el análisis por bloque abierto ayuda a decidir apertura,
+                concentración o redistribución de actividad.
+              </p>
+            </div>
+          </details>
+          {lecturaBloqueAbiertoRows.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-500">No hay quirófanos principales en la lista de recursos.</p>
+          ) : (
+            <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white shadow-sm">
+              <table className="min-w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <th className="px-2 py-2">Día</th>
+                    <th className="px-2 py-2">Turno</th>
+                    <th className="px-2 py-2 text-right">Q con actividad</th>
+                    <th className="px-2 py-2 text-right">Min. programados</th>
+                    <th className="px-2 py-2 text-right">Capacidad visible total</th>
+                    <th className="px-2 py-2 text-right">Ocupación bloque</th>
+                    <th className="px-2 py-2 text-right">Margen agregado</th>
+                    <th className="px-2 py-2">Recomendación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lecturaBloqueAbiertoRows.map((row) => {
+                    const a = row.anestesia;
+                    const minMerc = ANESTHESIA_BLOCK_SCENARIO_PARAMS.ingresoMinimoMercantil;
+                    return (
+                      <Fragment key={`${row.date}-${row.shift}`}>
+                        <tr className="border-b border-slate-100">
+                          <td className="px-2 py-2 font-medium text-slate-800">{row.date}</td>
+                          <td className="px-2 py-2 text-slate-700">{row.shift === "morning" ? "Mañana" : "Tarde"}</td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">{row.qConActividad}</td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                            {Math.round(row.minutosProgramadosTotales)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                            {Math.round(row.capacidadTotalMinutos)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                            {(row.ocupacionGlobal * 100).toFixed(0)}%
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">{formatEur(row.margenAgregado)}</td>
+                          <td className="px-2 py-2 text-slate-700">{row.recomendacion}</td>
+                        </tr>
+                        <tr className="border-b border-slate-200 bg-slate-50/80 last:border-0">
+                          <td
+                            colSpan={8}
+                            className="px-2 py-1.5 text-[11px] leading-snug text-slate-600"
+                            title="No incluye enfermería, TCAE, material, farmacia, limpieza ni costes estructurales."
+                          >
+                            <span className="text-slate-500">Ingresos bloque (Q1–Q3): {formatEur(row.ingresosTotalesTurno)}.</span>{" "}
+                            Saldo tras anestesia laboral: {formatEur(a.saldoTrasAnestesiaLaboral)}.{" "}
+                            {a.mercantilNoViable ? (
+                              <>
+                                Saldo tras anestesia mercantil: no viable (ingresos del bloque por debajo de{" "}
+                                {minMerc != null ? formatEur(minMerc) : "umbral"}).
+                              </>
+                            ) : (
+                              <>Saldo tras anestesia mercantil: {formatEur(a.saldoTrasAnestesiaMercantil)}.</>
+                            )}{" "}
+                            {a.diferenciaPorModeloAnestesia == null ? (
+                              <>Diferencia por modelo de anestesia: — (opción mercantil no viable). </>
+                            ) : (
+                              <>
+                                Diferencia por modelo de anestesia: {formatSignedEurDelta(a.diferenciaPorModeloAnestesia)}.{" "}
+                              </>
+                            )}
+                            <span className="font-medium text-slate-700">{a.recomendacionAnestesia}</span>
+                            {a.puntoEquilibrioMercantilVsLaboral != null ? (
+                              <span
+                                className="text-slate-500"
+                                title={ANESTHESIA_EQUILIBRIO_LABORAL_MERCANTIL_TOOLTIP}
+                              >
+                                {" "}
+                                Equilibrio laboral/mercantil: {formatEur(a.puntoEquilibrioMercantilVsLaboral)} ingresos
+                                bloque.
+                              </span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 shadow-sm">
             <p className="text-[11px] font-medium text-emerald-800">Mantener abiertos</p>
             <p className="text-xl font-bold text-emerald-900">{mapExecutiveStats.counts.mantener}</p>
             <p className="text-xs text-emerald-800">Margen +{formatEur(mapExecutiveStats.margenMantenerTotal)}</p>
           </div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 shadow-sm">
             <p className="text-[11px] font-medium text-amber-900">Reagrupar actividad</p>
             <p className="text-xl font-bold text-amber-950">{mapExecutiveStats.counts.reagrupar}</p>
           </div>
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 shadow-sm">
             <p className="text-[11px] font-medium text-rose-800">Probable cierre</p>
             <p className="text-xl font-bold text-rose-900">{mapExecutiveStats.counts.cerrarProbable}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm">
             <p className="text-[11px] font-medium text-slate-600">Revisión de baja actividad</p>
             <p className="text-xl font-bold text-slate-700">{mapExecutiveStats.counts.bajaActividad}</p>
           </div>
         </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2">
-            <p className="text-sm font-semibold text-rose-900">🔴 Probable cierre</p>
-            <p className="text-xs text-rose-800">{mapExecutiveStats.grouped.cerrarProbable.length} turnos con déficit claro.</p>
-            <p className="mt-1 text-[11px] text-rose-700">Ver detalle en tendencias.</p>
+        <p className="text-sm text-slate-700">
+          <span className="font-semibold text-slate-800">{mapExecutiveStats.decisionesBajaConfianza}</span> turnos con
+          baja confianza: revisión manual recomendada.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-3 shadow-sm">
+            <p className="text-[11px] font-medium text-emerald-900">Rentables y bien ocupados</p>
+            <p className="text-lg font-bold text-emerald-900">{strategicExecutiveStats.rentablesBienOcupados}</p>
           </div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
-            <p className="text-sm font-semibold text-amber-950">🟠 Reagrupar actividad</p>
-            <p className="text-xs text-amber-900">{mapExecutiveStats.grouped.reagrupar.length} turnos con margen positivo pero baja carga.</p>
-            <p className="mt-1 text-[11px] text-amber-800">Ver detalle en tendencias.</p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3 shadow-sm">
+            <p className="text-[11px] font-medium text-amber-950">Rentables pero infrautilizados</p>
+            <p className="text-lg font-bold text-amber-950">{strategicExecutiveStats.rentablesInfrautilizados}</p>
           </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2">
-            <p className="text-sm font-semibold text-emerald-900">🟢 Mantener</p>
-            <p className="text-xs text-emerald-800">{mapExecutiveStats.grouped.mantener.length} turnos con señal favorable.</p>
-            <p className="mt-1 text-[11px] text-emerald-700">Ver detalle en tendencias.</p>
+          <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-3 shadow-sm">
+            <p className="text-[11px] font-medium text-rose-900">Llenos pero poco rentables</p>
+            <p className="text-lg font-bold text-rose-900">{strategicExecutiveStats.llenosPocoRentables}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
-            <p className="text-sm font-semibold text-slate-700">⚪ Revisar por baja actividad</p>
-            <p className="text-xs text-slate-600">{mapExecutiveStats.grouped.bajaActividad.length} turnos sin programación.</p>
-            <p className="mt-1 text-[11px] text-slate-500">Ver detalle en tendencias.</p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm">
+            <p className="text-[11px] font-medium text-slate-700">Vacíos / no programar en futuros turnos</p>
+            <p className="text-lg font-bold text-slate-800">{strategicExecutiveStats.vaciosCandidatosCierre}</p>
           </div>
         </div>
 
-        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-3">
-          <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
-          <p className="mt-1 text-xs text-slate-600">
-            Los valores son estimaciones basadas en los supuestos económicos activos.
-          </p>
-          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2">
+        <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-4 py-4 sm:px-5">
+          <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Resumen y tendencias</h4>
+          <p className="mt-1 text-sm text-slate-600">Listados por prioridad según el mapa (estimaciones operativas).</p>
+          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-3 shadow-sm">
               <p className="text-xs font-semibold text-rose-900">Probable cierre (déficit claro)</p>
               {mapExecutiveStats.grouped.cerrarProbable.length === 0 ? (
                 <p className="mt-1 text-xs text-rose-700/70">Sin alertas.</p>
@@ -723,7 +1406,7 @@ export function CuadroDeMando({
                 </ul>
               )}
             </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3 shadow-sm">
               <p className="text-xs font-semibold text-amber-950">Reagrupar (margen positivo, baja carga)</p>
               {mapExecutiveStats.grouped.reagrupar.length === 0 ? (
                 <p className="mt-1 text-xs text-amber-800/70">Sin alertas.</p>
@@ -735,7 +1418,7 @@ export function CuadroDeMando({
                 </ul>
               )}
             </div>
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-3 shadow-sm">
               <p className="text-xs font-semibold text-emerald-900">Mantener abiertos</p>
               {mapExecutiveStats.grouped.mantener.length === 0 ? (
                 <p className="mt-1 text-xs text-emerald-700/70">Sin turnos destacados.</p>
@@ -747,7 +1430,7 @@ export function CuadroDeMando({
                 </ul>
               )}
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-100/70 px-3 py-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-100/70 px-3 py-3 shadow-sm">
               <p className="text-xs font-semibold text-slate-700">Revisar por baja actividad</p>
               {mapExecutiveStats.grouped.bajaActividad.length === 0 ? (
                 <p className="mt-1 text-xs text-slate-500">Sin turnos vacíos.</p>
@@ -760,8 +1443,8 @@ export function CuadroDeMando({
               )}
             </div>
           </div>
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
-            <p className="text-xs font-semibold text-amber-950">🟡 Revisión (no cierre inmediato)</p>
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-3 shadow-sm">
+            <p className="text-xs font-semibold text-amber-950">Revisión (no cierre inmediato)</p>
             {mapExecutiveStats.grouped.revisar.length === 0 ? (
               <p className="mt-1 text-xs text-amber-900/70">Sin turnos en revisión económica puntual.</p>
             ) : (
@@ -772,14 +1455,18 @@ export function CuadroDeMando({
               </ul>
             )}
           </div>
-          <details className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+          <details className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
             <summary className="cursor-pointer text-xs font-semibold text-slate-700">Cómo interpretar este mapa</summary>
-            <div className="mt-2 space-y-1 text-xs text-slate-600">
+            <div className="mt-2 space-y-2 text-xs leading-relaxed text-slate-600">
               <p>No sustituye facturación real: es una estimación para priorización operativa.</p>
               <p>La acción sugerida en cada celda prioriza decisiones ejecutivas (mantener, reagrupar, revisar o cerrar).</p>
               <p>
                 El mapa usa coste de apertura por turno y no equivale a la rentabilidad marginal por sala de la sección
                 económica.
+              </p>
+              <p>
+                La lectura estratégica (rentables bien ocupados / infrautilizados, etc.) cruza margen estimado y ocupación;
+                no sustituye la revisión manual.
               </p>
               <p>
                 Umbrales activos: rentable ≥ {formatEur(economicConfig.umbralRentable)}, no rentable &lt;{" "}
@@ -790,24 +1477,27 @@ export function CuadroDeMando({
         </div>
       </div>
 
-      <div className="border-t border-slate-200 pt-6">
-        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Métricas operativas</h3>
-        <p className="mt-1 text-xs text-slate-600">
-          Misma vista de huecos que el calendario para la semana seleccionada.
-        </p>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        {metricsCards(totals).map((c) => (
-          <SummaryCard key={c.label} label={c.label} value={c.value} />
-        ))}
-      </div>
+      <div className="space-y-5 border-t border-slate-200 pt-8">
+        <div>
+          <h3 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Métricas operativas</h3>
+          <p className="mt-1 text-sm text-slate-600">Misma vista de huecos que el calendario para la semana seleccionada.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+          {metricsCards(totals).map((c) => (
+            <SummaryCard key={c.label} label={c.label} value={c.value} />
+          ))}
+        </div>
 
-      <p className="text-xs text-slate-500">
-        La ocupación mostrada es <span className="font-medium">minutos programados (tramo base)</span> respecto a{" "}
-        <span className="font-medium">minutos disponibles</span> (excluye bloqueos). Los minutos en desborde corresponden a
-        tramos de continuación visual.
-      </p>
+        <details className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700">Cómo se calcula la ocupación %</summary>
+          <p className="mt-2 text-xs leading-relaxed text-slate-600">
+            La ocupación mostrada es <span className="font-medium">minutos programados (tramo base)</span> respecto a{" "}
+            <span className="font-medium">minutos disponibles</span> (excluye bloqueos). Los minutos en desborde
+            corresponden a tramos de continuación visual.
+          </p>
+        </details>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -843,8 +1533,8 @@ export function CuadroDeMando({
       </div>
       </div>
 
-      <div className="border-t border-slate-200 pt-6">
-        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Rentabilidad marginal (estimada)</h3>
+      <div className="space-y-5 border-t border-slate-200 pt-8">
+        <h3 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Rentabilidad marginal (estimada)</h3>
         <p className="mt-1 text-sm text-slate-700">
           Por recurso y turno: ingresos y costes marginales sobre la actividad programada (sin coste fijo de apertura del
           mapa superior).
