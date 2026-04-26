@@ -165,6 +165,12 @@ export async function POST(request: Request) {
     if (result.error === "slot_occupied") {
       return NextResponse.json({ error: result.message ?? "El hueco ya está ocupado" }, { status: 409 });
     }
+    if (result.error === "overflow_conflict") {
+      return NextResponse.json(
+        { error: result.message ?? "Conflicto por desbordamiento de otra reserva", code: "overflow_conflict" },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: result.message ?? "Datos inválidos" }, { status: 400 });
   }
 

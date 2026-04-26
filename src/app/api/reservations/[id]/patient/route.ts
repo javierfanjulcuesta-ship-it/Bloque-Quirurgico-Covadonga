@@ -11,6 +11,12 @@ import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { updatePatientSchema } from "@/lib/validations/reservation";
+import { getEffectiveTotalMinutes } from "@/lib/utils";
+import {
+  findOverflowConflictAgainstOccupiedSlots,
+  findOverflowInvaderForTargetSlot,
+  getActiveReservationsInContext,
+} from "@/lib/reservations/overflowConflicts";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +73,57 @@ export async function PATCH(
     if (updates.orderIndex !== undefined) data.orderIndex = updates.orderIndex;
     if (updates.notes !== undefined) data.notes = updates.notes;
     if (updates.solicitudRecursos !== undefined) data.solicitudRecursos = updates.solicitudRecursos;
+
+    if (updates.estimatedDurationMinutes !== undefined) {
+      const dateStr = reservation.date instanceof Date
+        ? reservation.date.toISOString().slice(0, 10)
+        : String(reservation.date).slice(0, 10);
+      const shift = reservation.shift === "MORNING" ? "morning" : "afternoon";
+      const activeInContext = await getActiveReservationsInContext(prisma, {
+        date: dateStr,
+        resourceId: reservation.resourceId,
+        shift,
+      });
+      const invader = findOverflowInvaderForTargetSlot({
+        reservations: activeInContext,
+        shift,
+        targetSlotIndex: reservation.slotIndex,
+        targetSurgeonId: reservation.surgeonId,
+        excludeReservationId: reservation.id,
+      });
+      if (invader) {
+        return NextResponse.json(
+          {
+            error: "El hueco base está invadido por la prolongación de otra reserva con pacientes",
+            code: "overflow_conflict",
+          },
+          { status: 409 }
+        );
+      }
+
+      const simulatedPatients = (reservation.patients ?? []).map((p) => ({
+        estimatedDurationMinutes: p.id === patientId
+          ? updates.estimatedDurationMinutes ?? p.estimatedDurationMinutes
+          : p.estimatedDurationMinutes,
+      }));
+      const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(simulatedPatients));
+      const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
+        reservations: activeInContext,
+        shift,
+        ownerReservationId: reservation.id,
+        ownerSlotIndex: reservation.slotIndex,
+        ownerUsedMinutes: usedMinutesCandidate,
+      });
+      if (overflowConflict) {
+        return NextResponse.json(
+          {
+            error: "La duración total invade un tramo ya ocupado por otra reserva con pacientes",
+            code: "overflow_conflict",
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     await prisma.patientInBlock.update({
       where: { id: patientId },
