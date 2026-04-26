@@ -135,6 +135,21 @@ export async function PUT(request: Request) {
       toUpsert.push(parsed);
     }
 
+    // Protección mínima anti-wipe: no permitir payload parseado vacío si ya hay datos existentes.
+    if (toUpsert.length === 0) {
+      const existingCount = await prisma.anesthetistAssignment.count();
+      if (existingCount > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "No se guardaron asignaciones: el payload está vacío y borraría asignaciones existentes. Recargue la pantalla y reintente.",
+            code: "empty_assignments_would_clear_existing",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Validar que los anesthetistId sean usuarios ANESTESISTA/GESTOR_ANESTESISTA (User no tiene isActive en schema)
     const distinctAnesthetistIds = [...new Set(toUpsert.map((a) => a.anesthetistId))];
     const anesthetists = await prisma.user.findMany({
