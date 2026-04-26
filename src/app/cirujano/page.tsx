@@ -264,6 +264,7 @@ export default function CirujanoPage() {
   } | null>(null);
   const [savingEditedPatient, setSavingEditedPatient] = useState(false);
   const [gestorSurgeonSoloId, setGestorSurgeonSoloId] = useState("");
+  const [showNormas, setShowNormas] = useState(false);
   const programDeepLinkConsumedRef = useRef(false);
 
   /** Enlace desde calendario gestor: ?programDate=&resourceId=&shift=&startSlot=&span=&surgeonId= */
@@ -896,17 +897,34 @@ export default function CirujanoPage() {
         />
 
         {user && (user.role === "cirujano" || user.role === "endoscopista") && (
-          <section
-            className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-slate-800 shadow-sm"
-            aria-labelledby="normas-bloque-titulo"
-          >
-            <h2 id="normas-bloque-titulo" className="mb-3 text-lg font-bold text-[var(--ribera-navy)]">
-              Normas de programación del bloque quirúrgico
-            </h2>
-            <div className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
-              {NORMAS_PROGRAMACION_BLOQUE}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
+
+            <div className="flex justify-between items-center cursor-pointer"
+                 onClick={() => setShowNormas(!showNormas)}>
+
+              <div>
+                <h3 className="text-base font-semibold text-blue-900">
+                  Normas de programación del bloque
+                </h3>
+                {!showNormas && (
+                  <p className="text-xs text-blue-700 mt-1">
+                    Plazos, cierre semanal, liberación automática y tiempos mínimos.
+                  </p>
+                )}
+              </div>
+
+              <span className="text-blue-700 text-sm">
+                {showNormas ? "Ocultar" : "Ver normas"}
+              </span>
             </div>
-          </section>
+
+            {showNormas && (
+              <div className="mt-4 text-sm text-blue-900 whitespace-pre-line leading-relaxed">
+                {NORMAS_PROGRAMACION_BLOQUE}
+              </div>
+            )}
+
+          </div>
         )}
 
         {reservationsLoading && tab === "bloque" && (

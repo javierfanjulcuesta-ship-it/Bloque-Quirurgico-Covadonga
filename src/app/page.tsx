@@ -168,14 +168,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center px-4 py-10">
-      <div className="flex justify-center mt-10 mb-8">
-        <img
-          src="/qxflow-logo.png"
-          alt="QxFlow"
-          style={{ width: "260px", height: "auto" }}
-        />
-      </div>
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center px-4 py-8">
       {authUser && (
         <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
           <p className="text-sm font-medium text-green-800">
@@ -206,10 +199,20 @@ export default function HomePage() {
         </div>
       )}
       <div className="card-ribera w-full p-8">
+        <div className="flex flex-col items-center mb-4">
+          <img
+            src="/qxflow-logo.png"
+            alt="QxFlow"
+            style={{ width: "180px", height: "auto" }}
+          />
+          <p className="text-sm text-gray-500 mt-2">
+            Coordinación del bloque quirúrgico
+          </p>
+        </div>
         {modoDemo && (
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
         )}
-        <h2 className="mb-4 text-xl font-semibold tracking-tight text-[var(--ribera-navy)]">
+        <h2 className="mb-3 text-xl font-semibold tracking-tight text-[var(--ribera-navy)]">
           {modoDemo ? "Acceso de demostración" : "Iniciar sesión"}
         </h2>
         {modoDemo ? (
