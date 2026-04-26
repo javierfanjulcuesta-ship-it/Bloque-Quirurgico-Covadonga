@@ -13,6 +13,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { roleToFrontend } from "@/lib/roleMapping";
 import { getAppUrl } from "@/lib/appUrl";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
+import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { logUserAuditEvent } from "@/lib/userAudit";
 
 const TEMP_PASSWORD_LENGTH = 10;
@@ -32,12 +33,15 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const session = toAuthSession(await getSessionFromCookie());
+    const sessionPayload = await getSessionFromCookie();
+    const session = toAuthSession(sessionPayload);
     const denyAuth = requireAuth(session);
     if (denyAuth) return denyAuth;
 
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
+
+    const invitedByName = sessionPayload?.name?.trim() || undefined;
 
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
@@ -68,6 +72,8 @@ export async function POST(
     });
 
     const role = roleToFrontend(user.role);
+    const normasTexto =
+      role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
 
     try {
       await sendNewUserInvitationEmail({
@@ -76,6 +82,8 @@ export async function POST(
         recipientName: user.name || undefined,
         accessLink: appUrl,
         initialPassword: tempPassword,
+        invitedByName,
+        normasTexto,
       });
     } catch (sendErr) {
       const sendMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);

@@ -8,6 +8,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 import { getUsers } from "@/lib/dataHelpers";
 import { resetDemoStorage } from "@/lib/demoReset";
@@ -169,6 +170,16 @@ export default function HomePage() {
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center px-4 py-10">
+      <div className="mb-6 mt-2 flex justify-center sm:mb-8 sm:mt-4">
+        <Image
+          src="/qxflow-logo.png"
+          alt="QxFlow"
+          width={220}
+          height={70}
+          priority
+          className="h-auto w-[180px] sm:w-[220px]"
+        />
+      </div>
       {authUser && (
         <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
           <p className="text-sm font-medium text-green-800">

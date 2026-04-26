@@ -9,6 +9,7 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import type { UserRole } from "@/lib/types";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
+import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { getAppUrl } from "@/lib/appUrl";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
+    const invitedByName = sessionPayload?.name?.trim() || undefined;
     const body = await request.json();
     const toEmail = typeof body.toEmail === "string" ? body.toEmail.trim().toLowerCase() : "";
     const role = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
@@ -52,12 +54,17 @@ export async function POST(request: Request) {
       }
     }
 
+    const normasTexto =
+      role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
+
     await sendNewUserInvitationEmail({
       toEmail,
       role: role as UserRole,
       recipientName: recipientName || undefined,
       accessLink: appUrl,
       initialPassword,
+      invitedByName,
+      normasTexto,
     });
 
     return NextResponse.json({ ok: true });
