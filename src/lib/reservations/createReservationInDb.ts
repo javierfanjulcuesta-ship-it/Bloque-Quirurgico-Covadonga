@@ -3,6 +3,7 @@
  * Usada por la API de reservas y por el webhook de correo.
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { createReservationSchema } from "@/lib/validations/reservation";
 import type { CreateReservationInput } from "@/lib/validations/reservation";
@@ -18,7 +19,12 @@ export type ReservationOrigin = "APP" | "EMAIL" | "GESTOR";
 
 export type CreateReservationResult =
   | { ok: true; reservationId: string }
-  | { ok: false; error: "slot_occupied" | "overflow_conflict" | "invalid_data"; message: string };
+  | {
+      ok: false;
+      error: "slot_occupied" | "overflow_conflict" | "invalid_data";
+      code?: "slot_occupied" | "overflow_conflict" | "invalid_data";
+      message: string;
+    };
 
 export interface CreateReservationOptions {
   origin?: ReservationOrigin;
@@ -147,7 +153,8 @@ export async function createReservationInDb(
       return {
         ok: false,
         error: "slot_occupied",
-        message: "El hueco ya está ocupado",
+        code: "slot_occupied",
+        message: "Hueco ocupado",
       };
     }
     if (existing.status === "CANCELLED" || existing.status === "RELEASED") {
@@ -215,32 +222,45 @@ export async function createReservationInDb(
     }
   }
 
-  const reservation = await prisma.reservation.create({
-    data: {
-      date: dateObj,
-      resourceId,
-      shift: shiftEnum,
-      slotIndex,
-      surgeonId,
-      status: hasPatients ? "CONFIRMED" : "PENDING",
-      origin: originPrisma,
-      createdByUserId: actorUserId,
-      patients: {
-        create: patients.map((p, i) => ({
-          historyNumber: p.historyNumber,
-          fullName: p.fullName ?? null,
-          procedure: p.procedure,
-          estimatedDurationMinutes: p.estimatedDurationMinutes,
-          anesthesiaType: p.anesthesiaType,
-          insuranceType: p.insuranceType,
-          admissionType: p.admissionType ?? null,
-          orderIndex: p.orderIndex ?? i,
-          notes: p.notes ?? null,
-          solicitudRecursos: p.solicitudRecursos ?? null,
-        })),
+  let reservation;
+  try {
+    reservation = await prisma.reservation.create({
+      data: {
+        date: dateObj,
+        resourceId,
+        shift: shiftEnum,
+        slotIndex,
+        surgeonId,
+        status: hasPatients ? "CONFIRMED" : "PENDING",
+        origin: originPrisma,
+        createdByUserId: actorUserId,
+        patients: {
+          create: patients.map((p, i) => ({
+            historyNumber: p.historyNumber,
+            fullName: p.fullName ?? null,
+            procedure: p.procedure,
+            estimatedDurationMinutes: p.estimatedDurationMinutes,
+            anesthesiaType: p.anesthesiaType,
+            insuranceType: p.insuranceType,
+            admissionType: p.admissionType ?? null,
+            orderIndex: p.orderIndex ?? i,
+            notes: p.notes ?? null,
+            solicitudRecursos: p.solicitudRecursos ?? null,
+          })),
+        },
       },
-    },
-  });
+    });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return {
+        ok: false,
+        error: "slot_occupied",
+        code: "slot_occupied",
+        message: "Hueco ocupado",
+      };
+    }
+    throw e;
+  }
 
   const eventType = origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED";
   await logReservationEvent({

@@ -142,31 +142,33 @@ export async function PATCH(
       );
     }
 
-    for (let i = 0; i < patients.length; i++) {
-      const p = patients[i]!;
-      await prisma.patientInBlock.create({
+    await prisma.$transaction(async (tx) => {
+      for (let i = 0; i < patients.length; i++) {
+        const p = patients[i]!;
+        await tx.patientInBlock.create({
+          data: {
+            reservationId: id,
+            historyNumber: p.historyNumber,
+            fullName: p.fullName ?? null,
+            procedure: p.procedure,
+            estimatedDurationMinutes: p.estimatedDurationMinutes,
+            anesthesiaType: p.anesthesiaType,
+            insuranceType: p.insuranceType,
+            admissionType: p.admissionType ?? null,
+            orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
+            notes: p.notes ?? null,
+            solicitudRecursos: p.solicitudRecursos ?? null,
+          },
+        });
+      }
+
+      await tx.reservation.update({
+        where: { id },
         data: {
-          reservationId: id,
-          historyNumber: p.historyNumber,
-          fullName: p.fullName ?? null,
-          procedure: p.procedure,
-          estimatedDurationMinutes: p.estimatedDurationMinutes,
-          anesthesiaType: p.anesthesiaType,
-          insuranceType: p.insuranceType,
-          admissionType: p.admissionType ?? null,
-          orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
-          notes: p.notes ?? null,
-          solicitudRecursos: p.solicitudRecursos ?? null,
+          status: "CONFIRMED",
+          updatedByUserId: session!.userId,
         },
       });
-    }
-
-    await prisma.reservation.update({
-      where: { id },
-      data: {
-        status: "CONFIRMED",
-        updatedByUserId: session!.userId,
-      },
     });
 
     await logReservationEvent({

@@ -88,13 +88,9 @@ export async function POST(request: Request) {
 
     resetLoginRateLimitOnSuccess(request);
     const res = NextResponse.json({ user });
-    const out = addSessionCookieToResponse(res, token);
-    const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
-    console.log("[AUTH-DIAG] LOGIN: intentando setear cookie | nombre=bloque_session | opts={httpOnly:true,secure:" + isProd + ",sameSite:lax,path:/} | tokenPrefijo=" + (token ? token.slice(0, 12) + "..." : "vacio"));
-    return out;
+    return addSessionCookieToResponse(res, token);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[auth/login]", msg);
+    console.error("Login error:", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json(
       { error: "Error interno" },
       { status: 500 }

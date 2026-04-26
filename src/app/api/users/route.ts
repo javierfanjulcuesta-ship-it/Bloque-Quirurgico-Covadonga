@@ -42,15 +42,12 @@ export async function POST(request: Request) {
     if (denyPerm) return denyPerm;
 
     const body = await request.json();
-    console.log("[USERS] BODY", body);
 
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const roleInput = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
     const role = roleToPrisma(roleInput);
     const rawName = typeof body.name === "string" ? body.name.trim() : "";
     const name = rawName || emailToDisplayName(email) || "Usuario";
-
-    console.log("[USERS] creando", { email, role, name: name.slice(0, 20) + (name.length > 20 ? "…" : "") });
 
     if (!email || !role) {
       return NextResponse.json(
@@ -98,13 +95,8 @@ export async function POST(request: Request) {
       tempPassword,
     });
   } catch (err) {
-    console.error("[USERS] ERROR", err);
-    return NextResponse.json(
-      {
-        error: err instanceof Error ? err.message : JSON.stringify(err),
-      },
-      { status: 500 }
-    );
+    console.error("[USERS] ERROR", err instanceof Error ? err.message : "Unknown error");
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
 
@@ -175,11 +167,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ users });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Error interno";
-    console.error("[USERS GET]", err);
-    return NextResponse.json(
-      { error: msg },
-      { status: 500 }
-    );
+    console.error("[USERS GET]", err instanceof Error ? err.message : "Unknown error");
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }

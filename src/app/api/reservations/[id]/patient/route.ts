@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
@@ -125,14 +126,15 @@ export async function PATCH(
       }
     }
 
-    await prisma.patientInBlock.update({
-      where: { id: patientId },
-      data,
-    });
-
-    await prisma.reservation.update({
-      where: { id },
-      data: { updatedByUserId: session!.userId },
+    await prisma.$transaction(async (tx) => {
+      await tx.patientInBlock.update({
+        where: { id: patientId },
+        data: data as Prisma.PatientInBlockUpdateInput,
+      });
+      await tx.reservation.update({
+        where: { id },
+        data: { updatedByUserId: session!.userId },
+      });
     });
 
     await logReservationEvent({

@@ -179,8 +179,8 @@ export async function POST(request: Request) {
   });
 
   if (!result.ok) {
-    if (result.error === "slot_occupied") {
-      return NextResponse.json({ error: result.message ?? "El hueco ya está ocupado" }, { status: 409 });
+    if (result.error === "slot_occupied" || result.code === "slot_occupied") {
+      return NextResponse.json({ code: "slot_occupied", message: "Hueco ocupado" }, { status: 409 });
     }
     if (result.error === "overflow_conflict") {
       return NextResponse.json(

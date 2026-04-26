@@ -1,15 +1,17 @@
 /**
  * Configuración de la aplicación.
- * modoDemo = true  → usuarios mock, localStorage, sin contraseña.
+ * modoDemo = true  → usuarios mock, localStorage, sin contraseña (solo en NODE_ENV=development).
  * modoDemo = false → backend real: API, base de datos, autenticación real.
  *
- * Piloto real: establecer NEXT_PUBLIC_DEMO_MODE=false en las variables de entorno.
+ * En build/producción el modo demo nunca se activa aunque NEXT_PUBLIC_DEMO_MODE no sea "false".
+ * Piloto real: NEXT_PUBLIC_DEMO_MODE=false en .env (y en desarrollo también si quieres API real).
  *
  * useRealReservationsApi: true = leer/escribir reservas vía API; false = localStorage.
  * Por defecto sigue a modoDemo (API cuando !modoDemo).
  * Override: NEXT_PUBLIC_USE_REAL_API=true|false
  */
-export const modoDemo = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
+const demoModeRequested = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
+export const modoDemo = demoModeRequested && process.env.NODE_ENV === "development";
 
 const useRealApiEnv = process.env.NEXT_PUBLIC_USE_REAL_API;
 export const useRealReservationsApi =

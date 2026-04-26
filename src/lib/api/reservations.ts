@@ -193,7 +193,10 @@ export async function createReservation(payload: CreateReservationPayload): Prom
   if (!res.ok) {
     if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
     if (res.status === 403) throw new ReservationsApiError("No tiene permiso para crear esta reserva.", 403);
-    if (res.status === 409) throw new ReservationsApiError((data as { error?: string }).error ?? "El hueco ya está ocupado.", 409);
+    if (res.status === 409) {
+      const d = data as { error?: string; message?: string; code?: string };
+      throw new ReservationsApiError(d.message ?? d.error ?? "Hueco ocupado.", 409, d.code);
+    }
     throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear la reserva", res.status);
   }
 
