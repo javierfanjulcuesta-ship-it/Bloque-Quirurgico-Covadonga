@@ -117,6 +117,7 @@ export default function CalendarioPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [reservationsLoading, setReservationsLoading] = useState(false);
   const [reservationsError, setReservationsError] = useState<string | null>(null);
+  const [lastReservationsFetchedAt, setLastReservationsFetchedAt] = useState<Date | null>(null);
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
@@ -145,6 +146,7 @@ export default function CalendarioPage() {
   const refreshReservations = useCallback(async () => {
     if (modoDemo) {
       setReservations(getStoredReservations());
+      setLastReservationsFetchedAt(new Date());
       setReservationsError(null);
       return;
     }
@@ -160,6 +162,7 @@ export default function CalendarioPage() {
         dateTo: toISODate(to),
       });
       setReservations(list);
+      setLastReservationsFetchedAt(new Date());
     } catch (err) {
       const msg = err instanceof ReservationsApiError ? err.message : "Error al cargar reservas";
       setReservationsError(msg);
@@ -563,6 +566,15 @@ export default function CalendarioPage() {
                   >
                     {reservationsLoading ? "Cargando…" : "Refrescar calendario"}
                   </button>
+                  {viewTab === "calendario" && lastReservationsFetchedAt ? (
+                    <p className="mt-2 text-xs text-emerald-700">
+                      Calendario actualizado a las{" "}
+                      {lastReservationsFetchedAt.toLocaleTimeString("es-ES", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <div className="min-w-0 flex-1">
