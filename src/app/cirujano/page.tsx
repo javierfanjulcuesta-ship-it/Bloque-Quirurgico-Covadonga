@@ -79,7 +79,8 @@ function isSlotUsableForTitularInRoom(
       x.date === date &&
       x.shift === shift &&
       x.slotIndex === slotIndex &&
-      x.status !== "cancelled"
+      x.status !== "cancelled" &&
+      x.status !== "released"
   );
   if (!r) return true;
   const isTitular =
