@@ -15,7 +15,29 @@ export const costePersonalPorMinuto = 6;
 export const costeVariablePorPaciente = 120;
 export const umbralMargenAjustado = 300;
 
+/**
+ * Mapa de rentabilidad de turnos — coste estructural fijo por turno con actividad (MVP simplificado).
+ * Desglose orientativo: enfermería quirófano 200 € + anestesista laboral 500 € + enfermería URPA 200 € + TCAE esterilización 100 € = 1.000 €.
+ */
+export const costeAperturaTurnoDefault = 1000;
+export const umbralRentable = 300;
+export const umbralNoRentable = -200;
+
 export type EstadoRentabilidad = "rentable" | "ajustado" | "no_rentable";
+
+export type TurnOpeningEstado = "sin_actividad" | "rentable" | "dudoso" | "no_rentable";
+
+export interface TurnProfitabilityCell {
+  date: string;
+  resourceId: ResourceId;
+  shift: Shift;
+  ingresosTurno: number;
+  minutosProgramados: number;
+  pacientes: number;
+  costeApertura: number;
+  margenTurno: number;
+  estado: TurnOpeningEstado;
+}
 
 export interface EconomicMetricsTotals {
   ingresosEstimados: number;
@@ -23,8 +45,12 @@ export interface EconomicMetricsTotals {
   margenEstimado: number;
   margenPorMinutoProgramado: number | null;
   estadoRentabilidad: EstadoRentabilidad;
-  /** Minutos imputados solo en tramo base (sin continuaciones de desborde): ingresos, coste personal y €/min. */
+  /**
+   * Minutos imputados solo en tramo base (occupied, sin isOverflowContinuation):
+   * ingresos, coste quirófano marginal, coste personal y margen/min.
+   */
   minutosOcupacion: number;
+  /** Capacidad no bloqueada (informativo; no entra en costes del modelo marginal). */
   availableMinutes: number;
   pacientesContados: number;
 }
@@ -40,10 +66,15 @@ function slotCapMinutes(v: SlotView): number {
   return getSlotDurationMinutes(v.shift, v.slotIndex);
 }
 
-function ingresoPorMinutoSlot(v: SlotView): number {
+/** Tarifa simulada €/min (misma lógica que rentabilidad marginal). */
+export function ingresoPorMinutoDesdeSlot(v: Pick<SlotView, "hasPrivate" | "hasSespa">): number {
   if (v.hasPrivate) return ingresoPorMinutoPrivado;
   if (v.hasSespa) return ingresoPorMinutoSespa;
   return ingresoPorMinutoDefault;
+}
+
+function ingresoPorMinutoSlot(v: SlotView): number {
+  return ingresoPorMinutoDesdeSlot(v);
 }
 
 export function estadoRentabilidadDesdeMargen(margen: number): EstadoRentabilidad {
@@ -93,8 +124,13 @@ function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc): void {
 
 function finalizeEconomicAcc(acc: EconomicAcc): EconomicMetricsTotals {
   const minutosOcupacionBase = acc.programmedMinutes;
+
+  // Modelo de rentabilidad marginal:
+  // Solo se imputan costes sobre actividad real (minutos programados),
+  // no sobre capacidad disponible. Esto permite analizar eficiencia operativa
+  // sin contaminar con costes estructurales del turno.
   const costesEstimados =
-    acc.availableMinutes * costeQuirofanoPorMinuto +
+    minutosOcupacionBase * costeQuirofanoPorMinuto +
     minutosOcupacionBase * costePersonalPorMinuto +
     acc.pacientesContados * costeVariablePorPaciente;
 
@@ -147,4 +183,76 @@ export function breakdownEconomicByResourceAndShift(
     }
   }
   return rows;
+}
+
+export function profitabilityTurnKey(date: string, resourceId: ResourceId, shift: Shift): string {
+  return `${date}|${resourceId}|${shift}`;
+}
+
+type TurnAgg = { ingresosTurno: number; minutosProgramados: number; pacientes: number };
+
+/**
+ * Mapa (date, recurso, turno) → rentabilidad estimada de apertura con coste fijo por turno si hay actividad.
+ * Ingresos y minutos solo en huecos base ocupados (sin continuación de overflow).
+ */
+export function buildTurnProfitabilityMap(
+  slotViews: SlotView[],
+  resourceIds: ResourceId[],
+  weekDates: string[]
+): Map<string, TurnProfitabilityCell> {
+  const raw = new Map<string, TurnAgg>();
+  for (const v of slotViews) {
+    if (v.status !== "occupied" || v.isOverflowContinuation) continue;
+    const key = profitabilityTurnKey(v.date, v.resourceId, v.shift);
+    const used = v.usedMinutes ?? 0;
+    const rate = ingresoPorMinutoDesdeSlot(v);
+    let acc = raw.get(key);
+    if (!acc) {
+      acc = { ingresosTurno: 0, minutosProgramados: 0, pacientes: 0 };
+      raw.set(key, acc);
+    }
+    acc.ingresosTurno += used * rate;
+    acc.minutosProgramados += used;
+    acc.pacientes += v.patientsCount ?? 0;
+  }
+
+  const shifts: Shift[] = ["morning", "afternoon"];
+  const out = new Map<string, TurnProfitabilityCell>();
+
+  for (const date of weekDates) {
+    for (const resourceId of resourceIds) {
+      for (const shift of shifts) {
+        const key = profitabilityTurnKey(date, resourceId, shift);
+        const acc = raw.get(key) ?? { ingresosTurno: 0, minutosProgramados: 0, pacientes: 0 };
+        const hayActividad = acc.pacientes > 0 || acc.minutosProgramados > 0;
+        const costeApertura = hayActividad ? costeAperturaTurnoDefault : 0;
+        const margenTurno = acc.ingresosTurno - costeApertura;
+
+        let estado: TurnOpeningEstado;
+        if (!hayActividad) {
+          estado = "sin_actividad";
+        } else if (margenTurno >= umbralRentable) {
+          estado = "rentable";
+        } else if (margenTurno < umbralNoRentable) {
+          estado = "no_rentable";
+        } else {
+          estado = "dudoso";
+        }
+
+        out.set(key, {
+          date,
+          resourceId,
+          shift,
+          ingresosTurno: acc.ingresosTurno,
+          minutosProgramados: acc.minutosProgramados,
+          pacientes: acc.pacientes,
+          costeApertura,
+          margenTurno: hayActividad ? margenTurno : 0,
+          estado,
+        });
+      }
+    }
+  }
+
+  return out;
 }

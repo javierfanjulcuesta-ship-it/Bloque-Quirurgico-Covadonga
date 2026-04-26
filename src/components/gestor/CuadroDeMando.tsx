@@ -1,8 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import type { ResourceId, SlotView } from "@/lib/types";
-import { getWeekDays, toISODate } from "@/lib/utils";
+import {
+  ASSIGNMENT_FULL_SHIFT,
+  type AnesthetistAssignment,
+  type Reservation,
+  type ResourceId,
+  type Shift,
+  type SlotView,
+  type User,
+} from "@/lib/types";
+import { getEffectiveTotalMinutes, getSlots, getWeekDays, toISODate } from "@/lib/utils";
 import {
   aggregateOperatingRoomMetrics,
   breakdownByResourceAndShift,
@@ -11,9 +19,14 @@ import {
 import {
   aggregateEconomicMetrics,
   breakdownEconomicByResourceAndShift,
+  buildTurnProfitabilityMap,
+  costeAperturaTurnoDefault,
+  profitabilityTurnKey,
   type EconomicMetricsRow,
   type EconomicMetricsTotals,
   type EstadoRentabilidad,
+  type TurnOpeningEstado,
+  type TurnProfitabilityCell,
 } from "@/lib/metrics/economicModel";
 
 export interface CuadroDeMandoProps {
@@ -21,6 +34,172 @@ export interface CuadroDeMandoProps {
   weekStart: Date;
   lastReservationsFetchedAt: Date | null;
   resources: { id: ResourceId; label: string }[];
+  /** Reservas del periodo cargado (se filtra por semana de `weekStart` en el análisis de anestesia). */
+  reservations?: Reservation[];
+  /** Asignaciones OR del periodo; si falta, se usa `reservation.anesthetistId` como respaldo. */
+  anesthetistAssignments?: AnesthetistAssignment[];
+  /** Directorio de usuarios para el nombre del anestesista. */
+  usersDirectory?: User[];
+}
+
+type AnesthetistEfficiencyRow = {
+  anesthetistId: string;
+  anesthetistLabel: string;
+  date: string;
+  shift: Shift;
+  shiftTurnLabel: string;
+  minutosOcupados: number;
+  numeroQuirofanosCubiertos: number;
+  numeroBloques: number;
+  tieneSolapes: boolean;
+};
+
+function reservationEligibleForEfficiency(r: Reservation): boolean {
+  return r.status !== "cancelled" && r.status !== "released" && (r.patients?.length ?? 0) > 0;
+}
+
+function coveredResourceIdsForAssignment(
+  a: AnesthetistAssignment,
+  resources: { id: ResourceId }[]
+): ResourceId[] {
+  if (a.resourceId === ASSIGNMENT_FULL_SHIFT) return resources.map((r) => r.id);
+  return [a.resourceId as ResourceId];
+}
+
+function baseUsedMinutesForReservation(res: Reservation, slotViews: SlotView[]): number {
+  const v = slotViews.find(
+    (s) =>
+      s.reservationId === res.id &&
+      s.date === res.date &&
+      s.shift === res.shift &&
+      s.resourceId === res.resourceId &&
+      s.status === "occupied" &&
+      !s.isOverflowContinuation
+  );
+  if (v?.usedMinutes != null) return v.usedMinutes;
+  return getEffectiveTotalMinutes(res.patients ?? []);
+}
+
+/** Minutos desde el inicio del turno hasta el fin del bloque (aprox., mismo día y turno). */
+function intervalWithinShift(res: Reservation): { start: number; end: number } {
+  const slots = getSlots(res.shift);
+  let start = 0;
+  for (let i = 0; i < res.slotIndex && i < slots.length; i++) {
+    start += slots[i]!.durationMinutes;
+  }
+  const end = start + Math.max(0, getEffectiveTotalMinutes(res.patients ?? []));
+  return { start, end };
+}
+
+function intervalsOverlap(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+function hasAnyPairwiseOverlap(intervals: { start: number; end: number }[]): boolean {
+  for (let i = 0; i < intervals.length; i++) {
+    for (let j = i + 1; j < intervals.length; j++) {
+      if (intervalsOverlap(intervals[i]!, intervals[j]!)) return true;
+    }
+  }
+  return false;
+}
+
+function buildAnesthetistEfficiencyRows(
+  weekStart: Date,
+  slotViews: SlotView[],
+  reservations: Reservation[],
+  assignments: AnesthetistAssignment[],
+  resources: { id: ResourceId; label: string }[],
+  users: User[]
+): AnesthetistEfficiencyRow[] {
+  const weekDays = getWeekDays(weekStart);
+  const weekIso = new Set(weekDays.map((d) => toISODate(d)));
+  const inWeek = reservations.filter((r) => weekIso.has(r.date) && reservationEligibleForEfficiency(r));
+
+  const resToAnesthetist = new Map<string, string>();
+  for (const a of assignments) {
+    if (a.assignmentType !== "OR" || !weekIso.has(a.date)) continue;
+    const covered = coveredResourceIdsForAssignment(a, resources);
+    for (const res of inWeek) {
+      if (res.date !== a.date || res.shift !== a.shift) continue;
+      if (!covered.includes(res.resourceId)) continue;
+      resToAnesthetist.set(res.id, a.anesthetistId);
+    }
+  }
+  for (const res of inWeek) {
+    if (!resToAnesthetist.has(res.id) && res.anesthetistId) {
+      resToAnesthetist.set(res.id, res.anesthetistId);
+    }
+  }
+
+  type GroupAgg = {
+    anesthetistId: string;
+    date: string;
+    shift: Shift;
+    reservationIds: Set<string>;
+    minutosOcupados: number;
+    resourceIds: Set<ResourceId>;
+  };
+  const groups = new Map<string, GroupAgg>();
+
+  for (const res of inWeek) {
+    const aid = resToAnesthetist.get(res.id);
+    if (!aid) continue;
+    const key = `${aid}|${res.date}|${res.shift}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        anesthetistId: aid,
+        date: res.date,
+        shift: res.shift,
+        reservationIds: new Set(),
+        minutosOcupados: 0,
+        resourceIds: new Set(),
+      };
+      groups.set(key, g);
+    }
+    g.reservationIds.add(res.id);
+    g.minutosOcupados += baseUsedMinutesForReservation(res, slotViews);
+    g.resourceIds.add(res.resourceId);
+  }
+
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? id;
+
+  const rows: AnesthetistEfficiencyRow[] = [];
+  for (const g of groups.values()) {
+    const ress = inWeek.filter((r) => {
+      const aid = resToAnesthetist.get(r.id);
+      return aid === g.anesthetistId && r.date === g.date && r.shift === g.shift;
+    });
+    const intervals = ress.map((r) => intervalWithinShift(r));
+    const tieneSolapes = hasAnyPairwiseOverlap(intervals);
+    const shiftTurnLabel = `${g.date} · ${g.shift === "morning" ? "Mañana" : "Tarde"}`;
+    rows.push({
+      anesthetistId: g.anesthetistId,
+      anesthetistLabel: nameOf(g.anesthetistId),
+      date: g.date,
+      shift: g.shift,
+      shiftTurnLabel,
+      minutosOcupados: Math.round(g.minutosOcupados),
+      numeroQuirofanosCubiertos: g.resourceIds.size,
+      numeroBloques: g.reservationIds.size,
+      tieneSolapes,
+    });
+  }
+
+  rows.sort((a, b) => {
+    const c = a.date.localeCompare(b.date);
+    if (c !== 0) return c;
+    if (a.shift !== b.shift) return a.shift === "morning" ? -1 : 1;
+    return a.anesthetistLabel.localeCompare(b.anesthetistLabel, "es");
+  });
+  return rows;
+}
+
+function anesthesiaEfficiencyRowClass(row: AnesthetistEfficiencyRow): string {
+  if (row.tieneSolapes) return "bg-rose-50/80";
+  if (row.minutosOcupados < 60) return "bg-amber-50/80";
+  return "bg-emerald-50/80";
 }
 
 function formatMinutes(n: number): string {
@@ -136,11 +315,45 @@ function metricsCards(t: OperatingRoomMetricsTotals) {
 
 const shiftLabel: Record<string, string> = { morning: "Mañana", afternoon: "Tarde" };
 
+function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
+  if (estado === "sin_actividad") return "border-slate-200 bg-slate-50 text-slate-500";
+  if (estado === "rentable") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (estado === "dudoso") return "border-amber-200 bg-amber-50 text-amber-900";
+  return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
+  const label = cell.shift === "morning" ? "M" : "T";
+  const marginText =
+    cell.estado === "sin_actividad"
+      ? "—"
+      : `${cell.margenTurno >= 0 ? "+" : ""}${formatEur(cell.margenTurno).replace("−", "-")}`;
+  const pacText =
+    cell.estado === "sin_actividad" ? "Sin act." : `${cell.pacientes} pac.`;
+  const tip =
+    cell.estado === "sin_actividad"
+      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${Math.round(cell.minutosProgramados)}`
+      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(costeAperturaTurnoDefault)} · Min. programados: ${Math.round(cell.minutosProgramados)}`;
+  return (
+    <div
+      title={tip}
+      className={`flex min-h-[3.25rem] flex-col justify-center gap-0.5 rounded border px-1 py-1 text-center text-[10px] leading-tight sm:text-[11px] ${turnMapHalfCellClasses(cell.estado)}`}
+    >
+      <span className="font-bold">{label}</span>
+      <span className="tabular-nums font-semibold">{marginText}</span>
+      <span className="opacity-90">{pacText}</span>
+    </div>
+  );
+}
+
 export function CuadroDeMando({
   slotViews,
   weekStart,
   lastReservationsFetchedAt,
   resources,
+  reservations = [],
+  anesthetistAssignments = [],
+  usersDirectory = [],
 }: CuadroDeMandoProps) {
   const totals = useMemo(() => aggregateOperatingRoomMetrics(slotViews), [slotViews]);
   const rows = useMemo(
@@ -160,6 +373,37 @@ export function CuadroDeMando({
     if (t.estadoRentabilidad === "no_rentable") return "negative";
     return "neutral";
   };
+
+  const anesthetistEfficiencyRows = useMemo(
+    () =>
+      buildAnesthetistEfficiencyRows(
+        weekStart,
+        slotViews,
+        reservations,
+        anesthetistAssignments,
+        resources,
+        usersDirectory
+      ),
+    [weekStart, slotViews, reservations, anesthetistAssignments, resources, usersDirectory]
+  );
+
+  const weekDatesIso = useMemo(() => getWeekDays(weekStart).map((d) => toISODate(d)), [weekStart]);
+  const weekDayColumns = useMemo(() => {
+    const days = getWeekDays(weekStart);
+    return days.map((d) => ({
+      iso: toISODate(d),
+      label: d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" }),
+    }));
+  }, [weekStart]);
+
+  const turnProfitabilityMap = useMemo(
+    () => buildTurnProfitabilityMap(
+      slotViews,
+      resources.map((r) => r.id),
+      weekDatesIso
+    ),
+    [slotViews, resources, weekDatesIso]
+  );
 
   const weekRangeLabel = useMemo(() => {
     const days = getWeekDays(weekStart);
@@ -246,12 +490,19 @@ export function CuadroDeMando({
           Simulación basada en supuestos configurables. No sustituye facturación real.
         </p>
         <p className="mt-1 text-xs text-slate-600">
+          Modelo marginal por sala/recurso: estima ingresos y costes asociados a la actividad programada, no a la
+          apertura estructural del turno.
+        </p>
+        <p className="mt-1 text-xs text-slate-600">
+          Costes estimados incluyen coste marginal de quirófano, personal estimado sobre minutos programados y coste
+          variable por paciente.
+        </p>
+        <p className="mt-1 text-xs text-slate-600">
           Los desbordes se muestran como ineficiencia operativa, pero no se facturan dos veces en esta simulación.
         </p>
         <p className="mt-1 text-xs text-slate-600">
-          <span className="font-medium text-slate-700">Costes estimados</span> incluyen capacidad disponible (minutos no
-          bloqueados × coste quirófano/min), personal estimado sobre minutos del <span className="font-medium">tramo base</span>{" "}
-          ocupado y coste variable por paciente contado en ese tramo.
+          El análisis de equipos compartidos se tratará en una sección separada para no mezclar costes de sala con
+          costes de personal compartido.
         </p>
         <p className="mt-1 text-xs text-slate-600">
           El semáforo (rentable / ajustado / no rentable) es un indicador <span className="font-medium">económico estimado</span>;
@@ -306,6 +557,138 @@ export function CuadroDeMando({
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-8 border-t border-slate-200 pt-6">
+          <h3 className="text-base font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Este mapa muestra la rentabilidad estimada de abrir cada turno, incluyendo costes estructurales.
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            No es la misma métrica que la rentabilidad marginal por sala: aquí se imputa un coste de apertura de turno.
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            Coste fijo estimado por turno ({formatEur(costeAperturaTurnoDefault)}): anestesista laboral, enfermería de
+            quirófano, URPA y esterilización. No incluye todavía variaciones por dotación real.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+            <span>
+              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />{" "}
+              Verde: rentable
+            </span>
+            <span>
+              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-amber-200 bg-amber-50" /> Ámbar:
+              ajustado
+            </span>
+            <span>
+              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Rojo: no
+              rentable
+            </span>
+            <span>
+              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" /> Gris:
+              sin actividad
+            </span>
+          </div>
+
+          <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="sticky left-0 z-10 border-r border-slate-200 bg-slate-50 px-2 py-2 font-semibold text-slate-700">
+                    Recurso
+                  </th>
+                  {weekDayColumns.map((col) => (
+                    <th key={col.iso} className="min-w-[5.5rem] px-1 py-2 text-center font-semibold text-slate-600">
+                      {col.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {resources.map((resource) => (
+                  <tr key={resource.id} className="border-b border-slate-100 last:border-0">
+                    <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-2 py-2 font-medium text-slate-800">
+                      {resource.label}
+                    </td>
+                    {weekDayColumns.map((col) => (
+                      <td key={`${resource.id}-${col.iso}`} className="align-top p-1">
+                        <div className="flex flex-col gap-1">
+                          <TurnMapHalfCell
+                            cell={
+                              turnProfitabilityMap.get(
+                                profitabilityTurnKey(col.iso, resource.id, "morning")
+                              )!
+                            }
+                          />
+                          <TurnMapHalfCell
+                            cell={
+                              turnProfitabilityMap.get(
+                                profitabilityTurnKey(col.iso, resource.id, "afternoon")
+                              )!
+                            }
+                          />
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Eficiencia por anestesista asignado (estimado)</h3>
+        <p className="mt-1 text-xs text-slate-600">
+          Basado en asignaciones de anestesia y actividad programada. No incluye otros roles (enfermería, TCAE).
+        </p>
+
+        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          {anesthetistEfficiencyRows.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-slate-500">
+              No hay filas para esta semana: asigne anestesistas en el módulo correspondiente o indique anestesista en la
+              reserva, y asegúrese de tener actividad con pacientes en la semana visible.
+            </p>
+          ) : (
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="px-3 py-2">Anestesista</th>
+                  <th className="px-3 py-2">Turno</th>
+                  <th className="px-3 py-2 text-right">Minutos ocupados</th>
+                  <th className="px-3 py-2 text-right">Nº quirófanos</th>
+                  <th className="px-3 py-2 text-right">Nº bloques</th>
+                  <th className="px-3 py-2">Solapes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anesthetistEfficiencyRows.map((row) => (
+                  <tr
+                    key={`${row.anesthetistId}-${row.date}-${row.shift}`}
+                    className={`border-b border-slate-100 last:border-0 ${anesthesiaEfficiencyRowClass(row)}`}
+                  >
+                    <td className="px-3 py-2 font-medium text-slate-800">{row.anesthetistLabel}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.shiftTurnLabel}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">{row.minutosOcupados}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">{row.numeroQuirofanosCubiertos}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-800">{row.numeroBloques}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={
+                          row.tieneSolapes
+                            ? "inline-block rounded-full border border-rose-200 bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-900"
+                            : "inline-block rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-900"
+                        }
+                      >
+                        {row.tieneSolapes ? "Sí" : "No"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </section>

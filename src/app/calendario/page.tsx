@@ -36,7 +36,7 @@ import { CuadroDeMando } from "@/components/gestor/CuadroDeMando";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
 import { SolicitarNoDisponibilidad } from "@/components/anestesista/SolicitarNoDisponibilidad";
-import type { BlockOpeningPlan, Reservation } from "@/lib/types";
+import type { AnesthetistAssignment, BlockOpeningPlan, Reservation } from "@/lib/types";
 import { hasAnesthetistAccess } from "@/lib/types";
 import { PageShellHeader } from "@/components/ui/PageShellHeader";
 import { AppNavTab } from "@/components/ui/AppNavTab";
@@ -126,6 +126,7 @@ export default function CalendarioPage() {
   const [reservationsError, setReservationsError] = useState<string | null>(null);
   const [lastReservationsFetchedAt, setLastReservationsFetchedAt] = useState<Date | null>(null);
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
+  const [gestorOrAssignmentsForCuadro, setGestorOrAssignmentsForCuadro] = useState<AnesthetistAssignment[]>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
   // Feature flag temporal: backend de apertura de bloque deshabilitado.
@@ -246,6 +247,29 @@ export default function CalendarioPage() {
   const isGestor = user ? hasGestorAccess(user.role) : false;
   const canViewCuadroDeMando =
     !!user && isGestor && hasPermission(user.role, "metrics:view");
+
+  useEffect(() => {
+    if (!isGestor || !canViewCuadroDeMando || viewTab !== "cuadro-de-mando") {
+      setGestorOrAssignmentsForCuadro([]);
+      return;
+    }
+    const days = getWeekDays(weekStart);
+    const dateFrom = toISODate(days[0]!);
+    const dateTo = toISODate(days[days.length - 1]!);
+    let cancelled = false;
+    getAssignments({ dateFrom, dateTo })
+      .then((list) => {
+        if (cancelled) return;
+        setGestorOrAssignmentsForCuadro(list.filter((a) => a.assignmentType === "OR"));
+      })
+      .catch(() => {
+        if (!cancelled) setGestorOrAssignmentsForCuadro([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGestor, canViewCuadroDeMando, viewTab, weekStart]);
+
   const canManageUsers = user ? hasPermission(user.role, "user:create") : false;
   const canListUsers = user ? hasPermission(user.role, "user:list") : false;
   const allowedResourceIds = user ? getAllowedResourcesForRole(user.role) : undefined;
@@ -526,6 +550,9 @@ export default function CalendarioPage() {
             weekStart={weekStart}
             lastReservationsFetchedAt={lastReservationsFetchedAt}
             resources={allowedResources}
+            reservations={reservations}
+            anesthetistAssignments={gestorOrAssignmentsForCuadro}
+            usersDirectory={usersDirectory}
           />
         )}
 
