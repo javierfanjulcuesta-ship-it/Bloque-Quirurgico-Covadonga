@@ -16,7 +16,6 @@ import { getAllowedResourcesForRole, RESOURCES } from "@/lib/constants";
 import { ASSIGNMENT_FULL_SHIFT } from "@/lib/types";
 import { getWeekStart, getWeekDays, toISODate } from "@/lib/utils";
 import { getStoredReservations, getMessagesToGestor } from "@/lib/storageMensajesYNotificaciones";
-import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getReservations, ReservationsApiError } from "@/lib/reservations";
 import { getAssignments } from "@/lib/anesthetistAssignments";
 import { buildSlotViews } from "@/lib/dataHelpers";
@@ -32,7 +31,6 @@ import { HistoricoView } from "@/components/HistoricoView";
 import { CrearNuevoUsuario } from "@/components/gestor/CrearNuevoUsuario";
 import { ListaUsuariosGestor } from "@/components/gestor/ListaUsuariosGestor";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
-import { GestionarApertura } from "@/components/gestor/GestionarApertura";
 import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
@@ -122,7 +120,8 @@ export default function CalendarioPage() {
   const [anesthetistAssignments, setAnesthetistAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string }>>([]);
   const [contactMessages, setContactMessages] = useState<Array<{ id: string; fromName: string; fromEmail: string; subject: string; body: string; date: string }>>([]);
   const [contactMessagesLoading, setContactMessagesLoading] = useState(false);
-  const [blockPlans, setBlockPlans] = useState<BlockOpeningPlan[]>([]);
+  // Feature flag temporal: backend de apertura de bloque deshabilitado.
+  const blockPlans: BlockOpeningPlan[] = [];
 
   const refreshContactMessages = useCallback(async () => {
     if (modoDemo) return;
@@ -173,27 +172,6 @@ export default function CalendarioPage() {
   useEffect(() => {
     refreshReservations();
   }, [refreshReservations]);
-
-  const refreshBlockPlans = useCallback(async () => {
-    if (modoDemo) return;
-    try {
-      const from = new Date(calendarPeriodStart);
-      from.setDate(from.getDate() - 7);
-      const to = new Date(calendarPeriodStart);
-      to.setDate(to.getDate() + 5 * 7 + 6);
-      const plans = await fetchBlockPlans({
-        dateFrom: toISODate(from),
-        dateTo: toISODate(to),
-      });
-      setBlockPlans(plans);
-    } catch {
-      setBlockPlans([]);
-    }
-  }, [modoDemo, calendarPeriodStart]);
-
-  useEffect(() => {
-    refreshBlockPlans();
-  }, [refreshBlockPlans]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -425,9 +403,6 @@ export default function CalendarioPage() {
                       <AppNavTab active={viewTab === "asignar-anestesistas"} onClick={() => setViewTab("asignar-anestesistas")}>
                         Asignar anestesistas
                       </AppNavTab>
-                      <AppNavTab active={viewTab === "gestionar-apertura"} onClick={() => setViewTab("gestionar-apertura")}>
-                        Apertura bloque
-                      </AppNavTab>
                       <AppNavTab active={viewTab === "normas"} onClick={() => setViewTab("normas")}>
                         Normas
                       </AppNavTab>
@@ -517,10 +492,6 @@ export default function CalendarioPage() {
 
         {user && isGestor && viewTab === "asignar-anestesistas" && (
           <AsignarAnestesistas reservations={reservations} />
-        )}
-
-        {user && isGestor && viewTab === "gestionar-apertura" && (
-          <GestionarApertura reservations={reservations} />
         )}
 
         {user && isGestor && viewTab === "normas" && (
