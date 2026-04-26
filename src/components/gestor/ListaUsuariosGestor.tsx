@@ -10,8 +10,13 @@ import { roleLabel } from "@/lib/types";
 import type { User } from "@/lib/types";
 import { fetchUsers } from "@/lib/api/users";
 import { useUsers } from "@/context/UsersContext";
+import { useAuth } from "@/context/AuthContext";
 
 type Filter = "all" | "active" | "inactive";
+
+function isUserSoftDeleted(u: User): boolean {
+  return !!(u.deletedAt && String(u.deletedAt).length > 0);
+}
 
 export function ListaUsuariosGestor() {
   const [users, setUsers] = useState<User[]>([]);
@@ -23,12 +28,13 @@ export function ListaUsuariosGestor() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [passwordShown, setPasswordShown] = useState<{ userId: string; password: string } | null>(null);
   const { refresh } = useUsers();
+  const { user: currentUser } = useAuth();
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await fetchUsers({ includeInactive: true });
+      const list = await fetchUsers({ includeInactive: true, includeDeleted: true });
       setUsers(list);
     } catch {
       setError("No se pudieron cargar los usuarios");
@@ -149,10 +155,42 @@ export function ListaUsuariosGestor() {
     }
   };
 
+  const handleDeleteUser = async (user: User) => {
+    if (
+      !window.confirm(
+        `¿Eliminar del directorio a ${user.name}? No se borran sus datos históricos (reservas, etc.). No podrá iniciar sesión.`
+      )
+    ) {
+      return;
+    }
+    setActionError(null);
+    setActionLoading(loadingKey(user.id, "delete"));
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setActionError((data.error as string) ?? "Error al eliminar");
+        return;
+      }
+      setActionSuccess("Usuario eliminado del directorio (baja lógica).");
+      setTimeout(() => setActionSuccess(null), 4000);
+      await load();
+      refresh();
+    } catch {
+      setActionError("Error de conexión");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const filtered = users.filter((u) => {
+    const deleted = isUserSoftDeleted(u);
     const active = u.isActive !== false;
-    if (filter === "active") return active;
-    if (filter === "inactive") return !active;
+    if (filter === "active") return active && !deleted;
+    if (filter === "inactive") return !active && !deleted;
     return true;
   });
 
@@ -224,14 +262,16 @@ export function ListaUsuariosGestor() {
                 <td className="p-2 text-gray-600">{u.email}</td>
                 <td className="p-2">{roleLabel(u.role)}</td>
                 <td className="p-2">
-                  {u.isActive === false ? (
+                  {isUserSoftDeleted(u) ? (
+                    <span className="text-red-700">Eliminado</span>
+                  ) : u.isActive === false ? (
                     <span className="text-amber-700">Inactivo</span>
                   ) : (
                     <span className="text-green-700">Activo</span>
                   )}
                 </td>
                 <td className="p-2 text-right">
-                  {u.isActive === false ? (
+                  {isUserSoftDeleted(u) ? (
                     <button
                       type="button"
                       onClick={() => handleReactivate(u)}
@@ -240,6 +280,26 @@ export function ListaUsuariosGestor() {
                     >
                       {isActionLoading(u.id, "reactivate") ? "…" : "Reactivar"}
                     </button>
+                  ) : u.isActive === false ? (
+                    <div className="flex flex-wrap justify-end items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleReactivate(u)}
+                        disabled={!!actionLoading}
+                        className="rounded border border-green-600 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50"
+                      >
+                        {isActionLoading(u.id, "reactivate") ? "…" : "Reactivar"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteUser(u)}
+                        disabled={!!actionLoading || currentUser?.id === u.id}
+                        className="rounded border border-red-700 px-2 py-1 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
+                        title={currentUser?.id === u.id ? "No puede eliminar su propio usuario" : "Baja lógica del directorio"}
+                      >
+                        {isActionLoading(u.id, "delete") ? "…" : "Eliminar usuario"}
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex flex-wrap justify-end items-center gap-1">
                       <button
@@ -282,10 +342,20 @@ export function ListaUsuariosGestor() {
                       <button
                         type="button"
                         onClick={() => handleDeactivate(u)}
-                        disabled={!!actionLoading}
+                        disabled={!!actionLoading || currentUser?.id === u.id}
                         className="rounded border border-amber-600 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        title={currentUser?.id === u.id ? "No puede desactivar su propio usuario" : undefined}
                       >
                         {isActionLoading(u.id, "deactivate") ? "…" : "Desactivar"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteUser(u)}
+                        disabled={!!actionLoading || currentUser?.id === u.id}
+                        className="rounded border border-red-700 px-2 py-1 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
+                        title={currentUser?.id === u.id ? "No puede eliminar su propio usuario" : "Baja lógica del directorio"}
+                      >
+                        {isActionLoading(u.id, "delete") ? "…" : "Eliminar usuario"}
                       </button>
                     </div>
                   )}

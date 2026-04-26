@@ -56,13 +56,20 @@ export async function POST(request: Request) {
 
     const dbUser = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { id: true, passwordHash: true },
+      select: { id: true, passwordHash: true, deletedAt: true },
     });
 
     if (!dbUser) {
       return NextResponse.json(
         { error: "Usuario no encontrado." },
         { status: 404 }
+      );
+    }
+
+    if (dbUser.deletedAt != null) {
+      return NextResponse.json(
+        { error: "Su cuenta ya no está disponible." },
+        { status: 403 }
       );
     }
 

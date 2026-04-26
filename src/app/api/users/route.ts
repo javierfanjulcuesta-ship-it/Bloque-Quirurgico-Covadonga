@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission, hasPermission, hasAnyPermission } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
@@ -130,8 +131,11 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const includeInactive = hasFullList && searchParams.get("includeInactive") === "1";
+    const includeDeleted = hasFullList && searchParams.get("includeDeleted") === "1";
 
-    const where = includeInactive ? {} : { approved: true };
+    const where: Prisma.UserWhereInput = {};
+    if (!includeDeleted) where.deletedAt = null;
+    if (!includeInactive) where.approved = true;
 
     const dbUsers = await prisma.user.findMany({
       where,
@@ -143,6 +147,7 @@ export async function GET(request: Request) {
         role: true,
         approved: true,
         canSespa: true,
+        deletedAt: true,
       },
     });
 
@@ -155,6 +160,7 @@ export async function GET(request: Request) {
           approved: u.approved,
           canSespa: u.canSespa,
           isActive: u.approved,
+          deletedAt: u.deletedAt ? u.deletedAt.toISOString() : null,
         }))
       : dbUsers.map((u) => ({
           id: u.id,
@@ -164,6 +170,7 @@ export async function GET(request: Request) {
           approved: u.approved,
           canSespa: u.canSespa,
           isActive: u.approved,
+          deletedAt: null,
         }));
 
     return NextResponse.json({ users });

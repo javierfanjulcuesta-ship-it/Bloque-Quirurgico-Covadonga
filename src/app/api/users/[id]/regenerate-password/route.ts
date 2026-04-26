@@ -38,9 +38,12 @@ export async function POST(
 
     const user = await prisma.user.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, deletedAt: true },
     });
     if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
+    if (user.deletedAt != null) {
+      return NextResponse.json({ error: "El usuario está eliminado del directorio" }, { status: 400 });
+    }
 
     const tempPassword = generateTempPassword();
     const passwordHash = await hashPassword(tempPassword);

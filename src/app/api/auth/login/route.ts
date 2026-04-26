@@ -49,11 +49,12 @@ export async function POST(request: Request) {
         email: true,
         role: true,
         approved: true,
+        deletedAt: true,
         passwordHash: true,
       },
     });
 
-    if (!dbUser || !dbUser.approved) {
+    if (!dbUser || !dbUser.approved || dbUser.deletedAt != null) {
       return NextResponse.json(
         { error: "Credenciales inválidas o usuario no aprobado" },
         { status: 401 }

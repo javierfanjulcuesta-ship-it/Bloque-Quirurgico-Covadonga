@@ -78,6 +78,8 @@ export interface User {
   canSespa?: boolean;
   /** false = desactivado, no puede hacer login */
   isActive?: boolean;
+  /** Baja lógica (solo listados con includeDeleted=1 en API gestor) */
+  deletedAt?: string | null;
 }
 
 /** Tramo horario (hueco) dentro de un turno */

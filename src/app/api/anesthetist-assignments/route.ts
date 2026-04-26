@@ -138,7 +138,11 @@ export async function PUT(request: Request) {
     // Validar que los anesthetistId sean usuarios ANESTESISTA/GESTOR_ANESTESISTA (User no tiene isActive en schema)
     const distinctAnesthetistIds = [...new Set(toUpsert.map((a) => a.anesthetistId))];
     const anesthetists = await prisma.user.findMany({
-      where: { id: { in: distinctAnesthetistIds } },
+      where: {
+        id: { in: distinctAnesthetistIds },
+        deletedAt: null,
+        approved: true,
+      },
       select: { id: true, role: true },
     });
     const validRoles = new Set(["ANESTESISTA", "GESTOR_ANESTESISTA"]);

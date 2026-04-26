@@ -24,10 +24,10 @@ export async function GET() {
 
     const dbUser = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { id: true, name: true, email: true, role: true, approved: true },
+      select: { id: true, name: true, email: true, role: true, approved: true, deletedAt: true },
     });
 
-    if (!dbUser || !dbUser.approved) {
+    if (!dbUser || !dbUser.approved || dbUser.deletedAt != null) {
       return NextResponse.json(
         { error: "Usuario no encontrado o no aprobado" },
         { status: 401 }

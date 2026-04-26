@@ -25,14 +25,17 @@ export async function PATCH(
 
     const user = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, approved: true },
+      select: { id: true, approved: true, deletedAt: true },
     });
     if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
-    if (user.approved) return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
+    const isSoftDeleted = user.deletedAt != null;
+    if (user.approved && !isSoftDeleted) {
+      return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
+    }
 
     await prisma.user.update({
       where: { id },
-      data: { approved: true },
+      data: { approved: true, deletedAt: null, deletedByUserId: null },
     });
 
     return NextResponse.json({ ok: true });
