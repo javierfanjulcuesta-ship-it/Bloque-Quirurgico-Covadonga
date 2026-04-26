@@ -88,6 +88,9 @@ export function SlotCell({
   if (ownUnderutilized) {
     tooltipParts.push(`Holgura estimada en su bloque: ~${slot.underutilizedMinutes} min`);
   }
+  if (slot.overflowContinuationConflict) {
+    tooltipParts.push("Posible solapamiento: el tiempo de un bloque supera el tramo y choca con otra reserva.");
+  }
   const tooltipTitle = tooltipParts.length > 0 ? tooltipParts.join("\n") : undefined;
 
   useEffect(() => {
@@ -189,7 +192,16 @@ export function SlotCell({
         )}
         {isOccupied && (
           <>
-            <p className="text-[11px] font-semibold text-slate-900">{isMyOccupied ? "Sus pacientes" : "Ocupado"}</p>
+            <p className="text-[11px] font-semibold text-slate-900">
+              {slot.isOverflowContinuation
+                ? (isMyOccupied ? "Continuación (sus pacientes)" : "Continuación")
+                : (isMyOccupied ? "Sus pacientes" : "Ocupado")}
+            </p>
+            {slot.overflowContinuationConflict && !slot.isOverflowContinuation && (
+              <p className="text-[10px] font-medium text-rose-800" title={tooltipTitle}>
+                Solapamiento
+              </p>
+            )}
             {!isMyOccupied && slot.surgeonName && (
               <p className="truncate text-[10px] text-slate-600" title={`Responsable: ${slot.surgeonName}`}>
                 {slot.surgeonName}

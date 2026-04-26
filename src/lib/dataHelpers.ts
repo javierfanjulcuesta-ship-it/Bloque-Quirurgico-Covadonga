@@ -170,6 +170,98 @@ export function buildSlotViews(
     });
   });
 
+  // Fase visual de arrastre: si una reserva con pacientes supera el tramo base,
+  // marca los tramos posteriores del mismo recurso/turno como ocupados por continuación.
+  const viewByKey = new Map<string, SlotView>();
+  for (const v of views) {
+    viewByKey.set(`${v.date}__${v.resourceId}__${v.shift}__${v.slotIndex}`, v);
+  }
+
+  for (const res of reservations) {
+    if (!isSlotOccupyingReservation(res)) continue;
+    if ((res.patients?.length ?? 0) === 0) continue;
+
+    const usedMinutes = Math.max(0, getEffectiveTotalMinutes(res.patients ?? []));
+    const baseMinutes = getSlotDurationMinutes(res.shift, res.slotIndex);
+    let overflowMinutes = usedMinutes - baseMinutes;
+    if (overflowMinutes <= 0) continue;
+
+    const slotCount = getSlots(res.shift).length;
+    const sourceIsMine = currentUserId != null && res.surgeonId === currentUserId;
+    const sourceHasPrivate = (res.patients ?? []).some((p) => isPrivateFunding(p.entidadFinanciadora));
+    const sourceHasSespa = reservationHasSespa(res);
+    const sourceSurgeonName = getSurgeonName(res.surgeonId);
+    const sourcePatientNames = (res.patients ?? []).map((p) => p.name ?? p.numeroHistoria);
+    const baseKey = `${res.date}__${res.resourceId}__${res.shift}__${res.slotIndex}`;
+    const baseView = viewByKey.get(baseKey);
+
+    for (let next = res.slotIndex + 1; next < slotCount && overflowMinutes > 0; next++) {
+      const nextDuration = getSlotDurationMinutes(res.shift, next);
+      const consumedHere = Math.min(overflowMinutes, nextDuration);
+      const key = `${res.date}__${res.resourceId}__${res.shift}__${next}`;
+      const target = viewByKey.get(key);
+      if (!target) {
+        overflowMinutes -= consumedHere;
+        continue;
+      }
+      if (target.status === "blocked") {
+        overflowMinutes -= consumedHere;
+        continue;
+      }
+
+      const occupyingAtNext = reservations.find(
+        (r) =>
+          r.date === res.date &&
+          r.resourceId === res.resourceId &&
+          r.shift === res.shift &&
+          r.slotIndex === next &&
+          isSlotOccupyingReservation(r)
+      );
+      const nextPatientCount = occupyingAtNext?.patients?.length ?? 0;
+
+      // No sustituir una reserva que ya tiene pacientes en este tramo (ni la propia en otro registro duplicado).
+      if (nextPatientCount > 0) {
+        target.overflowContinuationConflict = true;
+        if (baseView) baseView.overflowContinuationConflict = true;
+        continue;
+      }
+
+      // Solo libre o reserva vacía (reserved); no pisar continuación ya pintada por otra reserva.
+      if (target.isOverflowContinuation && target.overflowFromReservationId && target.overflowFromReservationId !== res.id) {
+        if (baseView) baseView.overflowContinuationConflict = true;
+        continue;
+      }
+
+      if (target.isOverflowContinuation && target.overflowFromReservationId === res.id) {
+        overflowMinutes -= consumedHere;
+        continue;
+      }
+
+      if (target.status !== "free" && target.status !== "reserved") {
+        target.overflowContinuationConflict = true;
+        if (baseView) baseView.overflowContinuationConflict = true;
+        continue;
+      }
+
+      target.status = "occupied";
+      target.reservationId = res.id;
+      target.isMyReservation = sourceIsMine;
+      target.surgeonName = asGestor ? sourceSurgeonName : target.surgeonName;
+      target.patientsCount = res.patients?.length ?? 0;
+      target.patientNames = asGestor ? sourcePatientNames : target.patientNames;
+      target.hasPrivate = sourceHasPrivate || undefined;
+      target.hasSespa = sourceHasSespa || undefined;
+      target.usedMinutes = consumedHere;
+      target.totalMinutes = nextDuration;
+      target.freeMinutes = Math.max(0, nextDuration - consumedHere);
+      target.reservationBlockState = deriveReservationBlockState(res);
+      target.isOverflowContinuation = true;
+      target.overflowFromReservationId = res.id;
+
+      overflowMinutes -= consumedHere;
+    }
+  }
+
   return views;
 }
 

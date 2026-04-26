@@ -175,6 +175,15 @@ export interface SlotView {
   freeMinutes?: number;
   /** Estado lógico del bloque en ese slot para etiquetado UI. */
   reservationBlockState?: ReservationBlockState;
+  /** true si el estado ocupado proviene del desbordamiento de un slot anterior. */
+  isOverflowContinuation?: boolean;
+  /** Reserva origen que provoca el desbordamiento visual. */
+  overflowFromReservationId?: string;
+  /**
+   * Conflicto de arrastre visual: otra reserva con pacientes en este tramo, o el arrastre no cabe
+   * (celda base con overflow truncado).
+   */
+  overflowContinuationConflict?: boolean;
 }
 
 /** Indisponibilidad del anestesista */
