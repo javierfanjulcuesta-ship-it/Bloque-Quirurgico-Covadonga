@@ -64,6 +64,8 @@ export type Shift = "morning" | "afternoon";
 
 /** Estado de un hueco: libre, reservado por el usuario (sin pacientes), ocupado o bloqueado (CLOSED/URGENT) */
 export type SlotStatus = "free" | "reserved" | "occupied" | "blocked";
+export type ReservationBlockState = "EMPTY" | "PARTIAL" | "FULL" | "CANCELLED";
+export type PatientScheduleStatus = "SCHEDULED" | "CANCELLED";
 
 /** Usuario del sistema */
 export interface User {
@@ -98,6 +100,8 @@ export interface Reservation {
   coSurgeonIds?: string[];
   patients: PatientInBlock[];
   status: "pending" | "confirmed" | "cancelled" | "released";
+  /** Estado lógico del bloque reservado (compatible/derivado, no rompe API existente). */
+  blockState?: ReservationBlockState;
   anesthetistId?: string;
   createdAt: string;
 }
@@ -122,6 +126,8 @@ export interface PatientInBlock {
   order: number;
   /** Solicitud de recursos: Rayo, Mesa de mano, Posicionamiento de cadera, etc. */
   solicitudRecursos?: SolicitudRecursosId;
+  /** Estado lógico del paciente dentro del bloque (por defecto SCHEDULED). */
+  scheduleStatus?: PatientScheduleStatus;
 }
 
 /** Perfil extendido del usuario (foto, apellidos, teléfono, especialidad). Rellenado en primer acceso. */
@@ -164,6 +170,10 @@ export interface SlotView {
   usedMinutes?: number;
   /** Minutos totales del slot (o tramo asociado). */
   totalMinutes?: number;
+  /** Minutos libres dentro del bloque reservado. */
+  freeMinutes?: number;
+  /** Estado lógico del bloque en ese slot para etiquetado UI. */
+  reservationBlockState?: ReservationBlockState;
 }
 
 /** Indisponibilidad del anestesista */

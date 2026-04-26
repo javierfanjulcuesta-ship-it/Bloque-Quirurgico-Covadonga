@@ -11,6 +11,7 @@ import {
   fetchReservations,
   createReservation,
   cancelReservationPatient,
+  cancelReservation as cancelReservationApi,
   updateReservationPatient as updateReservationPatientApi,
   mapPatientToApi,
   ReservationsApiError,
@@ -87,6 +88,7 @@ export async function createReservationEntry(data: CreateReservationData): Promi
 export interface CancelPatientResult {
   reservation: Reservation;
   slotOutcome: "retained" | "released" | null;
+  message?: string;
 }
 
 export interface UpdatePatientData {
@@ -113,6 +115,18 @@ export async function cancelPatient(
     throw new ReservationsApiError("Cancelar paciente no disponible en modo demo.", 400);
   }
   return cancelReservationPatient(reservationId, patientId, reason);
+}
+
+/** Cancelar una reserva completa (liberar bloque). */
+export async function cancelReservationEntry(
+  reservationId: string,
+  reason?: string,
+  opts?: { force?: boolean }
+): Promise<Reservation> {
+  if (modoDemo) {
+    throw new ReservationsApiError("Cancelar reserva no disponible en modo demo.", 400);
+  }
+  return cancelReservationApi(reservationId, reason, opts);
 }
 
 /** Actualiza un paciente dentro de una reserva existente. */

@@ -7,6 +7,12 @@ import type { Reservation, SlotView, User, BlockOpeningPlan } from "./types";
 import { RESOURCES } from "./constants";
 import { getWeekDays, getSlots, toISODate, getSlotDurationMinutes, getEffectiveTotalMinutes } from "./utils";
 import { isPrivateFunding, reservationHasSespa } from "./patientInsurance";
+import { deriveReservationBlockState } from "./reservationState";
+
+/** Huecos con reserva activa en cuadrícula; CANCELLED/RELEASED no bloquean el slot (fila sigue en BD). */
+function isSlotOccupyingReservation(r: Reservation): boolean {
+  return r.status !== "cancelled" && r.status !== "released";
+}
 
 /** Reservas en un rango de fechas (incluidas from y to). */
 export function getReservationsInPeriod(
@@ -15,7 +21,10 @@ export function getReservationsInPeriod(
   reservations: Reservation[]
 ): Reservation[] {
   return reservations.filter(
-    (r) => r.date >= dateFrom && r.date <= dateTo && r.status !== "cancelled"
+    (r) =>
+      r.date >= dateFrom &&
+      r.date <= dateTo &&
+      isSlotOccupyingReservation(r)
   );
 }
 
@@ -72,7 +81,8 @@ export function buildSlotViews(
             r.date === dateStr &&
             r.resourceId === resourceId &&
             r.shift === "morning" &&
-            r.slotIndex === i
+            r.slotIndex === i &&
+            isSlotOccupyingReservation(r)
         );
         const isMine =
           currentUserId &&
@@ -83,6 +93,7 @@ export function buildSlotViews(
         const hasSespa = res ? reservationHasSespa(res) : false;
         const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
         const totalMinutes = getSlotDurationMinutes("morning", i);
+        const freeMinutes = Math.max(0, totalMinutes - usedMinutes);
         const blockReason = getBlockReason(dateStr, resourceId, "morning");
         const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
         const baseStatus = res
@@ -107,6 +118,8 @@ export function buildSlotViews(
           hasSespa: hasSespa || undefined,
           usedMinutes: usedMinutes || undefined,
           totalMinutes: totalMinutes || undefined,
+          freeMinutes: freeMinutes || undefined,
+          reservationBlockState: res ? deriveReservationBlockState(res) : undefined,
         });
       }
       for (let i = 0; i < afternoonCount; i++) {
@@ -115,7 +128,8 @@ export function buildSlotViews(
             r.date === dateStr &&
             r.resourceId === resourceId &&
             r.shift === "afternoon" &&
-            r.slotIndex === i
+            r.slotIndex === i &&
+            isSlotOccupyingReservation(r)
         );
         const isMine =
           currentUserId &&
@@ -126,6 +140,7 @@ export function buildSlotViews(
         const hasSespa = res ? reservationHasSespa(res) : false;
         const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
         const totalMinutes = getSlotDurationMinutes("afternoon", i);
+        const freeMinutes = Math.max(0, totalMinutes - usedMinutes);
         const blockReason = getBlockReason(dateStr, resourceId, "afternoon");
         const isEmptyReservation = (res?.patients?.length ?? 0) === 0;
         const baseStatus = res
@@ -150,6 +165,8 @@ export function buildSlotViews(
           hasSespa: hasSespa || undefined,
           usedMinutes: usedMinutes || undefined,
           totalMinutes: totalMinutes || undefined,
+          freeMinutes: freeMinutes || undefined,
+          reservationBlockState: res ? deriveReservationBlockState(res) : undefined,
         });
       }
     });

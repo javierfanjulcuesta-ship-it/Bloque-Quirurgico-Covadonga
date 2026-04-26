@@ -20,6 +20,7 @@ import {
   getReservations,
   createReservationEntry,
   cancelPatient,
+  cancelReservationEntry,
   updateReservationPatientEntry,
   ReservationsApiError,
 } from "@/lib/reservations";
@@ -41,6 +42,7 @@ import { hasProgrammingAccess, hasGestorAccess, hasAnesthetistAccess, roleLabel 
 import { PageShellHeader } from "@/components/ui/PageShellHeader";
 import { AppNavTab } from "@/components/ui/AppNavTab";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { CalendarStateLegend } from "@/components/ui/CalendarStateLegend";
 import { hasPermission } from "@/lib/auth";
 import type { Shift } from "@/lib/types";
@@ -51,6 +53,7 @@ import {
   holguraSuggestionBadgeLabel,
   holguraSuggestionLevel,
 } from "@/lib/reservationUnderutilization";
+import { deriveReservationBlockState, getReservationTimingSummary } from "@/lib/reservationState";
 
 function slotKey(date: string, resourceId: string, shift: string, slotIndex: number) {
   return `${date}__${resourceId}__${shift}__${slotIndex}`;
@@ -233,6 +236,17 @@ export default function CirujanoPage() {
     date: string;
     isLastPatient: boolean;
     retentionAllowed: boolean;
+    reasonNote: string;
+    slotDescriptor: string;
+  } | null>(null);
+  const [cancelReservationConfirm, setCancelReservationConfirm] = useState<{
+    reservationId: string;
+    label: string;
+    hasPatients: boolean;
+    patientsCount: number;
+    stateLabel: string;
+    reasonNote: string;
+    slotDescriptor: string;
   } | null>(null);
   const [cancellingPatient, setCancellingPatient] = useState(false);
   const [editingPatient, setEditingPatient] = useState<{
@@ -485,6 +499,7 @@ export default function CirujanoPage() {
   const totalReservedMinutes = selectedSlots.reduce((s, x) => s + x.durationMinutes, 0);
 
   const canCancelPatient = !modoDemo && user && hasPermission(user.role, "patient:cancel");
+  const canCancelReservation = !modoDemo && user && hasPermission(user.role, "booking:cancel");
 
   const handleConfirmCancelPatient = async () => {
     if (!cancelConfirm || cancellingPatient) return;
@@ -492,19 +507,47 @@ export default function CirujanoPage() {
     setErrorNotification(null);
     setNotification(null);
     try {
-      const result = await cancelPatient(cancelConfirm.reservationId, cancelConfirm.patientId);
+      const reason = cancelConfirm.reasonNote.trim() || undefined;
+      const result = await cancelPatient(cancelConfirm.reservationId, cancelConfirm.patientId, reason);
       setCancelConfirm(null);
       await refreshReservations();
-      if (result.slotOutcome === "retained") {
-        setNotification("Paciente cancelado. El hueco se mantiene reservado a su nombre para que pueda programar otro paciente.");
-      } else if (result.slotOutcome === "released") {
-        setNotification("Paciente cancelado. Al haber pasado el cierre del jueves, el hueco ha pasado a la bolsa común y ya no está reservado.");
-      } else {
-        setNotification("Paciente cancelado correctamente.");
-      }
+      const fallback =
+        result.slotOutcome === "retained"
+          ? "Paciente anulado. El hueco de este tramo sigue reservado para poder programar otro paciente."
+          : result.slotOutcome === "released"
+            ? "Paciente anulado. El hueco de este tramo ha pasado a bolsa común (no reservado)."
+            : "Paciente anulado correctamente.";
+      setNotification(result.message ?? fallback);
       setTimeout(() => setNotification(null), 5000);
     } catch (err) {
       const msg = err instanceof ReservationsApiError ? err.message : "Error al cancelar";
+      setErrorNotification(msg);
+      setTimeout(() => setErrorNotification(null), 6000);
+    } finally {
+      setCancellingPatient(false);
+    }
+  };
+
+  const handleConfirmCancelReservation = async () => {
+    if (!cancelReservationConfirm || cancellingPatient) return;
+    setCancellingPatient(true);
+    setErrorNotification(null);
+    setNotification(null);
+    try {
+      const reason = cancelReservationConfirm.reasonNote.trim() || undefined;
+      await cancelReservationEntry(cancelReservationConfirm.reservationId, reason, {
+        force: cancelReservationConfirm.hasPatients,
+      });
+      setCancelReservationConfirm(null);
+      await refreshReservations();
+      setNotification(
+        cancelReservationConfirm.hasPatients
+          ? "Anulación completada en este tramo concreto (una reserva = un hueco). Se eliminaron los pacientes de esta celda. Si tenía otros huecos reservados en el mismo día, permanecen hasta que los anule por separado."
+          : "Reserva vacía anulada en este tramo. El hueco queda libre en este índice."
+      );
+      setTimeout(() => setNotification(null), 6000);
+    } catch (err) {
+      const msg = err instanceof ReservationsApiError ? err.message : "Error al cancelar reserva";
       setErrorNotification(msg);
       setTimeout(() => setErrorNotification(null), 6000);
     } finally {
@@ -557,19 +600,60 @@ export default function CirujanoPage() {
     [selectedSlots]
   );
 
-  /** Pacientes ya programados por este cirujano/endoscopista (reservas con pacientes) */
+  /** Pacientes programados: propios del cirujano o todos si actúa como gestor (API ya filtra por rol al cargar). */
   const misPacientesProgramados = useMemo(() => {
-    const list: { date: string; resourceLabel: string; shift: Shift; patient: PatientInBlock; reservationId: string }[] = [];
+    const usersDir = getUsers();
+    const list: {
+      date: string;
+      resourceLabel: string;
+      shift: Shift;
+      slotIndex: number;
+      patient: PatientInBlock;
+      reservationId: string;
+      surgeonId: string;
+      surgeonName: string;
+    }[] = [];
+    const showAll = !!isGestorScheduler;
     reservations
-      .filter((r) => r.surgeonId === user?.id && r.patients?.length > 0)
+      .filter((r) => (showAll || r.surgeonId === user?.id) && (r.patients?.length ?? 0) > 0)
       .forEach((r) => {
         const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
+        const surgeonName = usersDir.find((u) => u.id === r.surgeonId)?.name ?? r.surgeonId;
         r.patients.forEach((p) => {
-          list.push({ date: r.date, resourceLabel, shift: r.shift, patient: p, reservationId: r.id });
+          list.push({
+            date: r.date,
+            resourceLabel,
+            shift: r.shift,
+            slotIndex: r.slotIndex,
+            patient: p,
+            reservationId: r.id,
+            surgeonId: r.surgeonId,
+            surgeonName,
+          });
         });
       });
     return list.sort((a, b) => a.date.localeCompare(b.date) || a.patient.order - b.patient.order);
-  }, [reservations, user?.id]);
+  }, [reservations, user?.id, isGestorScheduler]);
+
+  const misReservasResumen = useMemo(() => {
+    const showAll = !!isGestorScheduler;
+    const own = reservations
+      .filter((r) => showAll || r.surgeonId === user?.id)
+      .filter((r) => r.status !== "cancelled" && r.status !== "released")
+      .sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.slotIndex - b.slotIndex);
+    return own.map((r) => {
+      const timing = getReservationTimingSummary(r);
+      const state = deriveReservationBlockState(r);
+      const stateLabel = state === "EMPTY" ? "EMPTY" : state === "PARTIAL" ? "PARTIAL" : state === "FULL" ? "FULL" : "CANCELLED";
+      return {
+        reservation: r,
+        timing,
+        state,
+        stateLabel,
+        resourceLabel: RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId,
+      };
+    });
+  }, [reservations, user?.id, isGestorScheduler]);
 
   if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
     return null;
@@ -660,7 +744,7 @@ export default function CirujanoPage() {
   const handleProgramarSave = async (
     patients: Omit<PatientInBlock, "id" | "order">[],
     _coSurgeonIds?: string[],
-    meta?: { responsibleSurgeonId: string }
+    meta?: { responsibleSurgeonId: string; externalSurgeonName?: string }
   ) => {
     if (selectedSlots.length === 0) return;
     if (isGestorScheduler && !meta?.responsibleSurgeonId?.trim()) {
@@ -838,20 +922,71 @@ export default function CirujanoPage() {
 
         {tab === "pacientes" && (
           <section className="rounded-xl border border-gray-200 bg-white p-6">
-            <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Mis pacientes</h2>
+            <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">
+              {isGestorScheduler ? "Pacientes y anulaciones (todos los cirujanos)" : "Mis pacientes"}
+            </h2>
             <p className="mb-4 text-sm text-gray-600">
-              Pacientes programados en sus reservas.
+              {isGestorScheduler
+                ? "Listado de pacientes programados en el bloque. Puede anular un paciente o anular la reserva de un tramo concreto (una fila en base de datos por hueco). Si un cirujano reservó varios tramos seguidos, cada uno se anula por separado."
+                : "Pacientes en sus reservas. Puede anular un paciente o anular la reserva de este tramo concreto (un hueco). Si reservó varios tramos seguidos, cancele cada reserva por separado."}
             </p>
+            {misReservasResumen.length > 0 && (
+              <div className="mb-5 grid gap-3 md:grid-cols-2">
+                {misReservasResumen.map(({ reservation, timing, state, stateLabel, resourceLabel }) => (
+                  <article key={reservation.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800">
+                        {new Date(reservation.date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })} · {resourceLabel} · {reservation.shift === "morning" ? "Mañana" : "Tarde"}
+                      </p>
+                      <StatusBadge tone={state === "EMPTY" ? "warning" : state === "FULL" ? "success" : "neutral"}>{stateLabel}</StatusBadge>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      Tiempo total: <strong>{timing.totalMinutes} min</strong> · usado: <strong>{timing.usedMinutes} min</strong> · libre: <strong>{timing.freeMinutes} min</strong>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Pacientes: <strong>{reservation.patients.length}</strong> {timing.freeMinutes > 0 ? "· puede dejar hueco libre o programar más pacientes." : ""}
+                    </p>
+                    {canCancelReservation && (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const slotsInTurn = getSlots(reservation.shift).length;
+                            const slotDescriptor = `${resourceLabel} · ${reservation.date} · ${reservation.shift === "morning" ? "Mañana" : "Tarde"} · tramo ${reservation.slotIndex + 1}/${slotsInTurn} (una reserva = este hueco)`;
+                            setCancelReservationConfirm({
+                              reservationId: reservation.id,
+                              label: `${resourceLabel} ${reservation.shift === "morning" ? "mañana" : "tarde"} (${reservation.date})`,
+                              hasPatients: reservation.patients.length > 0,
+                              patientsCount: reservation.patients.length,
+                              stateLabel,
+                              reasonNote: "",
+                              slotDescriptor,
+                            });
+                          }}
+                          className="rounded border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-800 hover:bg-rose-100"
+                        >
+                          Anular reserva (este tramo)
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
             {misPacientesProgramados.length === 0 ? (
               <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-8 text-center text-gray-500">Aún no tiene pacientes programados. En la pestaña <strong>Reservar / programar</strong>, elija huecos en el calendario y pulse <strong>Reservar y programar pacientes</strong> para añadirlos.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] border-collapse text-sm">
+                <table className="w-full min-w-[720px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Fecha</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Sala</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Turno</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Tramo</th>
+                      {isGestorScheduler && (
+                        <th className="px-3 py-2 text-left font-semibold text-gray-700">Cirujano titular</th>
+                      )}
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Paciente / Nº historia</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Procedimiento</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Duración</th>
@@ -861,14 +996,20 @@ export default function CirujanoPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {misPacientesProgramados.map(({ date, resourceLabel, shift, patient, reservationId }) => {
+                    {misPacientesProgramados.map(({ date, resourceLabel, shift, slotIndex, patient, reservationId, surgeonName }) => {
                       const isLastPatient = misPacientesProgramados.filter((p) => p.reservationId === reservationId).length === 1;
                       const retentionAllowed = isReservationRetentionStillAllowed(date);
+                      const slotsInTurn = getSlots(shift).length;
+                      const slotDescriptor = `${resourceLabel} · ${date} · ${shift === "morning" ? "Mañana" : "Tarde"} · tramo ${slotIndex + 1}/${slotsInTurn} (una reserva)`;
                       return (
                         <tr key={`${date}-${resourceLabel}-${shift}-${patient.id}`} className="border-b border-gray-100 hover:bg-gray-50/50">
                           <td className="px-3 py-2 text-gray-800">{new Date(date + "T12:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}</td>
                           <td className="px-3 py-2 text-gray-800">{resourceLabel}</td>
                           <td className="px-3 py-2 text-gray-800">{shift === "morning" ? "Mañana" : "Tarde"}</td>
+                          <td className="px-3 py-2 text-gray-700">
+                            {slotIndex + 1}/{slotsInTurn}
+                          </td>
+                          {isGestorScheduler && <td className="px-3 py-2 text-gray-800">{surgeonName}</td>}
                           <td className="px-3 py-2">
                             <span className="font-medium text-gray-800">{patient.name || "—"}</span>
                             <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
@@ -909,11 +1050,13 @@ export default function CirujanoPage() {
                                     date,
                                     isLastPatient,
                                     retentionAllowed,
+                                    reasonNote: "",
+                                    slotDescriptor,
                                   })
                                 }
                                 className="rounded border border-amber-400 bg-amber-50 min-h-10 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
                               >
-                                Cancelar
+                                Anular paciente
                               </button>
                               </div>
                             </td>
@@ -1026,20 +1169,93 @@ export default function CirujanoPage() {
         )}
       </div>
 
+      {cancelReservationConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="cancel-reservation-title">
+          <div className="mx-4 max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+            <h3 id="cancel-reservation-title" className="mb-2 text-lg font-semibold text-gray-800">Anular reserva (este tramo)</h3>
+            <p className="mb-2 text-sm text-gray-600">
+              Va a anular <strong>una sola reserva</strong> (un hueco del calendario), no un bloque multi-celda completo salvo que coincida con este único tramo.
+            </p>
+            <p className="mb-3 rounded-md bg-slate-50 px-2 py-1.5 font-mono text-xs text-slate-800">{cancelReservationConfirm.slotDescriptor}</p>
+            <p className="mb-3 text-sm text-gray-600">
+              Reserva seleccionada: <strong>{cancelReservationConfirm.label}</strong>
+            </p>
+            {cancelReservationConfirm.hasPatients ? (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-medium">Hay {cancelReservationConfirm.patientsCount} paciente(s) en este tramo.</p>
+                <p className="mt-1">
+                  Estado del bloque: <strong>{cancelReservationConfirm.stateLabel}</strong>. Se eliminarán todos los pacientes de{" "}
+                  <strong>esta</strong> reserva y el hueco quedará anulado (cancelado).
+                </p>
+                {cancelReservationConfirm.patientsCount > 1 ? (
+                  <p className="mt-2 text-amber-950/90">Al confirmar, se anulan los {cancelReservationConfirm.patientsCount} pacientes de una vez en este tramo.</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                Reserva sin pacientes: se anula solo este tramo reservado.
+              </div>
+            )}
+            <label className="mb-4 block">
+              <span className="mb-1 block text-xs font-medium text-gray-700">Motivo de anulación (opcional)</span>
+              <textarea
+                value={cancelReservationConfirm.reasonNote}
+                onChange={(e) =>
+                  setCancelReservationConfirm((prev) => (prev ? { ...prev, reasonNote: e.target.value } : prev))
+                }
+                rows={2}
+                maxLength={500}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Ej. Cambio de planificación, error de reserva…"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelReservationConfirm(null)}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancelReservation}
+                disabled={cancellingPatient}
+                className="rounded-lg border border-rose-500 bg-rose-100 px-4 py-2 text-sm font-medium text-rose-900 hover:bg-rose-200 disabled:opacity-50"
+              >
+                {cancellingPatient ? "Anulando…" : "Confirmar anulación de reserva"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title">
-          <div className="mx-4 max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
-            <h3 id="cancel-dialog-title" className="mb-2 text-lg font-semibold text-gray-800">Cancelar paciente</h3>
-            <p className="mb-3 text-sm text-gray-600">
-              ¿Confirmar la cancelación de <strong>{cancelConfirm.patientLabel}</strong>?
+          <div className="mx-4 max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+            <h3 id="cancel-dialog-title" className="mb-2 text-lg font-semibold text-gray-800">Anular paciente</h3>
+            <p className="mb-2 text-sm text-gray-600">
+              ¿Confirmar la anulación de <strong>{cancelConfirm.patientLabel}</strong> en este tramo?
             </p>
+            <p className="mb-3 rounded-md bg-slate-50 px-2 py-1.5 font-mono text-xs text-slate-800">{cancelConfirm.slotDescriptor}</p>
             {cancelConfirm.isLastPatient && (
               <div className={`mb-4 rounded-lg border p-3 text-sm ${cancelConfirm.retentionAllowed ? "border-sky-200 bg-sky-50 text-sky-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 {cancelConfirm.retentionAllowed
-                  ? "Al ser el último paciente del hueco, el hueco se mantendrá reservado a su nombre para que pueda programar otro paciente."
-                  : "Al ser el último paciente y haber pasado el cierre del jueves, el hueco pasará a la bolsa común y quedará disponible para otros."}
+                  ? "Es el último paciente de este tramo: el hueco seguirá reservado (sin pacientes) para poder programar otro caso."
+                  : "Es el último paciente y ha pasado el cierre de programación: el hueco de este tramo pasará a bolsa común."}
               </div>
             )}
+            <label className="mb-4 block">
+              <span className="mb-1 block text-xs font-medium text-gray-700">Motivo (opcional)</span>
+              <textarea
+                value={cancelConfirm.reasonNote}
+                onChange={(e) => setCancelConfirm((prev) => (prev ? { ...prev, reasonNote: e.target.value } : prev))}
+                rows={2}
+                maxLength={500}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Ej. Baja del paciente, reprogramación…"
+              />
+            </label>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -1054,7 +1270,7 @@ export default function CirujanoPage() {
                 disabled={cancellingPatient}
                 className="rounded-lg border border-amber-500 bg-amber-100 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
               >
-                {cancellingPatient ? "Cancelando…" : "Confirmar cancelación"}
+                {cancellingPatient ? "Anulando…" : "Confirmar anulación de paciente"}
               </button>
             </div>
           </div>

@@ -200,6 +200,12 @@ export function SlotCell({
                 {slot.patientsCount ?? 0} paciente(s)
               </p>
             )}
+            {(slot.usedMinutes != null || slot.totalMinutes != null) && (
+              <p className="text-[10px] text-slate-600" title="Tiempo usado dentro del bloque reservado">
+                {slot.usedMinutes ?? 0}/{slot.totalMinutes ?? 0} min
+                {slot.freeMinutes != null ? ` · libre ${slot.freeMinutes} min` : ""}
+              </p>
+            )}
             {showDetails && !slot.isMyReservation && slot.patientsCount != null && (
               <p className="text-[10px] text-slate-600">{slot.patientsCount} paciente(s)</p>
             )}

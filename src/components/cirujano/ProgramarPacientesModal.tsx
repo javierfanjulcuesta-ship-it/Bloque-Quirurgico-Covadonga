@@ -11,7 +11,6 @@ import {
   SOLICITUD_RECURSOS_OPTIONS,
   LARGE_BLOCK_REMAINDER_MINUTES,
 } from "@/lib/constants";
-import { getEffectiveTotalMinutesFilledRows } from "@/lib/utils";
 import type { Shift } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
 import { hasGestorAccess, type UserRole } from "@/lib/types";
@@ -39,7 +38,7 @@ export interface ProgramarPacientesModalProps {
   onSave: (
     patients: Omit<PatientInBlock, "id" | "order">[],
     coSurgeonIds?: string[],
-    meta?: { responsibleSurgeonId: string }
+    meta?: { responsibleSurgeonId: string; externalSurgeonName?: string }
   ) => void | Promise<void>;
   onClose: () => void;
   /** Si true, deshabilita el botón guardar (ej. mientras se guarda en API) */
@@ -48,12 +47,30 @@ export interface ProgramarPacientesModalProps {
 
 const ANESTHESIA_OPTIONS = ["Local", "Regional", "General", "Sedación"];
 
-type ModalTab = "datos" | "recursos";
+/** Fila con mínimo obligatorio para contar tiempo frente al bloque reservado. */
+function rowHasRequiredCore(p: Partial<PatientInBlock>): boolean {
+  return !!(p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim());
+}
+
+/** Minutos por fila para totales del modal: si faltan datos core no cuenta; si falta duración, asume 60 min (provisional). */
+function rowMinutesForQuota(p: Partial<PatientInBlock>): number {
+  if (!rowHasRequiredCore(p)) return 0;
+  const m = p.estimatedDurationMinutes;
+  if (typeof m === "number" && Number.isFinite(m) && m > 0) return m + TRANSITION_MINUTES_PER_PROCEDURE;
+  return 60 + TRANSITION_MINUTES_PER_PROCEDURE;
+}
+
+function programmingTotalMinutes(patients: Partial<PatientInBlock>[]): number {
+  return patients.reduce((s, p) => s + rowMinutesForQuota(p), 0);
+}
 
 interface QuickParseResult {
   parsedPatients: Partial<PatientInBlock>[];
+  parseMode: "empty" | "heuristic" | "structured-medical";
   detectedSurgeonId?: string;
   detectedSurgeonName?: string;
+  /** Primera línea (Dr/Dra…) cuando no hubo match en directorio: referencia libre del titular. */
+  titularFreeLine?: string;
   detectedProcedureCount: number;
   detectedFundingLabels: string[];
   recognizedAbbreviations: string[];
@@ -101,11 +118,96 @@ function detectFundingFromText(text: string): string {
   return "";
 }
 
+/** Entidad para formulario: etiqueta conocida (Mutua, Privado, SESPA) o texto tal cual. */
+function classifyFundingLabel(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  const fromPatterns = detectFundingFromText(t);
+  return fromPatterns || t;
+}
+
 function detectProcedureCount(text: string): number {
   const m = text.match(/\b(\d{1,2})\s*(?:car|cas|casos|proc|proced|pac|pacientes?)\b/i);
   if (!m) return 0;
   const n = parseInt(m[1] ?? "0", 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function parseStructuredMedicalText(
+  text: string,
+  surgeons: Array<{ id: string; name: string }>
+): QuickParseResult | null {
+  const lines = text
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const firstLine = lines[0] ?? "";
+  const isStructuredHeader = /^(dr|dra)\.?\s+/i.test(firstLine);
+  const procedureLines = lines.filter((line) => /^\s*-\s*/.test(line));
+  if (!isStructuredHeader || procedureLines.length === 0) return null;
+
+  const surgeonDisplayName = firstLine.replace(/^(dr|dra)\.?\s*/i, "").trim();
+  const surgeonNorm = normalizeLower(surgeonDisplayName);
+  const surgeonMatch = surgeons.find((s) => {
+    const nameNorm = normalizeLower(s.name);
+    return (
+      nameNorm.includes(surgeonNorm) ||
+      surgeonNorm.includes(nameNorm) ||
+      nameNorm.split(" ").some((part) => part.length > 2 && surgeonNorm.includes(part))
+    );
+  });
+
+  const parsedPatients: Partial<PatientInBlock>[] = [];
+  const fundingLabels = new Set<string>();
+  for (const line of procedureLines) {
+    const content = line.replace(/^\s*-\s*/, "").trim();
+    if (!content) continue;
+    const sep = content.indexOf(":");
+    let procedure: string;
+    let payerRaw: string;
+    if (sep >= 0) {
+      procedure = content.slice(0, sep).trim();
+      payerRaw = content.slice(sep + 1).trim();
+    } else {
+      const tokens = content.split(/\s+/).filter(Boolean);
+      if (tokens.length >= 2) {
+        procedure = (tokens[0] ?? "").trim();
+        payerRaw = tokens.slice(1).join(" ").trim();
+      } else {
+        procedure = content.trim();
+        payerRaw = "";
+      }
+    }
+    if (!procedure) continue;
+    const entidadFinanciadora = payerRaw ? classifyFundingLabel(payerRaw) : sep >= 0 ? "Desconocido" : "";
+    if (entidadFinanciadora) {
+      const lbl = detectFundingFromText(entidadFinanciadora) || entidadFinanciadora;
+      fundingLabels.add(lbl);
+    }
+    parsedPatients.push({
+      procedure,
+      entidadFinanciadora,
+      estimatedDurationMinutes: 60,
+      admissionType: "ambulatorio",
+      notes: "",
+    });
+  }
+
+  const titularFreeLine = !surgeonMatch && firstLine.trim().length > 0 ? firstLine.trim() : undefined;
+
+  return {
+    parsedPatients,
+    parseMode: "structured-medical",
+    detectedSurgeonId: surgeonMatch?.id,
+    detectedSurgeonName: surgeonMatch?.name ?? surgeonDisplayName,
+    titularFreeLine,
+    detectedProcedureCount: parsedPatients.length,
+    detectedFundingLabels: Array.from(fundingLabels),
+    recognizedAbbreviations: [],
+    normalizedTerms: [],
+    noiseRemovedCount: 0,
+  };
 }
 
 function parseQuickBlockText(
@@ -116,6 +218,7 @@ function parseQuickBlockText(
   if (!clean) {
     return {
       parsedPatients: [],
+      parseMode: "empty",
       detectedProcedureCount: 0,
       detectedFundingLabels: [],
       recognizedAbbreviations: [],
@@ -123,6 +226,9 @@ function parseQuickBlockText(
       noiseRemovedCount: 0,
     };
   }
+
+  const structured = parseStructuredMedicalText(clean, surgeons);
+  if (structured) return structured;
 
   const lower = normalizeLower(clean);
   let detectedSurgeonId: string | undefined;
@@ -195,6 +301,7 @@ function parseQuickBlockText(
 
   return {
     parsedPatients,
+    parseMode: "heuristic",
     detectedSurgeonId,
     detectedSurgeonName,
     detectedProcedureCount: inferredCount,
@@ -207,12 +314,13 @@ function parseQuickBlockText(
 
 export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
   const [patients, setPatients] = useState<Partial<PatientInBlock>[]>([{}]);
-  const [activeTab, setActiveTab] = useState<ModalTab>("datos");
   const [quickMode, setQuickMode] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickParseMessage, setQuickParseMessage] = useState<string | null>(null);
   const [secondSurgeonName, setSecondSurgeonName] = useState("");
   const [responsibleSurgeonId, setResponsibleSurgeonId] = useState("");
+  /** Referencia libre del titular (p. ej. Dr. no registrado). Si hay cirujano interno, puede convivir y se añade a notas. */
+  const [externalSurgeonDisplayName, setExternalSurgeonDisplayName] = useState("");
   const [error, setError] = useState("");
   const totalReserved = totalReservedMinutes(slots);
 
@@ -241,34 +349,19 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
   const updatePatient = (index: number, field: keyof PatientInBlock, value: string | number) => {
     setPatients((prev) => prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
   };
-  const updateSolicitudRecursos = (index: number, value: SolicitudRecursosId) => {
-    setPatients((prev) => prev.map((p, i) => (i === index ? { ...p, solicitudRecursos: value } : p)));
+  const updateSolicitudRecursos = (index: number, value: SolicitudRecursosId | "") => {
+    setPatients((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, solicitudRecursos: value === "" ? undefined : value } : p))
+    );
   };
 
-  const safeMinutes = (p: Partial<PatientInBlock>) =>
-    typeof p.estimatedDurationMinutes === "number" && Number.isFinite(p.estimatedDurationMinutes) && p.estimatedDurationMinutes >= 0
-      ? p.estimatedDurationMinutes
-      : 0;
-  const currentTotal = patients.reduce(
-    (sum, p) => sum + safeMinutes(p) + TRANSITION_MINUTES_PER_PROCEDURE,
-    0
-  );
+  const currentTotal = programmingTotalMinutes(patients);
   const over = currentTotal > totalReserved;
-  const programmedForRemainder = getEffectiveTotalMinutesFilledRows(patients);
+  const programmedForRemainder = programmingTotalMinutes(patients);
   const remainderMinutes = Math.max(0, totalReserved - programmedForRemainder);
   const showWideRemainder =
     !over && totalReserved > 0 && remainderMinutes >= LARGE_BLOCK_REMAINDER_MINUTES;
-  const validRowsCount = patients.filter(
-    (p) =>
-      p.numeroHistoria?.trim() &&
-      p.procedure?.trim() &&
-      p.entidadFinanciadora?.trim() &&
-      p.anesthesiaType?.trim() &&
-      typeof p.estimatedDurationMinutes === "number" &&
-      Number.isFinite(p.estimatedDurationMinutes) &&
-      p.estimatedDurationMinutes > 0 &&
-      p.solicitudRecursos
-  ).length;
+  const validRowsCount = patients.filter((p) => rowHasRequiredCore(p)).length;
   const quickParsedPreview = useMemo(
     () => parseQuickBlockText(quickText, responsibleSurgeonCandidates),
     [quickText, responsibleSurgeonCandidates]
@@ -282,60 +375,84 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
       return;
     }
     setPatients(parsed.parsedPatients);
-    if (requireResponsibleSurgeon && parsed.detectedSurgeonId) {
-      setResponsibleSurgeonId(parsed.detectedSurgeonId);
+    if (parsed.parseMode === "structured-medical") {
+      if (requireResponsibleSurgeon) {
+        if (parsed.detectedSurgeonId) {
+          setResponsibleSurgeonId(parsed.detectedSurgeonId);
+          setExternalSurgeonDisplayName("");
+        } else if (parsed.titularFreeLine) {
+          setExternalSurgeonDisplayName(parsed.titularFreeLine);
+          setResponsibleSurgeonId("");
+        }
+      } else if (parsed.titularFreeLine) {
+        setExternalSurgeonDisplayName(parsed.titularFreeLine);
+      }
     }
-    setActiveTab("datos");
+    const titularMsg =
+      parsed.parseMode === "structured-medical" && parsed.titularFreeLine
+        ? `Titular (referencia libre): ${parsed.titularFreeLine}. Elija un cirujano del listado para el registro del sistema si aplica.`
+        : `Detectado: ${parsed.detectedSurgeonName ?? "cirujano no identificado en texto"}`;
+    const detectedSummary = `${titularMsg} · ${parsed.detectedProcedureCount} procedimiento(s)`;
     setQuickParseMessage(
-      `Se han generado ${parsed.parsedPatients.length} paciente(s)${
-        parsed.detectedSurgeonName ? ` · Cirujano detectado: ${parsed.detectedSurgeonName}` : ""
-      }. Revise y complete los campos obligatorios antes de guardar${
+      `${detectedSummary}. Se han generado ${parsed.parsedPatients.length} paciente(s). Revise procedimiento, entidad y nº historia (obligatorios); el resto es opcional${
         parsed.normalizedTerms.some((t) => t.includes("(revisar)")) ? " (hay abreviaturas ambiguas marcadas para revisar)." : "."
-      }`
+      } [modo: ${parsed.parseMode}]`
     );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const valid = patients.filter(
-      (p) =>
-        p.numeroHistoria?.trim() &&
-        p.procedure?.trim() &&
-        p.entidadFinanciadora?.trim() &&
-        p.anesthesiaType?.trim() &&
-        typeof p.estimatedDurationMinutes === "number" &&
-        Number.isFinite(p.estimatedDurationMinutes) &&
-        p.estimatedDurationMinutes > 0 &&
-        p.solicitudRecursos
-    );
+    const valid = patients.filter((p) => rowHasRequiredCore(p));
     if (valid.length === 0) {
-      setError("Rellene al menos un paciente con todos los campos obligatorios (incluida la pestaña Solicitud de recursos).");
+      setError("Rellene al menos un paciente con procedimiento, entidad gestora y nº de historia clínica.");
       return;
     }
     if (requireResponsibleSurgeon) {
       if (!responsibleSurgeonId.trim()) {
-        setError("Seleccione el cirujano o endoscopista responsable del caso.");
+        setError(
+          externalSurgeonDisplayName.trim()
+            ? "Hay nombre libre del titular pero falta el cirujano/endoscopista del listado (obligatorio para registrar la reserva a nombre interno)."
+            : "Seleccione el cirujano o endoscopista responsable del caso."
+        );
         return;
       }
     }
-    const total = valid.reduce((s, p) => s + safeMinutes(p) + TRANSITION_MINUTES_PER_PROCEDURE, 0);
+    const total = valid.reduce((s, p) => s + rowMinutesForQuota(p), 0);
     if (total > totalReserved) {
       setError("El tiempo total supera el reservado. Reduzca pacientes o tiempos.");
       return;
     }
-    const withOrder: Omit<PatientInBlock, "id" | "order">[] = valid.map((p, i) => ({
-      name: p.name,
-      numeroHistoria: p.numeroHistoria!.trim(),
-      procedure: p.procedure!.trim(),
-      estimatedDurationMinutes: p.estimatedDurationMinutes!,
-      anesthesiaType: p.anesthesiaType!.trim(),
-      entidadFinanciadora: p.entidadFinanciadora!.trim(),
-      admissionType: (p.admissionType as AdmissionType) ?? "ambulatorio",
-      notes: p.notes?.trim() ?? "",
-      solicitudRecursos: p.solicitudRecursos!,
-      order: i,
-    }));
+    const defaultSolicitud: SolicitudRecursosId = "ninguno";
+    const refTitular = externalSurgeonDisplayName.trim();
+    const internalName = requireResponsibleSurgeon
+      ? responsibleSurgeonCandidates.find((u) => u.id === responsibleSurgeonId.trim())?.name?.trim()
+      : "";
+    const notePrefix =
+      refTitular && (!internalName || normalizeLower(refTitular) !== normalizeLower(internalName))
+        ? `[Titular ref.: ${refTitular}]\n`
+        : "";
+    const withOrder: Omit<PatientInBlock, "id" | "order">[] = valid.map((p, i) => {
+      const duration =
+        typeof p.estimatedDurationMinutes === "number" && Number.isFinite(p.estimatedDurationMinutes) && p.estimatedDurationMinutes > 0
+          ? p.estimatedDurationMinutes
+          : 60;
+      const anesthesia = p.anesthesiaType?.trim() ? p.anesthesiaType.trim() : "Por determinar";
+      const baseNotes = p.notes?.trim() ?? "";
+      const notesJoined = notePrefix ? (baseNotes ? `${notePrefix}${baseNotes}` : notePrefix.trimEnd()) : baseNotes;
+      return {
+        name: p.name,
+        numeroHistoria: p.numeroHistoria!.trim(),
+        procedure: p.procedure!.trim(),
+        estimatedDurationMinutes: duration,
+        anesthesiaType: anesthesia,
+        entidadFinanciadora: p.entidadFinanciadora!.trim(),
+        admissionType: (p.admissionType as AdmissionType) ?? "ambulatorio",
+        notes: notesJoined,
+        solicitudRecursos: (p.solicitudRecursos ? p.solicitudRecursos : defaultSolicitud) as SolicitudRecursosId,
+        order: i,
+      };
+    });
 
     let coSurgeonIds: string[] | undefined;
     const nameTrim = secondSurgeonName.trim();
@@ -358,7 +475,12 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
       await onSave(
         withOrder,
         coSurgeonIds,
-        requireResponsibleSurgeon ? { responsibleSurgeonId: responsibleSurgeonId.trim() } : undefined
+        requireResponsibleSurgeon
+          ? {
+              responsibleSurgeonId: responsibleSurgeonId.trim(),
+              externalSurgeonName: externalSurgeonDisplayName.trim() || undefined,
+            }
+          : undefined
       );
       onClose();
     } catch {
@@ -378,8 +500,55 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
           Reservar y programar pacientes
         </h2>
         <p className="mb-4 text-xs text-slate-500">
-          Revise tiempos, entidad financiadora y recursos antes de confirmar. La acción principal queda al final del formulario.
+          Obligatorios: procedimiento, entidad gestora y nº de historia. Anestesia, duración y solicitud de recursos son opcionales (se completan por defecto al guardar si faltan).
         </p>
+        <div className="mb-4 rounded-lg border border-[var(--ribera-navy)]/20 bg-white p-3 shadow-sm">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ribera-navy)]">
+            Titular de la intervención (defina una vez por bloque)
+          </p>
+          {requireResponsibleSurgeon && (
+            <label className="block">
+              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista interno *</span>
+              <select
+                value={responsibleSurgeonId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setResponsibleSurgeonId(v);
+                  if (v.trim()) setExternalSurgeonDisplayName("");
+                }}
+                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
+                required
+              >
+                <option value="">Seleccione…</option>
+                {responsibleSurgeonCandidates.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-gray-600">La reserva quedará a nombre de este profesional en el sistema.</span>
+            </label>
+          )}
+          <label className={`block ${requireResponsibleSurgeon ? "mt-3" : ""}`}>
+            <span className="block text-sm font-medium text-gray-700">Nombre libre del cirujano titular (opcional)</span>
+            <input
+              type="text"
+              value={externalSurgeonDisplayName}
+              onChange={(e) => {
+                const v = e.target.value;
+                setExternalSurgeonDisplayName(v);
+                if (v.trim() && requireResponsibleSurgeon) setResponsibleSurgeonId("");
+              }}
+              placeholder='Ej. Dr. Rojas (si no está en el listado o como referencia)'
+              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+            <span className="mt-1 block text-xs text-gray-600">
+              {requireResponsibleSurgeon
+                ? "Si escribe aquí, se vacía el desplegable (y al revés). El interno sigue siendo obligatorio para guardar; si el nombre libre no coincide con el elegido, se añadirá a las notas de cada paciente."
+                : "Se añadirá a las notas de cada paciente como referencia; el titular del hueco en sistema sigue siendo usted."}
+            </span>
+          </label>
+        </div>
         <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
           <div className="grid gap-2 text-xs sm:grid-cols-3">
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -399,21 +568,8 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
             Cada procedimiento suma su tiempo estimado + {TRANSITION_MINUTES_PER_PROCEDURE} min de limpieza/anestesia.
           </p>
         </div>
-        <div className="mb-4 flex gap-1 border-b border-slate-200">
-          <button
-            type="button"
-            onClick={() => setActiveTab("datos")}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "datos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            Datos del paciente
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("recursos")}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${activeTab === "recursos" ? "border border-b-0 border-slate-200 bg-white text-[var(--ribera-navy)] shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            Solicitud de recursos
-          </button>
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+          <p className="text-sm font-semibold text-[var(--ribera-navy)]">Datos del paciente y solicitud de recursos</p>
         </div>
         <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
           <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -430,7 +586,7 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
               <textarea
                 value={quickText}
                 onChange={(e) => setQuickText(e.target.value)}
-                placeholder='Ejemplo: "DR ROJAS 3 CAR MC mutual // PRP // Fx muñeca fremap"'
+                placeholder={`Ejemplo estructurado:\nDr Rojas\n- CAR: ASISA\n- CAR PRIVADO\n\nO sin dos puntos:\nDra Castellanos\n- FACO MAPFRE\n- PRP PRIVADO\n\nModo libre (heurístico): DR ROJAS 3 CAR mutual // PRP`}
                 className="min-h-[110px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -478,27 +634,6 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
             </div>
           )}
         </div>
-        {requireResponsibleSurgeon && (
-          <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/80 p-3">
-            <label className="block">
-              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista responsable *</span>
-              <select
-                value={responsibleSurgeonId}
-                onChange={(e) => setResponsibleSurgeonId(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
-                required
-              >
-                <option value="">Seleccione…</option>
-                {responsibleSurgeonCandidates.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-xs text-gray-600">La reserva quedará a nombre de este profesional.</span>
-            </label>
-          </div>
-        )}
         <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
           <label className="block">
             <span className="block text-sm font-medium text-gray-700">2º cirujano (opcional)</span>
@@ -530,7 +665,6 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
           </InlineNotice>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {activeTab === "datos" && (
           <>
           {patients.map((p, index) => (
             <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -546,12 +680,8 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <StatusBadge
-                    tone={p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0 ? "success" : "warning"}
-                  >
-                    {p.solicitudRecursos && p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim() && p.anesthesiaType?.trim() && typeof p.estimatedDurationMinutes === "number" && p.estimatedDurationMinutes > 0
-                      ? "Completo"
-                      : "Pendiente"}
+                  <StatusBadge tone={rowHasRequiredCore(p) ? "success" : "warning"}>
+                    {rowHasRequiredCore(p) ? "Mínimo OK" : "Faltan obligatorios"}
                   </StatusBadge>
                   {patients.length > 1 && (
                     <button type="button" onClick={() => removePatient(index)} className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100">
@@ -593,7 +723,7 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
                   />
                 </label>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Ingreso o ambulatorio *</span>
+                  <span className="block text-sm font-medium text-gray-700">Ingreso o ambulatorio (opcional)</span>
                   <select
                     value={p.admissionType ?? "ambulatorio"}
                     onChange={(e) => updatePatient(index, "admissionType", e.target.value as AdmissionType)}
@@ -604,21 +734,20 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
                   </select>
                 </label>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Tipo de anestesia *</span>
+                  <span className="block text-sm font-medium text-gray-700">Tipo de anestesia (opcional)</span>
                   <select
                     value={p.anesthesiaType ?? ""}
                     onChange={(e) => updatePatient(index, "anesthesiaType", e.target.value)}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    required
                   >
-                    <option value="">Seleccione</option>
+                    <option value="">Sin especificar (se usará «Por determinar» al guardar)</option>
                     {ANESTHESIA_OPTIONS.map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>
                 </label>
                 <label>
-                  <span className="block text-sm font-medium text-gray-700">Tiempo estimado (min) *</span>
+                  <span className="block text-sm font-medium text-gray-700">Tiempo estimado (min) (opcional)</span>
                   <input
                     type="number"
                     min={1}
@@ -630,11 +759,24 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
                   updatePatient(index, "estimatedDurationMinutes", val);
                 }}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    required
+                    placeholder="Vacío → 60 min al guardar"
                   />
                 </label>
                 <label className="sm:col-span-2">
-                  <span className="block text-sm font-medium text-gray-700">Notas</span>
+                  <span className="block text-sm font-medium text-gray-700">Solicitud de recursos (opcional)</span>
+                  <select
+                    value={p.solicitudRecursos ?? ""}
+                    onChange={(e) => updateSolicitudRecursos(index, e.target.value as SolicitudRecursosId | "")}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Sin especificar (se usará «Ninguno de ellos» al guardar)</option>
+                    {SOLICITUD_RECURSOS_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="block text-sm font-medium text-gray-700">Notas (opcional)</span>
                   <input
                     type="text"
                     value={p.notes ?? ""}
@@ -649,36 +791,6 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
             + Añadir otro paciente
           </button>
           </>
-          )}
-          {activeTab === "recursos" && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">Seleccione la solicitud de recursos para cada paciente. Este campo es obligatorio para guardar.</p>
-            {patients.map((p, index) => (
-              <fieldset key={index} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-medium text-slate-700">Paciente {index + 1}{p.procedure?.trim() ? ` · ${p.procedure}` : ""}</div>
-                  <StatusBadge tone={p.solicitudRecursos ? "success" : "warning"}>
-                    {p.solicitudRecursos ? "Recurso OK" : "Falta recurso"}
-                  </StatusBadge>
-                </div>
-                <label>
-                  <span className="block text-sm font-medium text-gray-700">Solicitud de recursos *</span>
-                  <select
-                    value={p.solicitudRecursos ?? ""}
-                    onChange={(e) => updateSolicitudRecursos(index, e.target.value as SolicitudRecursosId)}
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    required
-                  >
-                    <option value="">Seleccione</option>
-                    {SOLICITUD_RECURSOS_OPTIONS.map((opt) => (
-                      <option key={opt.id} value={opt.id}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </fieldset>
-            ))}
-          </div>
-          )}
           {error && (
             <InlineNotice variant="error" role="alert">
               {error}
@@ -687,8 +799,7 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
           <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
               <span>Pacientes en formulario: <strong>{patients.length}</strong></span>
-              <span>Completos para guardar: <strong>{validRowsCount}</strong></span>
-              <span>Pestaña actual: <strong>{activeTab === "datos" ? "Datos clínicos" : "Recursos"}</strong></span>
+              <span>Listos para guardar (mínimo): <strong>{validRowsCount}</strong></span>
             </div>
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
             <button

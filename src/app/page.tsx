@@ -168,7 +168,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-6xl flex-col justify-center px-4 py-8" style={{ minHeight: "60vh" }}>
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center px-4 py-10">
       {authUser && (
         <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
           <p className="text-sm font-medium text-green-800">
@@ -198,13 +198,13 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <div className="mx-auto w-full max-w-xl">
       <div className="card-ribera w-full p-8">
         {modoDemo && (
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
         )}
-        <h2 className="mb-1 text-2xl font-bold tracking-tight text-[var(--ribera-navy)]">Acceso a QxFlow</h2>
-        <p className="mb-4 text-sm text-slate-600">Acceda a su entorno de trabajo clínico y operativo.</p>
+        <h2 className="mb-4 text-xl font-semibold tracking-tight text-[var(--ribera-navy)]">
+          {modoDemo ? "Acceso de demostración" : "Iniciar sesión"}
+        </h2>
         {modoDemo ? (
           <>
         <p className="mb-4 text-sm text-gray-600">Seleccione un perfil y pulse <strong>Entrar en modo DEMO</strong>. Sin contraseñas.</p>
@@ -323,7 +323,6 @@ export default function HomePage() {
             </p>
           </form>
         )}
-      </div>
       </div>
 
       {contactModalOpen && (

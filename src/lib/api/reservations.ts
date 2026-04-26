@@ -4,6 +4,7 @@
 
 import type { Reservation, PatientInBlock } from "@/lib/types";
 import type { ResourceId, Shift } from "@/lib/types";
+import { deriveReservationBlockState } from "@/lib/reservationState";
 
 export interface ApiReservation {
   id: string;
@@ -69,7 +70,7 @@ function normalizeShiftFromApi(shift: string): Shift {
 
 /** Convierte reserva de API al formato del frontend */
 export function mapReservationFromApi(api: ApiReservation): Reservation {
-  return {
+  const mapped: Reservation = {
     id: api.id,
     date: api.date,
     resourceId: api.resourceId as ResourceId,
@@ -81,6 +82,8 @@ export function mapReservationFromApi(api: ApiReservation): Reservation {
     createdAt: api.createdAt,
     patients: api.patients.map(mapPatientFromApi),
   };
+  mapped.blockState = deriveReservationBlockState(mapped);
+  return mapped;
 }
 
 /** Convierte paciente de API al formato del frontend */
@@ -97,6 +100,7 @@ export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
     notes: api.notes ?? "",
     order: api.orderIndex,
     solicitudRecursos: api.solicitudRecursos as PatientInBlock["solicitudRecursos"],
+    scheduleStatus: "SCHEDULED",
   };
 }
 
@@ -240,6 +244,8 @@ export async function updateReservationPatient(
 export interface CancelPatientResult {
   reservation: Reservation;
   slotOutcome: "retained" | "released" | null;
+  /** Texto listo para mostrar al usuario (generado en servidor). */
+  message?: string;
 }
 
 /** Cancelar un paciente de la reserva (elimina al paciente, deja hueco libre o bolsa común si era el último). */
@@ -263,17 +269,23 @@ export async function cancelReservationPatient(
     throw new ReservationsApiError((data as { error?: string }).error ?? "Error al cancelar", res.status);
   }
 
-  const typed = data as { reservation: ApiReservation; slotOutcome?: "retained" | "released" | null };
+  const typed = data as {
+    reservation: ApiReservation;
+    slotOutcome?: "retained" | "released" | null;
+    message?: string;
+  };
   return {
     reservation: mapReservationFromApi(typed.reservation),
     slotOutcome: typed.slotOutcome ?? null,
+    message: typeof typed.message === "string" ? typed.message : undefined,
   };
 }
 
 /** Cancelar reserva completa. */
 export async function cancelReservation(
   reservationId: string,
-  reason?: string
+  reason?: string,
+  opts?: { force?: boolean }
 ): Promise<Reservation> {
-  return patchReservation(reservationId, "/cancel", { reason });
+  return patchReservation(reservationId, "/cancel", { reason, force: opts?.force === true });
 }

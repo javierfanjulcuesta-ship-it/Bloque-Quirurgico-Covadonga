@@ -88,6 +88,8 @@ export const cancelPatientSchema = z.object({
 // --- PATCH cancel: cancelar reserva completa ---
 export const cancelReservationSchema = z.object({
   reason: z.string().max(500).optional(),
+  /** Obligatorio en API si la reserva tiene pacientes (cancelación completa confirmada). */
+  force: z.boolean().optional(),
 });
 
 export type CreateReservationInput = z.infer<typeof createReservationSchema>;
