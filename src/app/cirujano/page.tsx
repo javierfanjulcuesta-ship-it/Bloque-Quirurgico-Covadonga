@@ -54,6 +54,7 @@ import {
   holguraSuggestionLevel,
 } from "@/lib/reservationUnderutilization";
 import { deriveReservationBlockState, getReservationTimingSummary } from "@/lib/reservationState";
+import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 
 function slotKey(date: string, resourceId: string, shift: string, slotIndex: number) {
   return `${date}__${resourceId}__${shift}__${slotIndex}`;
@@ -893,6 +894,20 @@ export default function CirujanoPage() {
             ) : undefined
           }
         />
+
+        {user && (user.role === "cirujano" || user.role === "endoscopista") && (
+          <section
+            className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-slate-800 shadow-sm"
+            aria-labelledby="normas-bloque-titulo"
+          >
+            <h2 id="normas-bloque-titulo" className="mb-3 text-lg font-bold text-[var(--ribera-navy)]">
+              Normas de programación del bloque quirúrgico
+            </h2>
+            <div className="whitespace-pre-line text-sm leading-relaxed text-slate-700">
+              {NORMAS_PROGRAMACION_BLOQUE}
+            </div>
+          </section>
+        )}
 
         {reservationsLoading && tab === "bloque" && (
           <InlineNotice variant="info">Cargando reservas…</InlineNotice>
