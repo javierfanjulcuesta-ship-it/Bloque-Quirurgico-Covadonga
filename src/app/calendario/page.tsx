@@ -32,6 +32,7 @@ import { CrearNuevoUsuario } from "@/components/gestor/CrearNuevoUsuario";
 import { ListaUsuariosGestor } from "@/components/gestor/ListaUsuariosGestor";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
 import { NormasGestorView } from "@/components/gestor/NormasGestorView";
+import { CuadroDeMando } from "@/components/gestor/CuadroDeMando";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
 import { SolicitarNoDisponibilidad } from "@/components/anestesista/SolicitarNoDisponibilidad";
@@ -57,7 +58,8 @@ type CalendarioViewTab =
   | "consulta-preanestesia"
   | "mi-programacion"
   | "solicitar-no-disponibilidad"
-  | "historico";
+  | "historico"
+  | "cuadro-de-mando";
 
 function getCalendarioScreenContext(
   tab: CalendarioViewTab,
@@ -99,6 +101,11 @@ function getCalendarioScreenContext(
       return { title: "Solicitar no disponibilidad", subtitle: "Indique franjas en las que no puede asumir asignaciones." };
     case "historico":
       return { title: "Histórico", subtitle: "Consulta de actividad registrada en el bloque." };
+    case "cuadro-de-mando":
+      return {
+        title: "Cuadro de mando",
+        subtitle: "Indicadores de capacidad y ocupación a partir de los huecos de la semana visible.",
+      };
     default:
       return { title: "Calendario", subtitle: "" };
   }
@@ -237,6 +244,8 @@ export default function CalendarioPage() {
   };
 
   const isGestor = user ? hasGestorAccess(user.role) : false;
+  const canViewCuadroDeMando =
+    !!user && isGestor && hasPermission(user.role, "metrics:view");
   const canManageUsers = user ? hasPermission(user.role, "user:create") : false;
   const canListUsers = user ? hasPermission(user.role, "user:list") : false;
   const allowedResourceIds = user ? getAllowedResourcesForRole(user.role) : undefined;
@@ -304,6 +313,11 @@ export default function CalendarioPage() {
     () => (allowedResourceIds ? RESOURCES.filter((r) => allowedResourceIds.includes(r.id)) : RESOURCES),
     [allowedResourceIds]
   );
+  /** Mismo universo de huecos que la tabla del Cuadro de Mando (recursos permitidos por rol). */
+  const slotViewsForCuadroDeMando = useMemo(() => {
+    const ids = new Set(allowedResources.map((r) => r.id));
+    return slotViews.filter((v) => ids.has(v.resourceId));
+  }, [slotViews, allowedResources]);
   const slotViewsForSelectedDay = useMemo(() => {
     if (!selectedDateForGrid || !(isGestor || isAnestesista)) return [];
     const weekStartForDay = getWeekStart(selectedDateForGrid);
@@ -409,6 +423,11 @@ export default function CalendarioPage() {
                       <AppNavTab active={viewTab === "normas"} onClick={() => setViewTab("normas")}>
                         Normas
                       </AppNavTab>
+                      {canViewCuadroDeMando && (
+                        <AppNavTab active={viewTab === "cuadro-de-mando"} onClick={() => setViewTab("cuadro-de-mando")}>
+                          Cuadro de Mando
+                        </AppNavTab>
+                      )}
                     </>
                   )}
                 </>
@@ -499,6 +518,15 @@ export default function CalendarioPage() {
 
         {user && isGestor && viewTab === "normas" && (
           <NormasGestorView />
+        )}
+
+        {user && canViewCuadroDeMando && viewTab === "cuadro-de-mando" && (
+          <CuadroDeMando
+            slotViews={slotViewsForCuadroDeMando}
+            weekStart={weekStart}
+            lastReservationsFetchedAt={lastReservationsFetchedAt}
+            resources={allowedResources}
+          />
         )}
 
         {user && isGestor && viewTab === "mensajes" && (
