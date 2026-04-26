@@ -594,18 +594,23 @@ export default function CalendarioPage() {
                   >
                     {reservationsLoading ? "Cargando…" : "Refrescar calendario"}
                   </button>
-                  {viewTab === "calendario" && lastReservationsFetchedAt ? (
-                    <p className="mt-2 text-xs text-gray-600">
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                {lastReservationsFetchedAt ? (
+                  <div className="sticky top-4 z-10 mb-3 flex justify-end">
+                    <p
+                      className="ml-auto rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700"
+                      aria-live="polite"
+                    >
                       Calendario actualizado a las{" "}
                       {lastReservationsFetchedAt.toLocaleTimeString("es-ES", {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
                     </p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="min-w-0 flex-1">
+                  </div>
+                ) : null}
                 {selectedDateForGrid ? (
                   <>
                     {(isGestor || isAnestesista) && (
