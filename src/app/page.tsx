@@ -168,7 +168,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center px-4 py-8">
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg flex-col justify-center px-4 py-8">
       {authUser && (
         <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
           <p className="text-sm font-medium text-green-800">
@@ -198,21 +198,22 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <div className="card-ribera w-full p-8">
-        <div className="flex flex-col items-center mb-4">
+      <div className="card-ribera w-full p-7 md:p-8">
+        <div className="mb-2 flex flex-col items-center">
           <img
             src="/qxflow-logo.png"
             alt="QxFlow"
-            style={{ width: "180px", height: "auto" }}
+            style={{ width: "160px", height: "auto" }}
           />
-          <p className="text-sm text-gray-500 mt-2">
+          <p className="mt-2 text-sm text-slate-500">
             Coordinación del bloque quirúrgico
           </p>
         </div>
+        <div className="my-5 h-px w-full bg-slate-100" />
         {modoDemo && (
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
         )}
-        <h2 className="mb-3 text-xl font-semibold tracking-tight text-[var(--ribera-navy)]">
+        <h2 className="mb-4 text-center text-xl font-semibold tracking-tight text-slate-800">
           {modoDemo ? "Acceso de demostración" : "Iniciar sesión"}
         </h2>
         {modoDemo ? (
@@ -302,7 +303,7 @@ export default function HomePage() {
                 type="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
                 required
                 autoComplete="email"
               />
@@ -313,7 +314,7 @@ export default function HomePage() {
                 type="password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
                 required
                 autoComplete="current-password"
               />
@@ -324,11 +325,11 @@ export default function HomePage() {
             <button
               type="submit"
               disabled={loginLoading}
-              className="btn-ribera-primary w-full py-3 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:from-blue-600 hover:to-cyan-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loginLoading ? "Iniciando sesión…" : "Iniciar sesión"}
             </button>
-            <p className="mt-4 text-center text-sm text-gray-500">
+            <p className="mt-4 text-center text-sm text-slate-500">
               Si no dispone de acceso, contacte con la coordinación del bloque quirúrgico.
             </p>
           </form>
