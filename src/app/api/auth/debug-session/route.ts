@@ -21,6 +21,10 @@ function getSecret(): Uint8Array {
 }
 
 export async function GET() {
+  if (process.env.NODE_ENV !== "development") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const cookieStore = await cookies();
     const cookie = cookieStore.get(COOKIE_NAME);
@@ -59,7 +63,6 @@ export async function GET() {
       cookieName: COOKIE_NAME,
       status,
       sessionValid,
-      tokenPrefix: token ? token.slice(0, 10) : null,
       tokenLength: token ? token.length : 0,
       verifyError: verifyError ? verifyError.replace(/[a-zA-Z0-9+/=]{20,}/g, "...") : null,
     };
