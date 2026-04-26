@@ -25,6 +25,7 @@ import {
   type UnderutilizationHint,
   type UnderutilizedBlockSummary,
 } from "@/lib/reservationUnderutilization";
+import { getDisplaySurgeonName } from "@/lib/surgeonTitular";
 import { SectionIntro } from "@/components/ui/PageShellHeader";
 import { CalendarStateLegend } from "@/components/ui/CalendarStateLegend";
 import { FundingBadge, StatusBadge } from "@/components/ui/StatusBadge";
@@ -116,6 +117,7 @@ export function VistaSemanal({
         <UnderutilizedWeekPanel
           blocks={underutilizedBlocks}
           users={users}
+          reservations={reservations}
           onViewBlock={scrollToUnderutilizedBlock}
         />
       )}
@@ -175,10 +177,12 @@ export function VistaSemanal({
 function UnderutilizedWeekPanel({
   blocks,
   users,
+  reservations,
   onViewBlock,
 }: {
   blocks: UnderutilizedBlockSummary[];
   users: User[];
+  reservations: Reservation[];
   onViewBlock: (b: UnderutilizedBlockSummary) => void;
 }) {
   const [shiftFilter, setShiftFilter] = useState<"all" | "morning" | "afternoon">("all");
@@ -187,15 +191,19 @@ function UnderutilizedWeekPanel({
 
   const sortedAll = useMemo(() => sortUnderutilizedBlocksForGestorPanel(blocks), [blocks]);
 
+  const resById = useMemo(() => new Map(reservations.map((r) => [r.id, r])), [reservations]);
+
   const surgeonOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const b of sortedAll) {
       if (!m.has(b.surgeonId)) {
-        m.set(b.surgeonId, users.find((u) => u.id === b.surgeonId)?.name ?? b.surgeonId);
+        const full = resById.get(b.firstReservationId);
+        const label = full ? getDisplaySurgeonName(full, users) : users.find((u) => u.id === b.surgeonId)?.name ?? b.surgeonId;
+        m.set(b.surgeonId, label);
       }
     }
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], "es"));
-  }, [sortedAll, users]);
+  }, [sortedAll, users, resById]);
 
   const filtered = useMemo(() => {
     return sortedAll.filter((b) => {
@@ -336,7 +344,8 @@ function UnderutilizedWeekPanel({
       ) : (
         <ul className="flex flex-col gap-2">
           {filtered.map((b, index) => {
-            const surgeon = users.find((u) => u.id === b.surgeonId);
+            const fullRes = resById.get(b.firstReservationId);
+            const titularLabel = fullRes ? getDisplaySurgeonName(fullRes, users) : users.find((u) => u.id === b.surgeonId)?.name ?? b.surgeonId;
             const resourceLabel = RESOURCES.find((r) => r.id === b.resourceId)?.label ?? b.resourceId;
             const shiftLabel = b.shift === "morning" ? "Mañana" : "Tarde";
             const dayDate = new Date(b.date + "T12:00:00");
@@ -376,7 +385,7 @@ function UnderutilizedWeekPanel({
                     {" · "}
                     {shiftLabel}
                     {" · "}
-                    <span title="Cirujano titular del bloque">{surgeon?.name ?? "—"}</span>
+                    <span title="Cirujano titular del bloque">{titularLabel}</span>
                   </p>
                   <p className={`text-amber-950/90 tabular-nums ${isTop ? "text-sm" : "text-xs"}`}>
                     ~

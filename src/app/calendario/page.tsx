@@ -151,6 +151,14 @@ export default function CalendarioPage() {
     if (!modoDemo && gestor && viewTab === "mensajes") refreshContactMessages();
   }, [modoDemo, user, viewTab, refreshContactMessages]);
 
+  /** Misma semana que el Cuadro de Mando y el periodo de carga de reservas (evita huecos fuera del rango API). */
+  const navigateDashboardWeek = useCallback((targetWeekMonday: Date) => {
+    const ws = getWeekStart(targetWeekMonday);
+    setWeekStart(ws);
+    setCalendarPeriodStart(ws);
+    setSelectedDateForGrid(ws);
+  }, []);
+
   const refreshReservations = useCallback(async () => {
     if (modoDemo) {
       setReservations(getStoredReservations());
@@ -548,6 +556,7 @@ export default function CalendarioPage() {
           <CuadroDeMando
             slotViews={slotViewsForCuadroDeMando}
             weekStart={weekStart}
+            onWeekStartChange={navigateDashboardWeek}
             lastReservationsFetchedAt={lastReservationsFetchedAt}
             resources={allowedResources}
             reservations={reservations}

@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+// FUTURO: listados de reservas en el cuadro pueden usar `getDisplaySurgeonName` desde `@/lib/surgeonTitular`.
+
+import { useMemo, useRef, useState } from "react";
 import {
   ASSIGNMENT_FULL_SHIFT,
   type AnesthetistAssignment,
@@ -10,17 +12,22 @@ import {
   type SlotView,
   type User,
 } from "@/lib/types";
-import { getEffectiveTotalMinutes, getSlots, getWeekDays, toISODate } from "@/lib/utils";
+import { getEffectiveTotalMinutes, getSlots, getWeekDays, getWeekStart, toISODate } from "@/lib/utils";
 import {
   aggregateOperatingRoomMetrics,
   breakdownByResourceAndShift,
   type OperatingRoomMetricsTotals,
 } from "@/lib/metrics/operatingRoomMetrics";
 import {
+  DEFAULT_ECONOMIC_CONFIG,
+  economicConfigsEqual,
+  parseEconomicConfigFromXlsx,
+  type EconomicConfig,
+} from "@/lib/metrics/economicConfig";
+import {
   aggregateEconomicMetrics,
   breakdownEconomicByResourceAndShift,
   buildTurnProfitabilityMap,
-  costeAperturaTurnoDefault,
   profitabilityTurnKey,
   type EconomicMetricsRow,
   type EconomicMetricsTotals,
@@ -32,6 +39,8 @@ import {
 export interface CuadroDeMandoProps {
   slotViews: SlotView[];
   weekStart: Date;
+  /** Sincroniza la semana con el calendario (mismo `weekStart` y periodo de carga en la página). */
+  onWeekStartChange?: (weekStartMonday: Date) => void;
   lastReservationsFetchedAt: Date | null;
   resources: { id: ResourceId; label: string }[];
   /** Reservas del periodo cargado (se filtra por semana de `weekStart` en el análisis de anestesia). */
@@ -322,19 +331,20 @@ function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
-function turnMapTooltip(cell: TurnProfitabilityCell): string {
+function turnMapTooltip(cell: TurnProfitabilityCell, cfg: EconomicConfig): string {
   const minP = Math.round(cell.minutosProgramados);
+  const umbralMin = cfg.umbralMinutosRentableMapa;
   const base =
     cell.estado === "sin_actividad"
-      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP}`
-      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(costeAperturaTurnoDefault)} · Min. programados: ${minP}`;
-  if (cell.estado !== "sin_actividad" && minP > 0 && minP < 120) {
+      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`
+      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(cell.costeApertura)} · Min. programados: ${minP} · Pacientes: ${cell.pacientes}`;
+  if (cell.estado !== "sin_actividad" && minP > 0 && minP < umbralMin) {
     return `${base}. Turno con baja carga asistencial (dimensionamiento).`;
   }
   return base;
 }
 
-function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
+function TurnMapHalfCell({ cell, economicConfig }: { cell: TurnProfitabilityCell; economicConfig: EconomicConfig }) {
   const label = cell.shift === "morning" ? "M" : "T";
   const marginText =
     cell.estado === "sin_actividad"
@@ -343,10 +353,17 @@ function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
   const minProgLine =
     cell.estado === "sin_actividad" ? "—" : `${Math.round(cell.minutosProgramados)} min`;
   const pacText =
-    cell.estado === "sin_actividad" ? "Sin act." : `${cell.pacientes} pac.`;
+    cell.estado === "sin_actividad" ? (
+      <>
+        <span className="sm:hidden">Sin prog.</span>
+        <span className="hidden sm:inline">Sin programación</span>
+      </>
+    ) : (
+      `${cell.pacientes} pac.`
+    );
   return (
     <div
-      title={turnMapTooltip(cell)}
+      title={turnMapTooltip(cell, economicConfig)}
       className={`flex min-h-[4.25rem] flex-col justify-center gap-0.5 rounded border px-1 py-1 text-center text-[10px] leading-tight sm:text-[11px] ${turnMapHalfCellClasses(cell.estado)}`}
     >
       <span className="font-bold">{label}</span>
@@ -360,22 +377,35 @@ function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
 export function CuadroDeMando({
   slotViews,
   weekStart,
+  onWeekStartChange,
   lastReservationsFetchedAt,
   resources,
   reservations = [],
   anesthetistAssignments = [],
   usersDirectory = [],
 }: CuadroDeMandoProps) {
+  const [economicConfig, setEconomicConfig] = useState<EconomicConfig>(() => ({ ...DEFAULT_ECONOMIC_CONFIG }));
+  const [economicImportError, setEconomicImportError] = useState<string | null>(null);
+  const economicFileInputRef = useRef<HTMLInputElement>(null);
+
+  const isCustomEconomicConfig = useMemo(
+    () => !economicConfigsEqual(economicConfig, DEFAULT_ECONOMIC_CONFIG),
+    [economicConfig]
+  );
+
   const totals = useMemo(() => aggregateOperatingRoomMetrics(slotViews), [slotViews]);
   const rows = useMemo(
     () => breakdownByResourceAndShift(slotViews, resources),
     [slotViews, resources]
   );
 
-  const economicTotals = useMemo(() => aggregateEconomicMetrics(slotViews), [slotViews]);
+  const economicTotals = useMemo(
+    () => aggregateEconomicMetrics(slotViews, economicConfig),
+    [slotViews, economicConfig]
+  );
   const economicRows = useMemo(
-    () => breakdownEconomicByResourceAndShift(slotViews, resources),
-    [slotViews, resources]
+    () => breakdownEconomicByResourceAndShift(slotViews, resources, economicConfig),
+    [slotViews, resources, economicConfig]
   );
 
   const economicCardTone = (t: EconomicMetricsTotals): "positive" | "warning" | "negative" | "neutral" => {
@@ -408,12 +438,14 @@ export function CuadroDeMando({
   }, [weekStart]);
 
   const turnProfitabilityMap = useMemo(
-    () => buildTurnProfitabilityMap(
-      slotViews,
-      resources.map((r) => r.id),
-      weekDatesIso
-    ),
-    [slotViews, resources, weekDatesIso]
+    () =>
+      buildTurnProfitabilityMap(
+        slotViews,
+        resources.map((r) => r.id),
+        weekDatesIso,
+        economicConfig
+      ),
+    [slotViews, resources, weekDatesIso, economicConfig]
   );
 
   const turnEfficiencyTrends = useMemo(() => {
@@ -454,22 +486,157 @@ export function CuadroDeMando({
       minute: "2-digit",
     }) ?? null;
 
+  const isCurrentCalendarWeek = useMemo(
+    () => toISODate(getWeekStart(weekStart)) === toISODate(getWeekStart(new Date())),
+    [weekStart]
+  );
+
+  const shiftWeek = (deltaWeeks: number) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + 7 * deltaWeeks);
+    onWeekStartChange?.(getWeekStart(d));
+  };
+
+  const goToCurrentWeek = () => onWeekStartChange?.(getWeekStart(new Date()));
+
   return (
-    <section className="space-y-4">
-      <div>
+    <section className="space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-lg font-bold text-[var(--ribera-navy)]">Cuadro de mando</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Métricas derivadas de la misma vista de huecos que el calendario, para la semana que empieza el{" "}
-          <span className="font-medium text-slate-800">{toISODate(weekStart)}</span> ({weekRangeLabel}).
+          Semana del <span className="font-medium text-slate-800">{toISODate(weekStart)}</span> · {weekRangeLabel}.
         </p>
         {updatedAt ? (
           <p className="mt-1 text-xs text-slate-500">Datos actualizados a las {updatedAt}.</p>
         ) : (
           <p className="mt-1 text-xs text-slate-500">Aún no hay marca de hora de actualización (sin refresco de reservas).</p>
         )}
+        {onWeekStartChange ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => shiftWeek(-1)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              Semana anterior
+            </button>
+            <button
+              type="button"
+              onClick={goToCurrentWeek}
+              disabled={isCurrentCalendarWeek}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Semana actual
+            </button>
+            <button
+              type="button"
+              onClick={() => shiftWeek(1)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              Semana siguiente
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="rounded-xl border-2 border-[var(--ribera-navy)]/25 bg-white p-4 shadow-md">
+        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
+        <p className="mt-1 text-sm text-slate-700">
+          Vista semanal para decidir qué turnos abrir, reagrupar o revisar.
+        </p>
+        <p className="mt-1 text-xs text-slate-600">
+          <span className="font-medium text-slate-800">M = mañana, T = tarde.</span> No es la rentabilidad marginal por
+          sala: aquí se imputa un coste fijo de apertura por turno con actividad (
+          {formatEur(economicConfig.costeAperturaTurnoDefault)}).
+        </p>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />{" "}
+            Verde: rentable (margen ≥ {formatEur(economicConfig.umbralRentable)} y ≥{" "}
+            {economicConfig.umbralMinutosRentableMapa} min programados)
+          </span>
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-amber-200 bg-amber-50" /> Ámbar:
+            dudoso o infrautilizado (menos de {economicConfig.umbralMinutosRentableMapa} min con margen no negativo, u
+            otros casos intermedios)
+          </span>
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Rojo: no
+            rentable
+          </span>
+          <span>
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" /> Gris: sin
+            programación
+          </span>
+        </div>
+
+        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="sticky left-0 z-10 border-r border-slate-200 bg-slate-50 px-2 py-2 font-semibold text-slate-700">
+                  Recurso
+                </th>
+                {weekDayColumns.map((col) => (
+                  <th key={col.iso} className="min-w-[5.5rem] px-1 py-2 text-center font-semibold text-slate-600">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {resources.map((resource) => (
+                <tr key={resource.id} className="border-b border-slate-100 last:border-0">
+                  <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-2 py-2 font-medium text-slate-800">
+                    {resource.label}
+                  </td>
+                  {weekDayColumns.map((col) => (
+                    <td key={`${resource.id}-${col.iso}`} className="align-top p-1">
+                      <div className="flex flex-col gap-1">
+                        <TurnMapHalfCell
+                          economicConfig={economicConfig}
+                          cell={
+                            turnProfitabilityMap.get(profitabilityTurnKey(col.iso, resource.id, "morning"))!
+                          }
+                        />
+                        <TurnMapHalfCell
+                          economicConfig={economicConfig}
+                          cell={
+                            turnProfitabilityMap.get(profitabilityTurnKey(col.iso, resource.id, "afternoon"))!
+                          }
+                        />
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-3">
+        <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
+        <p className="mt-1 text-xs text-slate-600">
+          Alertas derivadas del mapa y umbrales de minutos y margen (misma semana que arriba).
+        </p>
+        {turnEfficiencyTrends.length === 0 ? (
+          <p className="mt-2 text-xs text-slate-500">Sin alertas para esta semana según los criterios configurados.</p>
+        ) : (
+          <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-slate-700">
+            {turnEfficiencyTrends.map((line, i) => (
+              <li key={`${line}-${i}`}>{line}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Métricas operativas</h3>
+        <p className="mt-1 text-xs text-slate-600">
+          Misma vista de huecos que el calendario para la semana seleccionada.
+        </p>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         {metricsCards(totals).map((c) => (
           <SummaryCard key={c.label} label={c.label} value={c.value} />
         ))}
@@ -515,31 +682,41 @@ export function CuadroDeMando({
           </tbody>
         </table>
       </div>
+      </div>
 
       <div className="border-t border-slate-200 pt-6">
-        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Rentabilidad estimada</h3>
-        <p className="mt-1 text-xs text-slate-600">
-          Simulación basada en supuestos configurables. No sustituye facturación real.
+        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Rentabilidad marginal (estimada)</h3>
+        <p className="mt-1 text-sm text-slate-700">
+          Por recurso y turno: ingresos y costes marginales sobre la actividad programada (sin coste fijo de apertura del
+          mapa superior).
         </p>
-        <p className="mt-1 text-xs text-slate-600">
-          Modelo marginal por sala/recurso: estima ingresos y costes asociados a la actividad programada, no a la
-          apertura estructural del turno.
-        </p>
-        <p className="mt-1 text-xs text-slate-600">
-          Costes estimados incluyen coste marginal de quirófano, personal estimado sobre minutos programados y coste
-          variable por paciente.
-        </p>
-        <p className="mt-1 text-xs text-slate-600">
-          Los desbordes se muestran como ineficiencia operativa, pero no se facturan dos veces en esta simulación.
-        </p>
-        <p className="mt-1 text-xs text-slate-600">
-          El análisis de equipos compartidos se tratará en una sección separada para no mezclar costes de sala con
-          costes de personal compartido.
-        </p>
-        <p className="mt-1 text-xs text-slate-600">
-          El semáforo (rentable / ajustado / no rentable) es un indicador <span className="font-medium">económico estimado</span>;
-          no es valoración clínica ni calidad asistencial.
-        </p>
+        <details className="mt-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+          <summary className="cursor-pointer text-sm font-semibold text-[var(--ribera-navy)]">
+            Metodología y limitaciones
+          </summary>
+          <div className="mt-2 space-y-2 border-t border-slate-200 pt-2 text-xs text-slate-600">
+            <p>Simulación basada en supuestos configurables. No sustituye facturación real.</p>
+            <p>
+              Modelo marginal por sala/recurso: estima ingresos y costes asociados a la actividad programada, no a la
+              apertura estructural del turno.
+            </p>
+            <p>
+              Costes estimados incluyen coste marginal de quirófano, personal estimado sobre minutos programados y
+              coste variable por paciente.
+            </p>
+            <p>
+              Los desbordes se muestran como ineficiencia operativa, pero no se facturan dos veces en esta simulación.
+            </p>
+            <p>
+              El análisis de equipos compartidos se tratará en una sección separada para no mezclar costes de sala con
+              costes de personal compartido.
+            </p>
+            <p>
+              El semáforo (rentable / ajustado / no rentable) es un indicador{" "}
+              <span className="font-medium">económico estimado</span>; no es valoración clínica ni calidad asistencial.
+            </p>
+          </div>
+        </details>
 
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <EconomicSummaryCard label="Ingresos estimados" value={formatEur(economicTotals.ingresosEstimados)} />
@@ -590,97 +767,66 @@ export function CuadroDeMando({
             </tbody>
           </table>
         </div>
+      </div>
 
-        <div className="mt-8 border-t border-slate-200 pt-6">
-          <h3 className="text-base font-bold text-[var(--ribera-navy)]">Mapa de rentabilidad de turnos</h3>
-          <p className="mt-1 text-xs text-slate-600">
-            Este mapa muestra la rentabilidad estimada de abrir cada turno, incluyendo costes estructurales.
-          </p>
-          <p className="mt-1 text-xs text-slate-600">
-            No es la misma métrica que la rentabilidad marginal por sala: aquí se imputa un coste de apertura de turno.
-          </p>
-          <p className="mt-1 text-xs text-slate-600">
-            Coste fijo estimado por turno ({formatEur(costeAperturaTurnoDefault)}): anestesista laboral, enfermería de
-            quirófano, URPA y esterilización. No incluye todavía variaciones por dotación real.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-            <span>
-              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />{" "}
-              Verde: rentable (margen ≥ 300 € y ≥ 120 min programados)
-            </span>
-            <span>
-              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-amber-200 bg-amber-50" /> Ámbar:
-              dudoso o infrautilizado (menos de 120 min con margen no negativo, u otros casos intermedios)
-            </span>
-            <span>
-              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Rojo: no
-              rentable
-            </span>
-            <span>
-              <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" /> Gris:
-              sin actividad
-            </span>
-          </div>
-
-          <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="sticky left-0 z-10 border-r border-slate-200 bg-slate-50 px-2 py-2 font-semibold text-slate-700">
-                    Recurso
-                  </th>
-                  {weekDayColumns.map((col) => (
-                    <th key={col.iso} className="min-w-[5.5rem] px-1 py-2 text-center font-semibold text-slate-600">
-                      {col.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {resources.map((resource) => (
-                  <tr key={resource.id} className="border-b border-slate-100 last:border-0">
-                    <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-2 py-2 font-medium text-slate-800">
-                      {resource.label}
-                    </td>
-                    {weekDayColumns.map((col) => (
-                      <td key={`${resource.id}-${col.iso}`} className="align-top p-1">
-                        <div className="flex flex-col gap-1">
-                          <TurnMapHalfCell
-                            cell={
-                              turnProfitabilityMap.get(
-                                profitabilityTurnKey(col.iso, resource.id, "morning")
-                              )!
-                            }
-                          />
-                          <TurnMapHalfCell
-                            cell={
-                              turnProfitabilityMap.get(
-                                profitabilityTurnKey(col.iso, resource.id, "afternoon")
-                              )!
-                            }
-                          />
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-3">
-            <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
-            {turnEfficiencyTrends.length === 0 ? (
-              <p className="mt-2 text-xs text-slate-500">Sin alertas para esta semana según los criterios configurados.</p>
-            ) : (
-              <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-slate-700">
-                {turnEfficiencyTrends.map((line, i) => (
-                  <li key={`${line}-${i}`}>{line}</li>
-                ))}
-              </ul>
-            )}
-          </div>
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-base font-bold text-[var(--ribera-navy)]">Configuración económica</h3>
+        <p className="mt-1 text-xs text-slate-600">
+          Supuestos numéricos del modelo (mapa y rentabilidad marginal). Importe un Excel con hoja «configuracion» o use
+          los valores por defecto.
+        </p>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <input
+            ref={economicFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              setEconomicImportError(null);
+              try {
+                const buffer = await file.arrayBuffer();
+                const parsed = parseEconomicConfigFromXlsx(buffer);
+                if (!parsed.ok) {
+                  setEconomicImportError(parsed.error);
+                  return;
+                }
+                setEconomicConfig(parsed.config);
+              } catch {
+                setEconomicImportError("No se pudo leer el archivo.");
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => economicFileInputRef.current?.click()}
+            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+          >
+            Importar configuración económica
+          </button>
+          {isCustomEconomicConfig ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              <span className="font-medium">Configuración económica activa</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setEconomicConfig({ ...DEFAULT_ECONOMIC_CONFIG });
+                  setEconomicImportError(null);
+                }}
+                className="rounded border border-emerald-600/40 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100"
+              >
+                Reset
+              </button>
+            </div>
+          ) : null}
         </div>
+        {economicImportError ? (
+          <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            {economicImportError}
+          </p>
+        ) : null}
       </div>
 
       <div className="border-t border-slate-200 pt-6">

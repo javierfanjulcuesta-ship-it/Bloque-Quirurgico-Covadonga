@@ -1,29 +1,15 @@
 /**
  * FASE 1 — Rentabilidad estimada (simulación cliente).
- * Supuestos temporales; no es facturación real.
+ * Parámetros numéricos vía `EconomicConfig` (por defecto `DEFAULT_ECONOMIC_CONFIG` en economicConfig.ts).
  */
 
+import type { EconomicConfig } from "@/lib/metrics/economicConfig";
+import { DEFAULT_ECONOMIC_CONFIG } from "@/lib/metrics/economicConfig";
 import type { ResourceId, Shift, SlotView } from "@/lib/types";
 import { getSlotDurationMinutes } from "@/lib/utils";
 
-// --- Constantes temporales (editables en fases posteriores) ---
-export const ingresoPorMinutoDefault = 18;
-export const ingresoPorMinutoPrivado = 30;
-export const ingresoPorMinutoSespa = 12;
-export const costeQuirofanoPorMinuto = 8;
-export const costePersonalPorMinuto = 6;
-export const costeVariablePorPaciente = 120;
-export const umbralMargenAjustado = 300;
-
-/**
- * Mapa de rentabilidad de turnos — coste estructural fijo por turno con actividad (MVP simplificado).
- * Desglose orientativo: enfermería quirófano 200 € + anestesista laboral 500 € + enfermería URPA 200 € + TCAE esterilización 100 € = 1.000 €.
- */
-export const costeAperturaTurnoDefault = 1000;
-export const umbralRentable = 300;
-export const umbralNoRentable = -200;
-/** Minutos programados mínimos para considerar el turno bien dimensionado (mapa de rentabilidad). */
-export const umbralMinutosRentableMapa = 120;
+export type { EconomicConfig } from "@/lib/metrics/economicConfig";
+export { DEFAULT_ECONOMIC_CONFIG } from "@/lib/metrics/economicConfig";
 
 export type EstadoRentabilidad = "rentable" | "ajustado" | "no_rentable";
 
@@ -74,19 +60,21 @@ function slotCapMinutes(v: SlotView): number {
 }
 
 /** Tarifa simulada €/min (misma lógica que rentabilidad marginal). */
-export function ingresoPorMinutoDesdeSlot(v: Pick<SlotView, "hasPrivate" | "hasSespa">): number {
-  if (v.hasPrivate) return ingresoPorMinutoPrivado;
-  if (v.hasSespa) return ingresoPorMinutoSespa;
-  return ingresoPorMinutoDefault;
+export function ingresoPorMinutoDesdeSlot(
+  v: Pick<SlotView, "hasPrivate" | "hasSespa">,
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+): number {
+  if (v.hasPrivate) return cfg.ingresoPorMinutoPrivado;
+  if (v.hasSespa) return cfg.ingresoPorMinutoSespa;
+  return cfg.ingresoPorMinutoDefault;
 }
 
-function ingresoPorMinutoSlot(v: SlotView): number {
-  return ingresoPorMinutoDesdeSlot(v);
-}
-
-export function estadoRentabilidadDesdeMargen(margen: number): EstadoRentabilidad {
+export function estadoRentabilidadDesdeMargen(
+  margen: number,
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+): EstadoRentabilidad {
   if (margen < 0) return "no_rentable";
-  if (margen < umbralMargenAjustado) return "ajustado";
+  if (margen < cfg.umbralMargenAjustado) return "ajustado";
   return "rentable";
 }
 
@@ -106,7 +94,7 @@ function emptyEconomicAcc(): EconomicAcc {
   };
 }
 
-function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc): void {
+function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc, cfg: EconomicConfig): void {
   const cap = slotCapMinutes(v);
   if (v.status === "blocked") {
     return;
@@ -123,13 +111,13 @@ function accumulateEconomicFromSlot(v: SlotView, acc: EconomicAcc): void {
     return;
   }
 
-  const rate = ingresoPorMinutoSlot(v);
+  const rate = ingresoPorMinutoDesdeSlot(v, cfg);
   acc.ingresosEstimados += used * rate;
   acc.programmedMinutes += used;
   acc.pacientesContados += v.patientsCount ?? 0;
 }
 
-function finalizeEconomicAcc(acc: EconomicAcc): EconomicMetricsTotals {
+function finalizeEconomicAcc(acc: EconomicAcc, cfg: EconomicConfig): EconomicMetricsTotals {
   const minutosOcupacionBase = acc.programmedMinutes;
 
   // Modelo de rentabilidad marginal:
@@ -137,9 +125,9 @@ function finalizeEconomicAcc(acc: EconomicAcc): EconomicMetricsTotals {
   // no sobre capacidad disponible. Esto permite analizar eficiencia operativa
   // sin contaminar con costes estructurales del turno.
   const costesEstimados =
-    minutosOcupacionBase * costeQuirofanoPorMinuto +
-    minutosOcupacionBase * costePersonalPorMinuto +
-    acc.pacientesContados * costeVariablePorPaciente;
+    minutosOcupacionBase * cfg.costeQuirofanoPorMinuto +
+    minutosOcupacionBase * cfg.costePersonalPorMinuto +
+    acc.pacientesContados * cfg.costeVariablePorPaciente;
 
   const margenEstimado = acc.ingresosEstimados - costesEstimados;
   const margenPorMinutoProgramado =
@@ -150,7 +138,7 @@ function finalizeEconomicAcc(acc: EconomicAcc): EconomicMetricsTotals {
     costesEstimados,
     margenEstimado,
     margenPorMinutoProgramado,
-    estadoRentabilidad: estadoRentabilidadDesdeMargen(margenEstimado),
+    estadoRentabilidad: estadoRentabilidadDesdeMargen(margenEstimado, cfg),
     minutosOcupacion: minutosOcupacionBase,
     availableMinutes: acc.availableMinutes,
     pacientesContados: acc.pacientesContados,
@@ -158,18 +146,22 @@ function finalizeEconomicAcc(acc: EconomicAcc): EconomicMetricsTotals {
 }
 
 /** Agregado global de rentabilidad estimada a partir de `slotViews`. */
-export function aggregateEconomicMetrics(slotViews: SlotView[]): EconomicMetricsTotals {
+export function aggregateEconomicMetrics(
+  slotViews: SlotView[],
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
+): EconomicMetricsTotals {
   const acc = emptyEconomicAcc();
   for (const v of slotViews) {
-    accumulateEconomicFromSlot(v, acc);
+    accumulateEconomicFromSlot(v, acc, cfg);
   }
-  return finalizeEconomicAcc(acc);
+  return finalizeEconomicAcc(acc, cfg);
 }
 
 /** Desglose por recurso y turno (mismo universo que la tabla operativa). */
 export function breakdownEconomicByResourceAndShift(
   slotViews: SlotView[],
-  resources: { id: ResourceId; label: string }[]
+  resources: { id: ResourceId; label: string }[],
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
 ): EconomicMetricsRow[] {
   const rows: EconomicMetricsRow[] = [];
   const shifts: Shift[] = ["morning", "afternoon"];
@@ -178,9 +170,9 @@ export function breakdownEconomicByResourceAndShift(
       const acc = emptyEconomicAcc();
       for (const v of slotViews) {
         if (v.resourceId !== r.id || v.shift !== shift) continue;
-        accumulateEconomicFromSlot(v, acc);
+        accumulateEconomicFromSlot(v, acc, cfg);
       }
-      const totals = finalizeEconomicAcc(acc);
+      const totals = finalizeEconomicAcc(acc, cfg);
       rows.push({
         resourceId: r.id,
         resourceLabel: r.label,
@@ -205,14 +197,15 @@ type TurnAgg = { ingresosTurno: number; minutosProgramados: number; pacientes: n
 export function buildTurnProfitabilityMap(
   slotViews: SlotView[],
   resourceIds: ResourceId[],
-  weekDates: string[]
+  weekDates: string[],
+  cfg: EconomicConfig = DEFAULT_ECONOMIC_CONFIG
 ): Map<string, TurnProfitabilityCell> {
   const raw = new Map<string, TurnAgg>();
   for (const v of slotViews) {
     if (v.status !== "occupied" || v.isOverflowContinuation) continue;
     const key = profitabilityTurnKey(v.date, v.resourceId, v.shift);
     const used = v.usedMinutes ?? 0;
-    const rate = ingresoPorMinutoDesdeSlot(v);
+    const rate = ingresoPorMinutoDesdeSlot(v, cfg);
     let acc = raw.get(key);
     if (!acc) {
       acc = { ingresosTurno: 0, minutosProgramados: 0, pacientes: 0 };
@@ -232,18 +225,18 @@ export function buildTurnProfitabilityMap(
         const key = profitabilityTurnKey(date, resourceId, shift);
         const acc = raw.get(key) ?? { ingresosTurno: 0, minutosProgramados: 0, pacientes: 0 };
         const hayActividad = acc.pacientes > 0 || acc.minutosProgramados > 0;
-        const costeApertura = hayActividad ? costeAperturaTurnoDefault : 0;
+        const costeApertura = hayActividad ? cfg.costeAperturaTurnoDefault : 0;
         const margenTurno = acc.ingresosTurno - costeApertura;
 
         const minProg = acc.minutosProgramados;
         let estado: TurnOpeningEstado;
         if (!hayActividad) {
           estado = "sin_actividad";
-        } else if (margenTurno < umbralNoRentable) {
+        } else if (margenTurno < cfg.umbralNoRentable) {
           estado = "no_rentable";
-        } else if (margenTurno >= umbralRentable && minProg >= umbralMinutosRentableMapa) {
+        } else if (margenTurno >= cfg.umbralRentable && minProg >= cfg.umbralMinutosRentableMapa) {
           estado = "rentable";
-        } else if (margenTurno >= 0 && minProg < umbralMinutosRentableMapa) {
+        } else if (margenTurno >= 0 && minProg < cfg.umbralMinutosRentableMapa) {
           estado = "infrautilizado";
         } else {
           estado = "dudoso";

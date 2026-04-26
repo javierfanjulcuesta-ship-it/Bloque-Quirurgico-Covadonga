@@ -29,6 +29,7 @@ import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
 import { modoDemo } from "@/lib/config";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
+import { getDisplaySurgeonName } from "@/lib/surgeonTitular";
 import { ProgramarPacientesModal, type SlotSelection } from "@/components/cirujano/ProgramarPacientesModal";
 import { DaySlotGrid } from "@/components/calendar/DaySlotGrid";
 import type { SlotView } from "@/lib/types";
@@ -621,7 +622,7 @@ export default function CirujanoPage() {
       .filter((r) => (showAll || r.surgeonId === user?.id) && (r.patients?.length ?? 0) > 0)
       .forEach((r) => {
         const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
-        const surgeonName = usersDir.find((u) => u.id === r.surgeonId)?.name ?? r.surgeonId;
+        const surgeonName = getDisplaySurgeonName(r, usersDir);
         r.patients.forEach((p) => {
           list.push({
             date: r.date,
@@ -1314,6 +1315,7 @@ export default function CirujanoPage() {
 <ProgramarPacientesModal
         slots={selectedSlots}
         schedulerRole={user.role}
+        schedulerSelfDisplayName={user?.name ?? ""}
         onSave={handleProgramarSave}
         onClose={() => setShowProgramarModal(false)}
         saving={savingReservations}

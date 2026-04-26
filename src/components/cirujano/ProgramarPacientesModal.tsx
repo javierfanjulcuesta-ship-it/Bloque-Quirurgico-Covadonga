@@ -11,6 +11,7 @@ import {
   SOLICITUD_RECURSOS_OPTIONS,
   LARGE_BLOCK_REMAINDER_MINUTES,
 } from "@/lib/constants";
+import { resolveTitularSchedulerForm } from "@/lib/surgeonTitular";
 import type { Shift } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
 import { hasGestorAccess, type UserRole } from "@/lib/types";
@@ -33,6 +34,8 @@ export interface ProgramarPacientesModalProps {
   slots: SlotSelection[];
   /** Rol del usuario que abre el modal (gestor / gestor-anestesista → cirujano responsable obligatorio). */
   schedulerRole?: UserRole | string;
+  /** Nombre visible del cirujano en sesión (titular interno del hueco cuando no es gestor). */
+  schedulerSelfDisplayName?: string;
   onSave: (
     patients: Omit<PatientInBlock, "id" | "order">[],
     meta?: { responsibleSurgeonId: string; externalSurgeonName?: string }
@@ -66,7 +69,9 @@ interface QuickParseResult {
   parseMode: "empty" | "heuristic" | "structured-medical";
   detectedSurgeonId?: string;
   detectedSurgeonName?: string;
-  /** Primera línea (Dr/Dra…) cuando no hubo match en directorio: referencia libre del titular. */
+  /** Titular extraído de línea Dr./Dra. cuando no hay usuario en directorio (p. ej. "Dr Pérez"). */
+  externalSurgeonName?: string;
+  /** @deprecated usar externalSurgeonName; se mantiene para mensajes legacy. */
   titularFreeLine?: string;
   detectedProcedureCount: number;
   detectedFundingLabels: string[];
@@ -130,6 +135,45 @@ function detectProcedureCount(text: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** Línea completa opcionalmente con viñeta: "- Dr Pérez", "Dra García López", "Dr. Pérez" */
+const TITULAR_SURGEON_LINE = /^(-\s*)?(Dr\.?|Dra\.?)\s+(.+)$/i;
+
+function tryParseTitularSurgeonLine(raw: string): { displayName: string; surfaceForMatch: string } | null {
+  const trimmed = raw.trim();
+  const m = trimmed.match(TITULAR_SURGEON_LINE);
+  if (!m || !String(m[3] ?? "").trim()) return null;
+  const honor = String(m[2]).replace(/\.$/, "").trim();
+  const rest = String(m[3]).trim();
+  const displayName = `${honor} ${rest}`.replace(/\s+/g, " ");
+  return { displayName, surfaceForMatch: rest };
+}
+
+function matchSurgeonToDirectory(
+  surfaceForMatch: string,
+  displayName: string,
+  surgeons: Array<{ id: string; name: string }>
+): { id: string; name: string } | undefined {
+  const surgeonNorm = normalizeLower(surfaceForMatch);
+  const displayNorm = normalizeLower(displayName);
+  return surgeons.find((s) => {
+    const nameNorm = normalizeLower(s.name);
+    return (
+      nameNorm.includes(surgeonNorm) ||
+      surgeonNorm.includes(nameNorm) ||
+      nameNorm.split(" ").some((part) => part.length > 2 && surgeonNorm.includes(part)) ||
+      displayNorm.includes(nameNorm) ||
+      nameNorm.includes(displayNorm)
+    );
+  });
+}
+
+/** Línea `- …` que describe un procedimiento, no un titular Dr./Dra. */
+function isProcedureBulletLine(line: string): boolean {
+  if (!/^\s*-\s*/.test(line)) return false;
+  const after = line.replace(/^\s*-\s*/, "").trim();
+  return tryParseTitularSurgeonLine(after) === null;
+}
+
 function parseStructuredMedicalText(
   text: string,
   surgeons: Array<{ id: string; name: string }>
@@ -139,21 +183,20 @@ function parseStructuredMedicalText(
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length === 0) return null;
-  const firstLine = lines[0] ?? "";
-  const isStructuredHeader = /^(dr|dra)\.?\s+/i.test(firstLine);
-  const procedureLines = lines.filter((line) => /^\s*-\s*/.test(line));
-  if (!isStructuredHeader || procedureLines.length === 0) return null;
 
-  const surgeonDisplayName = firstLine.replace(/^(dr|dra)\.?\s*/i, "").trim();
-  const surgeonNorm = normalizeLower(surgeonDisplayName);
-  const surgeonMatch = surgeons.find((s) => {
-    const nameNorm = normalizeLower(s.name);
-    return (
-      nameNorm.includes(surgeonNorm) ||
-      surgeonNorm.includes(nameNorm) ||
-      nameNorm.split(" ").some((part) => part.length > 2 && surgeonNorm.includes(part))
-    );
-  });
+  let titularDisplay: string | undefined;
+  let titularMatch: { id: string; name: string } | undefined;
+  for (const line of lines) {
+    const parsedTit = tryParseTitularSurgeonLine(line);
+    if (!parsedTit) continue;
+    titularDisplay = parsedTit.displayName;
+    titularMatch = matchSurgeonToDirectory(parsedTit.surfaceForMatch, parsedTit.displayName, surgeons);
+    break;
+  }
+
+  const procedureLines = lines.filter(isProcedureBulletLine);
+  if (!titularDisplay && procedureLines.length === 0) return null;
+  if (!titularDisplay && procedureLines.length > 0) return null;
 
   const parsedPatients: Partial<PatientInBlock>[] = [];
   const fundingLabels = new Set<string>();
@@ -191,13 +234,15 @@ function parseStructuredMedicalText(
     });
   }
 
-  const titularFreeLine = !surgeonMatch && firstLine.trim().length > 0 ? firstLine.trim() : undefined;
+  const externalSurgeonName = titularMatch ? undefined : titularDisplay;
+  const titularFreeLine = externalSurgeonName;
 
   return {
     parsedPatients,
     parseMode: "structured-medical",
-    detectedSurgeonId: surgeonMatch?.id,
-    detectedSurgeonName: surgeonMatch?.name ?? surgeonDisplayName,
+    detectedSurgeonId: titularMatch?.id,
+    detectedSurgeonName: titularMatch?.name ?? titularDisplay,
+    externalSurgeonName,
     titularFreeLine,
     detectedProcedureCount: parsedPatients.length,
     detectedFundingLabels: Array.from(fundingLabels),
@@ -227,22 +272,61 @@ function parseQuickBlockText(
   const structured = parseStructuredMedicalText(clean, surgeons);
   if (structured) return structured;
 
-  const lower = normalizeLower(clean);
+  const linesHeuristic = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   let detectedSurgeonId: string | undefined;
   let detectedSurgeonName: string | undefined;
-  for (const s of surgeons) {
-    const nameNorm = normalizeLower(s.name);
-    const parts = nameNorm.split(" ").filter(Boolean);
-    const surname = parts.length > 1 ? parts[parts.length - 1] : nameNorm;
-    if (lower.includes(nameNorm) || (surname.length > 3 && lower.includes(surname))) {
-      detectedSurgeonId = s.id;
-      detectedSurgeonName = s.name;
-      break;
+  let externalSurgeonName: string | undefined;
+  let titularFreeLine: string | undefined;
+
+  for (const line of linesHeuristic) {
+    const tit = tryParseTitularSurgeonLine(line);
+    if (!tit) continue;
+    const surgeonHit = matchSurgeonToDirectory(tit.surfaceForMatch, tit.displayName, surgeons);
+    if (surgeonHit) {
+      detectedSurgeonId = surgeonHit.id;
+      detectedSurgeonName = surgeonHit.name;
+    } else {
+      externalSurgeonName = tit.displayName;
+      titularFreeLine = tit.displayName;
+    }
+    break;
+  }
+
+  const nonTitularLines = linesHeuristic.filter((ln) => tryParseTitularSurgeonLine(ln) === null);
+  const bodyForHeuristic = nonTitularLines.join("\n").trim();
+
+  if (!bodyForHeuristic && (externalSurgeonName || detectedSurgeonId)) {
+    return {
+      parsedPatients: [],
+      parseMode: "heuristic",
+      detectedSurgeonId,
+      detectedSurgeonName,
+      externalSurgeonName,
+      titularFreeLine,
+      detectedProcedureCount: 0,
+      detectedFundingLabels: [],
+      recognizedAbbreviations: [],
+      normalizedTerms: [],
+      noiseRemovedCount: 0,
+    };
+  }
+
+  const lower = normalizeLower(bodyForHeuristic || clean);
+  if (!detectedSurgeonId && !externalSurgeonName) {
+    for (const s of surgeons) {
+      const nameNorm = normalizeLower(s.name);
+      const parts = nameNorm.split(" ").filter(Boolean);
+      const surname = parts.length > 1 ? parts[parts.length - 1] : nameNorm;
+      if (lower.includes(nameNorm) || (surname.length > 3 && lower.includes(surname))) {
+        detectedSurgeonId = s.id;
+        detectedSurgeonName = s.name;
+        break;
+      }
     }
   }
 
   let noiseRemovedCount = 0;
-  let sanitized = clean;
+  let sanitized = bodyForHeuristic || clean;
   for (const np of NOISE_PATTERNS) {
     const matches = sanitized.match(np);
     if (matches?.length) noiseRemovedCount += matches.length;
@@ -269,10 +353,11 @@ function parseQuickBlockText(
     return normalized.replace(/\s{2,}/g, " ").trim();
   }).filter((part) => {
     const p = normalizeLower(part);
+    if (tryParseTitularSurgeonLine(part)) return false;
     return !p.startsWith("dr ") && !p.startsWith("dra ") && !p.includes("mutual") && !p.includes("mutua") && !p.includes("sespa") && !p.includes("privado");
   });
 
-  const targetCount = detectProcedureCount(clean);
+  const targetCount = detectProcedureCount(bodyForHeuristic || clean);
   const inferredCount = targetCount > 0 ? targetCount : Math.max(1, likelyProcedures.length);
 
   const entities = Array.from(
@@ -282,7 +367,7 @@ function parseQuickBlockText(
         .filter(Boolean)
     )
   );
-  const mainFunding = entities[0] ?? detectFundingFromText(clean);
+  const mainFunding = entities[0] ?? detectFundingFromText(bodyForHeuristic || clean);
 
   const parsedPatients: Partial<PatientInBlock>[] = [];
   for (let i = 0; i < inferredCount; i++) {
@@ -301,6 +386,8 @@ function parseQuickBlockText(
     parseMode: "heuristic",
     detectedSurgeonId,
     detectedSurgeonName,
+    externalSurgeonName,
+    titularFreeLine,
     detectedProcedureCount: inferredCount,
     detectedFundingLabels: entities,
     recognizedAbbreviations: Array.from(recognizedAbbreviations),
@@ -309,7 +396,14 @@ function parseQuickBlockText(
   };
 }
 
-export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
+export function ProgramarPacientesModal({
+  slots,
+  schedulerRole,
+  schedulerSelfDisplayName,
+  onSave,
+  onClose,
+  saving = false,
+}: ProgramarPacientesModalProps) {
   const [patients, setPatients] = useState<Partial<PatientInBlock>[]>([{}]);
   const [quickMode, setQuickMode] = useState(false);
   const [quickText, setQuickText] = useState("");
@@ -329,6 +423,24 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
       return r === "cirujano" || r === "endoscopista";
     });
   }, []);
+
+  const titularResolved = useMemo(
+    () =>
+      resolveTitularSchedulerForm({
+        responsibleSurgeonId,
+        externalSurgeonDisplayName,
+        surgeonCandidates: responsibleSurgeonCandidates,
+        requireInternalUser: requireResponsibleSurgeon,
+        schedulerSelfDisplayName,
+      }),
+    [
+      responsibleSurgeonId,
+      externalSurgeonDisplayName,
+      responsibleSurgeonCandidates,
+      requireResponsibleSurgeon,
+      schedulerSelfDisplayName,
+    ]
+  );
 
   const addPatient = () => setPatients((prev) => [...prev, {}]);
   const removePatient = (index: number) => setPatients((prev) => prev.filter((_, i) => i !== index));
@@ -353,32 +465,42 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
     [quickText, responsibleSurgeonCandidates]
   );
 
+  const applyTitularFromParsed = (parsed: QuickParseResult) => {
+    const ext = parsed.externalSurgeonName ?? parsed.titularFreeLine;
+    if (parsed.detectedSurgeonId) {
+      setResponsibleSurgeonId(parsed.detectedSurgeonId);
+      setExternalSurgeonDisplayName(ext?.trim() ? ext : "");
+    } else if (ext?.trim()) {
+      setExternalSurgeonDisplayName(ext.trim());
+      if (requireResponsibleSurgeon) setResponsibleSurgeonId("");
+    }
+  };
+
   const applyQuickParse = () => {
     setQuickParseMessage(null);
     const parsed = parseQuickBlockText(quickText, responsibleSurgeonCandidates);
-    if (parsed.parsedPatients.length === 0) {
+    const hasTitular =
+      !!(parsed.detectedSurgeonId || parsed.externalSurgeonName?.trim() || parsed.titularFreeLine?.trim());
+    if (parsed.parsedPatients.length === 0 && !hasTitular) {
       setQuickParseMessage("No se pudo interpretar el texto. Puede seguir en edición manual.");
       return;
     }
-    setPatients(parsed.parsedPatients);
-    if (parsed.parseMode === "structured-medical") {
-      if (requireResponsibleSurgeon) {
-        if (parsed.detectedSurgeonId) {
-          setResponsibleSurgeonId(parsed.detectedSurgeonId);
-          setExternalSurgeonDisplayName("");
-        } else if (parsed.titularFreeLine) {
-          setExternalSurgeonDisplayName(parsed.titularFreeLine);
-          setResponsibleSurgeonId("");
-        }
-      } else if (parsed.titularFreeLine) {
-        setExternalSurgeonDisplayName(parsed.titularFreeLine);
-      }
+    if (parsed.parsedPatients.length > 0) {
+      setPatients(parsed.parsedPatients);
     }
-    const titularMsg =
-      parsed.parseMode === "structured-medical" && parsed.titularFreeLine
-        ? `Titular (referencia libre): ${parsed.titularFreeLine}. Elija un cirujano del listado para el registro del sistema si aplica.`
-        : `Detectado: ${parsed.detectedSurgeonName ?? "cirujano no identificado en texto"}`;
-    const detectedSummary = `${titularMsg} · ${parsed.detectedProcedureCount} procedimiento(s)`;
+    if (parsed.parseMode === "structured-medical" || (parsed.parseMode === "heuristic" && hasTitular)) {
+      applyTitularFromParsed(parsed);
+    }
+    const freeName = parsed.externalSurgeonName ?? parsed.titularFreeLine;
+    const titularMsg = parsed.detectedSurgeonId
+      ? `Cirujano asignado (usuario del sistema): ${parsed.detectedSurgeonName ?? ""}.`
+      : freeName
+        ? `Cirujano libre (texto): ${freeName}. Si es gestor, elija además un usuario interno para el registro del hueco.`
+        : `Titular: ${parsed.detectedSurgeonName ?? "no identificado en texto"}.`;
+    const detectedSummary =
+      parsed.parsedPatients.length === 0 && hasTitular
+        ? `${titularMsg} Añada líneas "- procedimiento: entidad" o use edición manual para los pacientes.`
+        : `${titularMsg} · ${parsed.detectedProcedureCount} procedimiento(s)`;
     setQuickParseMessage(
       `${detectedSummary}. Se han generado ${parsed.parsedPatients.length} paciente(s). Revise procedimiento, entidad y nº historia (obligatorios); el resto es opcional${
         parsed.normalizedTerms.some((t) => t.includes("(revisar)")) ? " (hay abreviaturas ambiguas marcadas para revisar)." : "."
@@ -398,7 +520,7 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
       if (!responsibleSurgeonId.trim()) {
         setError(
           externalSurgeonDisplayName.trim()
-            ? "Hay nombre libre del titular pero falta el cirujano/endoscopista del listado (obligatorio para registrar la reserva a nombre interno)."
+            ? "Hay cirujano en texto libre, pero la API exige un cirujano/endoscopista interno del listado para el titular del hueco. Seleccione uno; el nombre libre se guardará en las notas."
             : "Seleccione el cirujano o endoscopista responsable del caso."
         );
         return;
@@ -416,7 +538,7 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
       : "";
     const notePrefix =
       refTitular && (!internalName || normalizeLower(refTitular) !== normalizeLower(internalName))
-        ? `[Titular ref.: ${refTitular}]\n`
+        ? `[Cirujano titular (texto libre): ${refTitular}]\n`
         : "";
     const withOrder: Omit<PatientInBlock, "id" | "order">[] = valid.map((p, i) => {
       const duration =
@@ -472,18 +594,37 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
         </p>
         <div className="mb-4 rounded-lg border border-[var(--ribera-navy)]/20 bg-white p-3 shadow-sm">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ribera-navy)]">
-            Titular de la intervención (defina una vez por bloque)
+            Cirujano titular (interno o externo)
           </p>
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-sm font-semibold text-slate-900">Cirujano titular</span>
+            <span className="text-sm text-slate-800">{titularResolved.displayName}</span>
+            {titularResolved.state === "empty" ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                Pendiente
+              </span>
+            ) : titularResolved.kind === "internal" ? (
+              <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                Usuario interno
+              </span>
+            ) : (
+              <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                Cirujano externo
+              </span>
+            )}
+          </div>
+          {titularResolved.externalNoteReference ? (
+            <p className="mb-3 text-xs text-slate-600">
+              <span className="font-medium text-slate-800">Referencia en notas (no sustituye al interno):</span>{" "}
+              {titularResolved.externalNoteReference}
+            </p>
+          ) : null}
           {requireResponsibleSurgeon && (
             <label className="block">
-              <span className="block text-sm font-medium text-gray-800">Cirujano / endoscopista interno *</span>
+              <span className="block text-sm font-medium text-gray-800">Usuario interno (registro en sistema) *</span>
               <select
                 value={responsibleSurgeonId}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setResponsibleSurgeonId(v);
-                  if (v.trim()) setExternalSurgeonDisplayName("");
-                }}
+                onChange={(e) => setResponsibleSurgeonId(e.target.value)}
                 className="mt-1 w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm"
                 required
               >
@@ -494,26 +635,24 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
                   </option>
                 ))}
               </select>
-              <span className="mt-1 block text-xs text-gray-600">La reserva quedará a nombre de este profesional en el sistema.</span>
+              <span className="mt-1 block text-xs text-gray-600">
+                Obligatorio para la API (`surgeonId`). Si difiere del nombre en notas, ambos se conservan.
+              </span>
             </label>
           )}
           <label className={`block ${requireResponsibleSurgeon ? "mt-3" : ""}`}>
-            <span className="block text-sm font-medium text-gray-700">Nombre libre del cirujano titular (opcional)</span>
+            <span className="block text-sm font-medium text-gray-700">Nombre en notas (titular externo)</span>
             <input
               type="text"
               value={externalSurgeonDisplayName}
-              onChange={(e) => {
-                const v = e.target.value;
-                setExternalSurgeonDisplayName(v);
-                if (v.trim() && requireResponsibleSurgeon) setResponsibleSurgeonId("");
-              }}
-              placeholder='Ej. Dr. Rojas (si no está en el listado o como referencia)'
+              onChange={(e) => setExternalSurgeonDisplayName(e.target.value)}
+              placeholder='Ej. Dr Pérez, Dra García López (también se detecta con "Convertir" desde líneas - Dr …)'
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             />
             <span className="mt-1 block text-xs text-gray-600">
               {requireResponsibleSurgeon
-                ? "Si escribe aquí, se vacía el desplegable (y al revés). El interno sigue siendo obligatorio para guardar; si el nombre libre no coincide con el elegido, se añadirá a las notas de cada paciente."
-                : "Se añadirá a las notas de cada paciente como referencia; el titular del hueco en sistema sigue siendo usted."}
+                ? "Opcional: cirujano no dado de alta o constancia adicional. Se guarda al inicio de las notas de cada paciente si no coincide con el usuario interno."
+                : "Opcional: se antepone a las notas; el hueco sigue registrado a su usuario en el sistema."}
             </span>
           </label>
         </div>
@@ -554,7 +693,7 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
               <textarea
                 value={quickText}
                 onChange={(e) => setQuickText(e.target.value)}
-                placeholder={`Ejemplo estructurado:\nDr Rojas\n- CAR: ASISA\n- CAR PRIVADO\n\nO sin dos puntos:\nDra Castellanos\n- FACO MAPFRE\n- PRP PRIVADO\n\nModo libre (heurístico): DR ROJAS 3 CAR mutual // PRP`}
+                placeholder={`Ejemplo estructurado:\nDr Rojas\n- CAR: ASISA\n- CAR PRIVADO\n\nCon viñeta en el titular:\n- Dr Pérez\n- FACO: MAPFRE\n\nO sin dos puntos:\nDra Castellanos\n- FACO MAPFRE\n- PRP PRIVADO\n\nModo libre (heurístico): DR ROJAS 3 CAR mutual // PRP`}
                 className="min-h-[110px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -562,8 +701,16 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
                 {quickParsedPreview.detectedFundingLabels.length > 0 && (
                   <StatusBadge tone="neutral">Entidad: {quickParsedPreview.detectedFundingLabels.join(", ")}</StatusBadge>
                 )}
-                {quickParsedPreview.detectedSurgeonName && (
-                  <StatusBadge tone="neutral">Cirujano: {quickParsedPreview.detectedSurgeonName}</StatusBadge>
+                {quickParsedPreview.detectedSurgeonId && quickParsedPreview.detectedSurgeonName && (
+                  <StatusBadge tone="success">
+                    Titular · Usuario interno: {quickParsedPreview.detectedSurgeonName}
+                  </StatusBadge>
+                )}
+                {(quickParsedPreview.externalSurgeonName ?? quickParsedPreview.titularFreeLine) &&
+                  !quickParsedPreview.detectedSurgeonId && (
+                  <StatusBadge tone="neutral">
+                    Titular · Cirujano externo: {quickParsedPreview.externalSurgeonName ?? quickParsedPreview.titularFreeLine}
+                  </StatusBadge>
                 )}
                 {quickParsedPreview.noiseRemovedCount > 0 && (
                   <StatusBadge tone="warning">Ruido limpiado: {quickParsedPreview.noiseRemovedCount}</StatusBadge>
