@@ -96,7 +96,7 @@ export function BloqueEstadoGrid({
     const base = "min-h-[44px] border p-1 text-xs transition " + (selected ? "ring-2 ring-[var(--ribera-red)] ring-offset-1 " : "");
     switch (state) {
       case "free":
-        return base + "bg-emerald-100 border-emerald-300 hover:bg-emerald-200 cursor-pointer";
+        return base + "cursor-pointer border-gray-300 bg-gray-100 hover:bg-gray-200";
       case "occupied-other":
         return base + "bg-red-100 border-red-300 cursor-default";
       case "reserved-mine":

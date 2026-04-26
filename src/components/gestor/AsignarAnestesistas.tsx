@@ -46,7 +46,7 @@ export interface SlotTurnDisplay {
 
 function assignmentCellSurfaceClasses(display: SlotTurnDisplay): string {
   if (display.patientLines.length === 0) return "";
-  if (display.fundingTone === "sespa") return "bg-sky-50/90 border-l-4 border-l-blue-600";
+  if (display.fundingTone === "sespa") return "border-l-4 border-l-red-600 bg-red-50/90";
   if (display.fundingTone === "private") return "bg-amber-50/90 border-l-4 border-l-amber-500";
   return "bg-slate-50/80 border-l-4 border-l-slate-300";
 }
@@ -387,7 +387,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                       <Fragment key={dateStr}>
                         <td className={`border-r border-gray-100 p-2 align-top${daySep} ${assignmentCellSurfaceClasses(morningSlot)}`}>
                           {morningSlot.hasSespa && (
-                            <p className="mb-1 text-[10px] font-medium text-blue-900">Requiere anestesista habilitado SESPA</p>
+                            <p className="mb-1 text-[10px] font-medium text-red-900">Requiere anestesista habilitado SESPA</p>
                           )}
                           {morningSlot.patientLines.length > 0 && (
                             <div className="mb-2 space-y-0.5 rounded border border-white/50 bg-white/50 px-1.5 py-1.5 text-[10px] leading-tight text-gray-800 shadow-sm">
@@ -447,7 +447,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                         </td>
                         <td className={`border-r border-gray-200 p-2 align-top${daySepTarde} ${assignmentCellSurfaceClasses(afternoonSlot)}`}>
                           {afternoonSlot.hasSespa && (
-                            <p className="mb-1 text-[10px] font-medium text-blue-900">Requiere anestesista habilitado SESPA</p>
+                            <p className="mb-1 text-[10px] font-medium text-red-900">Requiere anestesista habilitado SESPA</p>
                           )}
                           {afternoonSlot.patientLines.length > 0 && (
                             <div className="mb-2 space-y-0.5 rounded border border-white/50 bg-white/50 px-1.5 py-1.5 text-[10px] leading-tight text-gray-800 shadow-sm">
@@ -520,8 +520,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                   const fullShiftHasSespaA = slotHasSespa(reservations, dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, users);
                   return (
                     <Fragment key={dateStr}>
-                      <td className={`border-r border-amber-100 p-2 align-top${daySep} ${fullShiftHasSespaM ? "border-l-4 border-l-blue-600 bg-sky-50/40" : ""}`}>
-                        {fullShiftHasSespaM && <p className="mb-1 text-[10px] font-medium text-blue-900">Turno con SESPA</p>}
+                      <td className={`border-r border-amber-100 p-2 align-top${daySep} ${fullShiftHasSespaM ? "border-l-4 border-l-red-600 bg-red-50/50" : ""}`}>
+                        {fullShiftHasSespaM && <p className="mb-1 text-[10px] font-medium text-red-900">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "morning", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -555,8 +555,8 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           })()}
                         </select>
                       </td>
-                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde} ${fullShiftHasSespaA ? "border-l-4 border-l-blue-600 bg-sky-50/40" : ""}`}>
-                        {fullShiftHasSespaA && <p className="mb-1 text-[10px] font-medium text-blue-900">Turno con SESPA</p>}
+                      <td className={`border-r border-amber-200 p-2 align-top${daySepTarde} ${fullShiftHasSespaA ? "border-l-4 border-l-red-600 bg-red-50/50" : ""}`}>
+                        {fullShiftHasSespaA && <p className="mb-1 text-[10px] font-medium text-red-900">Turno con SESPA</p>}
                         <select
                           value={getAssignment(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT)}
                           onChange={(e) => handleAssignmentChange(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, e.target.value)}
@@ -601,50 +601,50 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
 
       {/* Consulta de preanestesia: solo lunes y jueves por la mañana */}
       <div className="mb-6">
-        <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-sky-900">
-          <span className="inline-flex h-8 w-1 rounded-full bg-sky-500" />
+        <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-gray-900">
+          <span className="inline-flex h-8 w-1 rounded-full bg-red-600" />
           Consulta de preanestesia
-          <span className="text-xs font-normal text-sky-700">(lun y jue, mañana · máx {PREANESTHESIA_MAX_PATIENTS} pacientes)</span>
+          <span className="text-xs font-normal text-gray-600">(lun y jue, mañana · máx {PREANESTHESIA_MAX_PATIENTS} pacientes)</span>
         </h3>
-        <div className="overflow-x-auto rounded-xl border-2 border-sky-200 bg-sky-50/70">
+        <div className="overflow-x-auto rounded-xl border-2 border-red-100 bg-red-50/70">
           <table className="w-full min-w-[640px] border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b-2 border-sky-200 bg-sky-100">
-                <th className="w-40 border-r-2 border-sky-200 p-3 font-semibold text-sky-900">Recurso</th>
+              <tr className="border-b-2 border-red-100 bg-red-100">
+                <th className="w-40 border-r-2 border-red-100 p-3 font-semibold text-gray-900">Recurso</th>
                 {weekDays.map((d, dayIndex) => (
-                  <th key={d.toISOString()} colSpan={2} className={`p-2 text-center font-semibold text-sky-900 ${dayIndex === 0 ? "border-r-2 border-sky-300" : "border-r-2 border-l-2 border-sky-300"}`}>
+                  <th key={d.toISOString()} colSpan={2} className={`p-2 text-center font-semibold text-gray-900 ${dayIndex === 0 ? "border-r-2 border-red-200" : "border-r-2 border-l-2 border-red-200"}`}>
                     {d.toLocaleDateString("es-ES", { weekday: "short" })} {d.getDate()}/{d.getMonth() + 1}
                   </th>
                 ))}
               </tr>
-              <tr className="border-b border-sky-200 bg-sky-50">
-                <th className="border-r-2 border-sky-200 p-2 text-xs text-sky-800">—</th>
+              <tr className="border-b border-red-100 bg-red-50">
+                <th className="border-r-2 border-red-100 p-2 text-xs text-gray-800">—</th>
                 {weekDays.map((d, dayIndex) => (
                   <Fragment key={d.toISOString()}>
-                    <th className={`w-32 p-2 text-center text-xs font-medium text-sky-800 ${dayIndex === 0 ? "border-r border-sky-200" : "border-r border-l-2 border-sky-300"}`}>Mañana</th>
-                    <th className={`w-32 p-2 text-center text-xs text-sky-600 ${dayIndex < weekDays.length - 1 ? "border-r-2 border-sky-300" : "border-r-2 border-sky-200"}`}>Tarde</th>
+                    <th className={`w-32 p-2 text-center text-xs font-medium text-gray-800 ${dayIndex === 0 ? "border-r border-red-100" : "border-r border-l-2 border-red-200"}`}>Mañana</th>
+                    <th className={`w-32 p-2 text-center text-xs text-gray-600 ${dayIndex < weekDays.length - 1 ? "border-r-2 border-red-200" : "border-r-2 border-red-100"}`}>Tarde</th>
                   </Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
               <tr className="border-b-0">
-                <td className="border-r-2 border-sky-200 bg-sky-100/80 p-3 font-medium text-sky-900">
+                <td className="border-r-2 border-red-100 bg-red-100/80 p-3 font-medium text-gray-900">
                   Consulta preanestesia
                 </td>
                 {weekDays.map((d, dayIndex) => {
                   const dateStr = toISODate(d);
                   const showConsulta = isMondayOrThursday(d);
-                  const daySep = dayIndex > 0 ? " border-l-2 border-sky-300" : "";
-                  const daySepTarde = dayIndex < weekDays.length - 1 ? " border-r-2 border-sky-300" : "";
+                  const daySep = dayIndex > 0 ? " border-l-2 border-red-200" : "";
+                  const daySepTarde = dayIndex < weekDays.length - 1 ? " border-r-2 border-red-200" : "";
                   return (
                     <Fragment key={dateStr}>
-                      <td className={`border-r border-sky-100 p-2 align-top${daySep}`}>
+                      <td className={`border-r border-red-50 p-2 align-top${daySep}`}>
                         {showConsulta ? (
                           <select
                             value={getAssignment(dateStr, "morning", "consulta-preanestesia" as SlotKey)}
                             onChange={(e) => handleAssignmentChange(dateStr, "morning", "consulta-preanestesia" as SlotKey, e.target.value)}
-                            className="w-full min-w-[110px] rounded-lg border-2 border-sky-300 bg-white px-2 py-2 text-xs font-medium text-sky-900 shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                            className="w-full min-w-[110px] rounded-lg border-2 border-red-200 bg-white px-2 py-2 text-xs font-medium text-gray-900 shadow-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                             title="Sugerencias: disponibles primero (sin no-disponibilidad)"
                           >
                             <option value=""> </option>
@@ -675,11 +675,11 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                             })()}
                           </select>
                         ) : (
-                          <span className="block py-2 text-center text-xs text-sky-500/80">—</span>
+                          <span className="block py-2 text-center text-xs text-gray-500/80">—</span>
                         )}
                       </td>
-                      <td className={`border-r-2 border-sky-200 p-2${daySepTarde}`}>
-                        <span className="block py-2 text-center text-xs text-sky-500/80">—</span>
+                      <td className={`border-r-2 border-red-100 p-2${daySepTarde}`}>
+                        <span className="block py-2 text-center text-xs text-gray-500/80">—</span>
                       </td>
                     </Fragment>
                   );
@@ -692,7 +692,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
 
       <div className="mb-4 flex flex-col gap-1 text-xs text-gray-500">
         <p className="flex items-center gap-2">
-          <span className="inline-block h-4 w-6 rounded border-2 border-blue-500 bg-sky-50 align-middle" />
+          <span className="inline-block h-4 w-6 rounded border-2 border-red-500 bg-red-50 align-middle" />
           Caso con paciente SESPA (entidadFinanciadora SESPA).
         </p>
         <p className="flex items-center gap-2">
@@ -715,7 +715,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
           {saving ? "Guardando…" : "Guardar asignaciones"}
         </button>
         {saveSuccess ? (
-          <span className="text-sm font-medium text-emerald-800">Asignaciones guardadas correctamente.</span>
+          <span className="text-sm font-medium text-gray-800">Asignaciones guardadas correctamente.</span>
         ) : null}
         {(saveError || sespaError) ? (
           <p className="text-sm font-medium text-rose-800" role="alert">

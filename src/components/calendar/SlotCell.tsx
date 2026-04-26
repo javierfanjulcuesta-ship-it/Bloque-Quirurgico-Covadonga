@@ -52,7 +52,7 @@ export function SlotCell({
   const baseTone = isBlocked
     ? "text-slate-700"
     : isFree
-      ? "text-emerald-900"
+      ? "text-gray-800"
       : isReserved
         ? "text-amber-900"
         : "text-slate-900";
@@ -66,12 +66,14 @@ export function SlotCell({
     : hasPrivate
       ? "slot-private"
       : isFree
-        ? "slot-free hover:bg-emerald-200"
+        ? "slot-free hover:bg-gray-200"
         : isReserved
-          ? "slot-reserved hover:bg-amber-200"
-          : hasSespa
-            ? "slot-sespa"
-            : "slot-occupied";
+          ? "slot-reserved hover:bg-amber-100"
+          : isOccupied && slot.isOverflowContinuation
+            ? "slot-overflow hover:brightness-[1.02]"
+            : hasSespa
+              ? "slot-sespa"
+              : "slot-occupied hover:brightness-[1.01]";
   const [menuOpen, setMenuOpen] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -158,7 +160,8 @@ export function SlotCell({
         ${clickable ? "cursor-pointer" : ""}
         ${disabled ? "cursor-not-allowed opacity-60" : ""}
         ${compact ? "min-h-[48px] min-w-[48px] p-2 text-xs sm:min-h-0 sm:min-w-0 sm:p-1.5" : "p-2 text-sm"}
-        ${selected ? "ring-2 ring-[var(--ribera-red)]/80 ring-offset-1" : ""}
+        ${selected ? "ring-2 ring-red-500/90 ring-offset-1" : ""}
+        ${slot.overflowContinuationConflict && !slot.isOverflowContinuation ? "slot-overflow-conflict" : ""}
         ${assignedToMe ? "ring-2 ring-amber-500/90 ring-offset-1 border-amber-300 bg-amber-50/85" : ""}
         ${clickable ? "hover:shadow-sm hover:brightness-[1.01]" : ""}
       `}
@@ -177,7 +180,7 @@ export function SlotCell({
             {slot.blockReason === "URGENT_RESERVED" ? "Urgencias" : "Cerrado"}
           </p>
         )}
-        {isFree && <p className="text-[11px] font-semibold text-emerald-900">Libre</p>}
+        {isFree && <p className="text-[11px] font-semibold text-gray-800">Libre</p>}
         {isReserved && (
           <>
             <p className="text-[11px] font-semibold text-amber-900" title="Reserva existente. Pulse para programar pacientes.">
@@ -198,7 +201,7 @@ export function SlotCell({
                 : (isMyOccupied ? "Sus pacientes" : "Ocupado")}
             </p>
             {slot.overflowContinuationConflict && !slot.isOverflowContinuation && (
-              <p className="text-[10px] font-medium text-rose-800" title={tooltipTitle}>
+              <p className="text-[10px] font-semibold text-red-900" title={tooltipTitle}>
                 Solapamiento
               </p>
             )}

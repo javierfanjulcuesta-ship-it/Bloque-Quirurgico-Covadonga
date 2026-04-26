@@ -92,8 +92,8 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
         Los pacientes programados esta semana se asignan automáticamente a la consulta (lunes y jueves, mañana). Puede marcar como &quot;no apto&quot; a un paciente; se abrirá el correo para notificar al cirujano que lo programó.
       </p>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50/50 px-4 py-3">
-        <span className="font-medium text-sky-900">Semana</span>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-100 bg-red-50/50 px-4 py-3">
+        <span className="font-medium text-gray-900">Semana</span>
         <WeekNavigation weekStart={weekStart} onWeekChange={setWeekStart} canGoNext={true} />
       </div>
 

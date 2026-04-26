@@ -13,11 +13,11 @@ export function AppNavTab({
   emphasized?: boolean;
 }) {
   const base =
-    "rounded-lg px-3.5 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ribera-navy)] focus-visible:ring-offset-2";
+    "rounded-lg px-3.5 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2";
   const state = active
-    ? "bg-[var(--ribera-navy)] text-white shadow-sm"
+    ? "bg-red-600 text-white shadow-sm hover:bg-red-700"
     : emphasized
-      ? "border-2 border-[var(--ribera-navy)]/30 bg-white text-[var(--ribera-navy)] hover:bg-slate-50"
+      ? "border-2 border-red-200 bg-white text-red-800 hover:bg-red-50"
       : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50";
   return (
     <button type="button" onClick={onClick} className={`${base} ${state}`}>

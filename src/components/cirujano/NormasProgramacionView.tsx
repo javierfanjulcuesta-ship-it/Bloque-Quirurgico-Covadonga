@@ -75,8 +75,8 @@ export function NormasProgramacionView() {
           </div>
         ))}
       </div>
-      <div className="mt-6 rounded-lg border border-sky-100 bg-sky-50/50 p-4">
-        <p className="text-sm text-sky-800">
+      <div className="mt-6 rounded-lg border border-red-100 bg-red-50/50 p-4">
+        <p className="text-sm text-gray-800">
           <strong>En caso de duda,</strong> puede contactar con la coordinación en la pestaña &quot;Contactar coordinación&quot;.
         </p>
       </div>

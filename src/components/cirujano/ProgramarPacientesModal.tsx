@@ -529,7 +529,7 @@ export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose,
             </div>
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
               <p className="font-medium text-slate-500">Disponible</p>
-              <p className={`text-base font-semibold ${remainderMinutes > 0 ? "text-emerald-700" : "text-slate-700"}`}>{remainderMinutes} min</p>
+              <p className={`text-base font-semibold ${remainderMinutes > 0 ? "text-gray-800" : "text-slate-700"}`}>{remainderMinutes} min</p>
             </div>
           </div>
           <p className="mt-2 text-xs text-slate-600">

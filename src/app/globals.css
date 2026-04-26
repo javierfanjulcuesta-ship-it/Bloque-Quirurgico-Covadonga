@@ -1,19 +1,21 @@
 @import "tailwindcss";
 
-/* Grupo Ribera: identidad corporativa (rojo y blanco) */
+/* Grupo Ribera: identidad corporativa (rojo #E30613, grises, blanco) */
 :root {
-  --background: #f9fafb;
+  --background: #ffffff;
   --foreground: #1e293b;
-  --ribera-red: #c41e3a;
-  --ribera-red-dark: #9e1830;
-  --ribera-red-light: #e8a0a8;
-  --ribera-red-soft: #f5d5d9;
-  --ribera-red-pale: #fdf2f3;
-  --ribera-navy: #1a365d;
+  --ribera-red: #e30613;
+  --ribera-red-dark: #b8050f;
+  --ribera-red-light: #f87171;
+  --ribera-red-soft: #fecaca;
+  --ribera-red-pale: #fef2f2;
+  --ribera-navy: #1e293b;
   --ribera-gray-light: #f1f5f9;
-  --slot-free: #d1fae5;
-  --slot-reserved: #fef3c7;
-  --slot-occupied: #f1f5f9;
+  --slot-free: #f3f4f6;
+  --slot-reserved: #fefce8;
+  --slot-occupied: #fee2e2;
+  --slot-overflow: #fecaca;
+  --slot-overflow-conflict: #f87171;
   --slot-private: #fed7aa;
 }
 
@@ -38,9 +40,9 @@ body {
 /* Tarjetas y botones Grupo Ribera */
 .card-ribera {
   border-radius: 0.75rem;
-  border: 1px solid #f3f4f6;
+  border: 1px solid #e5e7eb;
   background: #fff;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
 }
 
 .btn-ribera-primary {
@@ -94,24 +96,34 @@ body {
 }
 
 .btn-ribera-secondary:focus {
-  outline: 2px solid var(--ribera-navy);
+  outline: 2px solid var(--ribera-red);
   outline-offset: 2px;
 }
 
-/* Huecos del calendario: libre (verde), reservado (ámbar), ocupado (rojo) */
+/* Huecos del calendario: libre (gris), reservado (ámbar), ocupado (rojo suave), desborde y conflicto (rojos más marcados) */
 .slot-free {
-  background-color: #ecfdf3;
-  border: 1px solid #9fe3c2;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
 }
 
 .slot-reserved {
-  background-color: #fff7e1;
-  border: 1px solid #f4c96a;
+  background-color: #fefce8;
+  border: 1px solid #facc15;
 }
 
 .slot-occupied {
-  background-color: #f8fafc;
-  border: 1px solid #cdd8e5;
+  background-color: #fee2e2;
+  border: 1px solid #fecaca;
+}
+
+.slot-overflow {
+  background-color: #fecaca;
+  border: 1px solid #f87171;
+}
+
+.slot-overflow-conflict {
+  background-color: #fca5a5;
+  border: 2px solid #dc2626;
 }
 
 .slot-private {
@@ -120,8 +132,8 @@ body {
 }
 
 .slot-sespa {
-  background-color: #fdebf4;
-  border: 1px solid #f2a7cb;
+  background-color: #ffe4e6;
+  border: 1px solid #fb7185;
 }
 
 /* Utilidades de color Ribera (para uso con Tailwind o en línea) */

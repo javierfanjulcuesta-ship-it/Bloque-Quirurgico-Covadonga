@@ -355,7 +355,7 @@ export default function CalendarioPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
+    <div className="min-h-screen bg-white p-4">
       <div className="mx-auto max-w-7xl space-y-6">
         <PageShellHeader
           title={screen.title}
@@ -567,7 +567,7 @@ export default function CalendarioPage() {
                     {reservationsLoading ? "Cargando…" : "Refrescar calendario"}
                   </button>
                   {viewTab === "calendario" && lastReservationsFetchedAt ? (
-                    <p className="mt-2 text-xs text-emerald-700">
+                    <p className="mt-2 text-xs text-gray-600">
                       Calendario actualizado a las{" "}
                       {lastReservationsFetchedAt.toLocaleTimeString("es-ES", {
                         hour: "2-digit",

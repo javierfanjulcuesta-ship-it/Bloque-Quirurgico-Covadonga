@@ -306,7 +306,7 @@ export function ListaUsuariosGestor() {
                         type="button"
                         onClick={() => handleResendInvitation(u)}
                         disabled={!!actionLoading}
-                        className="rounded border border-blue-600 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                        className="rounded border border-red-600 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                         title="Reenviar correo con nueva contraseña temporal"
                       >
                         {isActionLoading(u.id, "resend") ? "…" : "Reenviar invitación"}
@@ -326,7 +326,7 @@ export function ListaUsuariosGestor() {
                           <button
                             type="button"
                             onClick={() => navigator.clipboard?.writeText(passwordShown.password)}
-                            className="text-xs text-blue-600 hover:underline"
+                            className="text-xs text-red-600 hover:underline"
                           >
                             Copiar
                           </button>

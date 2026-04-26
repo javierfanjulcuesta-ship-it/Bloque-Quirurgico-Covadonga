@@ -168,13 +168,13 @@ export default function HomePage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg flex-col justify-center px-4 py-8">
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg flex-col justify-center bg-white px-4 py-8">
       {authUser && (
-        <div className="mb-4 w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center lg:text-left">
-          <p className="text-sm font-medium text-green-800">
+        <div className="mb-4 w-full rounded-xl border border-gray-200 bg-red-50/60 p-4 text-center lg:text-left">
+          <p className="text-sm font-medium text-gray-900">
             Sesión iniciada como <strong>{authUser.name}</strong>.
           </p>
-          <p className="mt-1 text-xs text-green-700">{roleWorkspaceHint}</p>
+          <p className="mt-1 text-xs text-gray-600">{roleWorkspaceHint}</p>
           <div className="mt-2 flex flex-wrap justify-center gap-2 lg:justify-start">
             <button type="button" onClick={goToPanel} className="btn-ribera-primary">
               Ir al panel
@@ -198,14 +198,14 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <div className="card-ribera w-full p-7 md:p-8">
+      <div className="w-full rounded-xl border border-gray-200 bg-white p-7 shadow-sm md:p-8">
         <div className="mb-2 flex flex-col items-center">
           <img
-            src="/qxflow-logo.png"
+            src="/qxflow-logo-ribera.png"
             alt="QxFlow"
-            style={{ width: "160px", height: "auto" }}
+            style={{ width: "150px", height: "auto" }}
           />
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="mt-2 text-sm text-gray-500">
             Coordinación del bloque quirúrgico
           </p>
         </div>
@@ -213,7 +213,7 @@ export default function HomePage() {
         {modoDemo && (
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Modo demo</p>
         )}
-        <h2 className="mb-4 text-center text-xl font-semibold tracking-tight text-slate-800">
+        <h2 className="mb-4 text-center text-lg font-semibold tracking-tight text-gray-800">
           {modoDemo ? "Acceso de demostración" : "Iniciar sesión"}
         </h2>
         {modoDemo ? (
@@ -303,7 +303,7 @@ export default function HomePage() {
                 type="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 required
                 autoComplete="email"
               />
@@ -314,7 +314,7 @@ export default function HomePage() {
                 type="password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 required
                 autoComplete="current-password"
               />
@@ -325,7 +325,7 @@ export default function HomePage() {
             <button
               type="submit"
               disabled={loginLoading}
-              className="w-full rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:from-blue-600 hover:to-cyan-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-lg bg-red-600 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loginLoading ? "Iniciando sesión…" : "Iniciar sesión"}
             </button>
@@ -350,7 +350,7 @@ export default function HomePage() {
               El mensaje llegará a los gestores del bloque quirúrgico.
             </p>
             {contactSent ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-gray-800">
                 <p className="font-medium">Mensaje enviado correctamente.</p>
                 <button
                   type="button"

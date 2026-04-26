@@ -166,9 +166,11 @@ export function DaySlotGrid({
       </div>
       <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2">
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-emerald-200 bg-[var(--slot-free)]" /> Libre</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-gray-300 bg-[var(--slot-free)]" /> Libre</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-amber-300 bg-[var(--slot-reserved)]" /> Reservado</li>
-          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-slate-200 bg-[var(--slot-occupied)]" /> Ocupado</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-red-200 bg-[var(--slot-occupied)]" /> Ocupado</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-red-400 bg-[var(--slot-overflow)]" /> Continuación (desborde)</li>
+          <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-red-700 bg-[var(--slot-overflow-conflict)]" /> Conflicto / solapamiento</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-gray-400 bg-gray-200" /> Cerrado/Urgencias</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-orange-300 bg-[var(--slot-private)]" /> Privado</li>
           <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-6 rounded border border-rose-400 bg-rose-100" /> SESPA</li>

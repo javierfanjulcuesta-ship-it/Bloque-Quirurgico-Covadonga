@@ -345,7 +345,7 @@ function UnderutilizedWeekPanel({
             const sugPhrase = holguraSuggestionPhrase(b.minutesFree);
             const isTop = index === 0;
             const accentBorder = isTop
-              ? "border-l-emerald-800"
+              ? "border-l-red-700"
               : sugLevel === "medium"
                 ? "border-l-slate-600"
                 : "border-l-amber-600";
@@ -353,7 +353,7 @@ function UnderutilizedWeekPanel({
               <li
                 key={b.firstReservationId}
                 className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200/70 border-l-4 bg-white/90 py-2.5 pl-3 pr-3 text-sm shadow-sm ${accentBorder} ${
-                  isTop ? "bg-emerald-50/40" : ""
+                  isTop ? "bg-red-50/50" : ""
                 }`}
               >
                 <div className="min-w-0 flex-1 space-y-0.5">
@@ -380,7 +380,7 @@ function UnderutilizedWeekPanel({
                   </p>
                   <p className={`text-amber-950/90 tabular-nums ${isTop ? "text-sm" : "text-xs"}`}>
                     ~
-                    <strong className={isTop ? "text-base text-emerald-950" : ""}>{b.minutesFree} min</strong> libres ·{" "}
+                    <strong className={isTop ? "text-base text-gray-900" : ""}>{b.minutesFree} min</strong> libres ·{" "}
                     {b.slotSpan} tramo{b.slotSpan === 1 ? "" : "s"} · {b.patientCount} paciente
                     {b.patientCount === 1 ? "" : "s"}
                   </p>

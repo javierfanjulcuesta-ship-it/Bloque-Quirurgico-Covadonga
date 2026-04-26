@@ -413,7 +413,7 @@ export function MiProgramacion({ anesthetistId, reservations: propReservations }
       </div>
 
       {(assignmentsLoading || reservationsLoading) ? (
-        <p className="rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-gray-800">
           Cargando asignaciones y reservas…
         </p>
       ) : (

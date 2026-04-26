@@ -821,7 +821,7 @@ export default function CirujanoPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
+    <div className="min-h-screen bg-white p-4">
       <div className="mx-auto max-w-7xl space-y-4">
         <PageShellHeader
           title={screen.title}
@@ -897,29 +897,29 @@ export default function CirujanoPage() {
         />
 
         {user && (user.role === "cirujano" || user.role === "endoscopista") && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mb-6">
+          <div className="mb-6 rounded-xl border border-red-100 bg-red-50/80 p-4">
 
             <div className="flex justify-between items-center cursor-pointer"
                  onClick={() => setShowNormas(!showNormas)}>
 
               <div>
-                <h3 className="text-base font-semibold text-blue-900">
+                <h3 className="text-base font-semibold text-gray-900">
                   Normas de programación del bloque
                 </h3>
                 {!showNormas && (
-                  <p className="text-xs text-blue-700 mt-1">
+                  <p className="mt-1 text-xs text-gray-600">
                     Plazos, cierre semanal, liberación automática y tiempos mínimos.
                   </p>
                 )}
               </div>
 
-              <span className="text-blue-700 text-sm">
+              <span className="text-sm font-medium text-red-700">
                 {showNormas ? "Ocultar" : "Ver normas"}
               </span>
             </div>
 
             {showNormas && (
-              <div className="mt-4 text-sm text-blue-900 whitespace-pre-line leading-relaxed">
+              <div className="mt-4 whitespace-pre-line text-sm leading-relaxed text-gray-800">
                 {NORMAS_PROGRAMACION_BLOQUE}
               </div>
             )}
@@ -1069,7 +1069,7 @@ export default function CirujanoPage() {
                                     notes: patient.notes ?? "",
                                   })
                                 }
-                                className="rounded border border-blue-300 bg-blue-50 min-h-10 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                                className="min-h-10 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-100"
                               >
                                 Editar
                               </button>
@@ -1225,7 +1225,7 @@ export default function CirujanoPage() {
                 ) : null}
               </div>
             ) : (
-              <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+              <div className="mb-4 rounded-lg border border-red-100 bg-red-50/90 p-3 text-sm text-gray-800">
                 Reserva sin pacientes: se anula solo este tramo reservado.
               </div>
             )}
@@ -1272,7 +1272,7 @@ export default function CirujanoPage() {
             </p>
             <p className="mb-3 rounded-md bg-slate-50 px-2 py-1.5 font-mono text-xs text-slate-800">{cancelConfirm.slotDescriptor}</p>
             {cancelConfirm.isLastPatient && (
-              <div className={`mb-4 rounded-lg border p-3 text-sm ${cancelConfirm.retentionAllowed ? "border-sky-200 bg-sky-50 text-sky-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <div className={`mb-4 rounded-lg border p-3 text-sm ${cancelConfirm.retentionAllowed ? "border-red-100 bg-red-50 text-gray-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 {cancelConfirm.retentionAllowed
                   ? "Es el último paciente de este tramo: el hueco seguirá reservado (sin pacientes) para poder programar otro caso."
                   : "Es el último paciente y ha pasado el cierre de programación: el hueco de este tramo pasará a bolsa común."}
