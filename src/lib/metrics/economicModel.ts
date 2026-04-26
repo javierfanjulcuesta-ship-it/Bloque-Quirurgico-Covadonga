@@ -22,10 +22,17 @@ export const umbralMargenAjustado = 300;
 export const costeAperturaTurnoDefault = 1000;
 export const umbralRentable = 300;
 export const umbralNoRentable = -200;
+/** Minutos programados mínimos para considerar el turno bien dimensionado (mapa de rentabilidad). */
+export const umbralMinutosRentableMapa = 120;
 
 export type EstadoRentabilidad = "rentable" | "ajustado" | "no_rentable";
 
-export type TurnOpeningEstado = "sin_actividad" | "rentable" | "dudoso" | "no_rentable";
+export type TurnOpeningEstado =
+  | "sin_actividad"
+  | "rentable"
+  | "dudoso"
+  | "infrautilizado"
+  | "no_rentable";
 
 export interface TurnProfitabilityCell {
   date: string;
@@ -228,13 +235,16 @@ export function buildTurnProfitabilityMap(
         const costeApertura = hayActividad ? costeAperturaTurnoDefault : 0;
         const margenTurno = acc.ingresosTurno - costeApertura;
 
+        const minProg = acc.minutosProgramados;
         let estado: TurnOpeningEstado;
         if (!hayActividad) {
           estado = "sin_actividad";
-        } else if (margenTurno >= umbralRentable) {
-          estado = "rentable";
         } else if (margenTurno < umbralNoRentable) {
           estado = "no_rentable";
+        } else if (margenTurno >= umbralRentable && minProg >= umbralMinutosRentableMapa) {
+          estado = "rentable";
+        } else if (margenTurno >= 0 && minProg < umbralMinutosRentableMapa) {
+          estado = "infrautilizado";
         } else {
           estado = "dudoso";
         }

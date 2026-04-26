@@ -318,8 +318,20 @@ const shiftLabel: Record<string, string> = { morning: "Mañana", afternoon: "Tar
 function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
   if (estado === "sin_actividad") return "border-slate-200 bg-slate-50 text-slate-500";
   if (estado === "rentable") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (estado === "dudoso") return "border-amber-200 bg-amber-50 text-amber-900";
+  if (estado === "dudoso" || estado === "infrautilizado") return "border-amber-200 bg-amber-50 text-amber-900";
   return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function turnMapTooltip(cell: TurnProfitabilityCell): string {
+  const minP = Math.round(cell.minutosProgramados);
+  const base =
+    cell.estado === "sin_actividad"
+      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${minP}`
+      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(costeAperturaTurnoDefault)} · Min. programados: ${minP}`;
+  if (cell.estado !== "sin_actividad" && minP > 0 && minP < 120) {
+    return `${base}. Turno con baja carga asistencial (dimensionamiento).`;
+  }
+  return base;
 }
 
 function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
@@ -328,18 +340,17 @@ function TurnMapHalfCell({ cell }: { cell: TurnProfitabilityCell }) {
     cell.estado === "sin_actividad"
       ? "—"
       : `${cell.margenTurno >= 0 ? "+" : ""}${formatEur(cell.margenTurno).replace("−", "-")}`;
+  const minProgLine =
+    cell.estado === "sin_actividad" ? "—" : `${Math.round(cell.minutosProgramados)} min`;
   const pacText =
     cell.estado === "sin_actividad" ? "Sin act." : `${cell.pacientes} pac.`;
-  const tip =
-    cell.estado === "sin_actividad"
-      ? `Ingresos: ${formatEur(cell.ingresosTurno)} · Min. programados: ${Math.round(cell.minutosProgramados)}`
-      : `Ingresos estimados: ${formatEur(cell.ingresosTurno)} · Coste apertura estimado: ${formatEur(costeAperturaTurnoDefault)} · Min. programados: ${Math.round(cell.minutosProgramados)}`;
   return (
     <div
-      title={tip}
-      className={`flex min-h-[3.25rem] flex-col justify-center gap-0.5 rounded border px-1 py-1 text-center text-[10px] leading-tight sm:text-[11px] ${turnMapHalfCellClasses(cell.estado)}`}
+      title={turnMapTooltip(cell)}
+      className={`flex min-h-[4.25rem] flex-col justify-center gap-0.5 rounded border px-1 py-1 text-center text-[10px] leading-tight sm:text-[11px] ${turnMapHalfCellClasses(cell.estado)}`}
     >
       <span className="font-bold">{label}</span>
+      <span className="text-[9px] font-normal opacity-90 sm:text-[10px]">{minProgLine}</span>
       <span className="tabular-nums font-semibold">{marginText}</span>
       <span className="opacity-90">{pacText}</span>
     </div>
@@ -404,6 +415,27 @@ export function CuadroDeMando({
     ),
     [slotViews, resources, weekDatesIso]
   );
+
+  const turnEfficiencyTrends = useMemo(() => {
+    const labelById = new Map(resources.map((r) => [r.id, r.label]));
+    const lines: string[] = [];
+    for (const c of turnProfitabilityMap.values()) {
+      if (c.estado === "sin_actividad") continue;
+      const lab = labelById.get(c.resourceId) ?? c.resourceId;
+      const turno = c.shift === "morning" ? "Mañana" : "Tarde";
+      const prefix = `${lab}, ${c.date} · ${turno}`;
+      if (c.minutosProgramados > 0 && c.minutosProgramados < 60) {
+        lines.push(`${prefix}: infrautilización severa`);
+      }
+      if (c.pacientes === 1) {
+        lines.push(`${prefix}: reagrupar`);
+      }
+      if (c.margenTurno < 0) {
+        lines.push(`${prefix}: no rentable`);
+      }
+    }
+    return lines;
+  }, [turnProfitabilityMap, resources]);
 
   const weekRangeLabel = useMemo(() => {
     const days = getWeekDays(weekStart);
@@ -574,11 +606,11 @@ export function CuadroDeMando({
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
             <span>
               <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-emerald-200 bg-emerald-50" />{" "}
-              Verde: rentable
+              Verde: rentable (margen ≥ 300 € y ≥ 120 min programados)
             </span>
             <span>
               <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-amber-200 bg-amber-50" /> Ámbar:
-              ajustado
+              dudoso o infrautilizado (menos de 120 min con margen no negativo, u otros casos intermedios)
             </span>
             <span>
               <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Rojo: no
@@ -634,6 +666,19 @@ export function CuadroDeMando({
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-3">
+            <h4 className="text-sm font-bold text-[var(--ribera-navy)]">Tendencias de eficiencia</h4>
+            {turnEfficiencyTrends.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">Sin alertas para esta semana según los criterios configurados.</p>
+            ) : (
+              <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-slate-700">
+                {turnEfficiencyTrends.map((line, i) => (
+                  <li key={`${line}-${i}`}>{line}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       </div>
