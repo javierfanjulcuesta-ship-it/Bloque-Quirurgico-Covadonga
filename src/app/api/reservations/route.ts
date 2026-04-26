@@ -64,7 +64,24 @@ export async function GET(request: Request) {
   const resourceId = searchParams.get("resourceId") ?? undefined;
 
   const parsed = getReservationsQuerySchema.safeParse({ dateFrom, dateTo, resourceId });
-  const filters = parsed.success ? parsed.data : {};
+  if (!parsed.success) {
+    const first = parsed.error.flatten().fieldErrors;
+    const msg =
+      parsed.error.errors[0]?.message ??
+      (Object.keys(first).length ? JSON.stringify(first) : "Parámetros de consulta inválidos");
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+
+  const filters = parsed.data;
+  if (!filters.dateFrom || !filters.dateTo) {
+    return NextResponse.json(
+      {
+        error:
+          "Indique dateFrom y dateTo (YYYY-MM-DD) para acotar la consulta. Ejemplo: ?dateFrom=2026-01-05&dateTo=2026-02-01",
+      },
+      { status: 400 }
+    );
+  }
 
   const where: { date?: { gte?: Date; lte?: Date }; resourceId?: string } = {};
   if (filters.dateFrom) {
@@ -78,7 +95,7 @@ export async function GET(request: Request) {
   }
 
   const list = await prisma.reservation.findMany({
-    where: Object.keys(where).length ? where : {},
+    where,
     select: RESERVATION_SELECT,
     orderBy: [{ date: "asc" }, { shift: "asc" }, { slotIndex: "asc" }],
   });
