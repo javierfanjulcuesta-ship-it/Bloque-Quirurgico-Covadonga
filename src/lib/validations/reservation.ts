@@ -56,7 +56,6 @@ export const getReservationsQuerySchema = z.object({
 // --- PATCH reservation: añadir pacientes a reserva existente ---
 export const updateReservationSchema = z.object({
   patients: z.array(patientSchema).optional(),
-  coSurgeonIds: z.array(z.string().min(1)).optional(),
 });
 
 // --- PATCH patient: actualizar o sustituir un paciente ---

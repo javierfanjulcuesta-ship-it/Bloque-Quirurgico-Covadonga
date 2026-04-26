@@ -37,7 +37,6 @@ export function HistoricoView({ user, reservations: propReservations }: Historic
       return reservations.filter((r) => {
         if (r.date < dateFrom || r.date > dateTo) return false;
         if (r.surgeonId === user.id) return true;
-        if (r.coSurgeonIds?.includes(user.id)) return true;
         return false;
       });
     }

@@ -31,13 +31,10 @@ function totalReservedMinutes(slots: SlotSelection[]): number {
 
 export interface ProgramarPacientesModalProps {
   slots: SlotSelection[];
-  /** ID del usuario actual (cirujano/endoscopista) para excluirlo de la lista de 2º cirujano */
-  currentUserId?: string;
   /** Rol del usuario que abre el modal (gestor / gestor-anestesista → cirujano responsable obligatorio). */
   schedulerRole?: UserRole | string;
   onSave: (
     patients: Omit<PatientInBlock, "id" | "order">[],
-    coSurgeonIds?: string[],
     meta?: { responsibleSurgeonId: string; externalSurgeonName?: string }
   ) => void | Promise<void>;
   onClose: () => void;
@@ -312,12 +309,11 @@ function parseQuickBlockText(
   };
 }
 
-export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
+export function ProgramarPacientesModal({ slots, schedulerRole, onSave, onClose, saving = false }: ProgramarPacientesModalProps) {
   const [patients, setPatients] = useState<Partial<PatientInBlock>[]>([{}]);
   const [quickMode, setQuickMode] = useState(false);
   const [quickText, setQuickText] = useState("");
   const [quickParseMessage, setQuickParseMessage] = useState<string | null>(null);
-  const [secondSurgeonName, setSecondSurgeonName] = useState("");
   const [responsibleSurgeonId, setResponsibleSurgeonId] = useState("");
   /** Referencia libre del titular (p. ej. Dr. no registrado). Si hay cirujano interno, puede convivir y se añade a notas. */
   const [externalSurgeonDisplayName, setExternalSurgeonDisplayName] = useState("");
@@ -325,16 +321,6 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
   const totalReserved = totalReservedMinutes(slots);
 
   const requireResponsibleSurgeon = schedulerRole ? hasGestorAccess(schedulerRole) : false;
-
-  const otherSurgeons = useMemo(
-    () =>
-      getUsers().filter((u) => {
-        if (!u.approved || u.id === currentUserId) return false;
-        const r = String(u.role).trim().toLowerCase().replace(/_/g, "-");
-        return r === "cirujano" || r === "endoscopista";
-      }),
-    [currentUserId]
-  );
 
   const responsibleSurgeonCandidates = useMemo(() => {
     return getUsers().filter((u) => {
@@ -454,27 +440,9 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
       };
     });
 
-    let coSurgeonIds: string[] | undefined;
-    const nameTrim = secondSurgeonName.trim();
-    if (nameTrim) {
-      const inputLower = nameTrim.toLowerCase();
-      const match = otherSurgeons.find(
-        (u) =>
-          u.name.toLowerCase() === inputLower ||
-          u.name.toLowerCase().includes(inputLower) ||
-          inputLower.includes(u.name.toLowerCase())
-      );
-      if (!match) {
-        setError("No hay ningún cirujano o endoscopista con ese nombre. Deje el campo vacío o compruebe el nombre.");
-        return;
-      }
-      coSurgeonIds = [match.id];
-    }
-
     try {
       await onSave(
         withOrder,
-        coSurgeonIds,
         requireResponsibleSurgeon
           ? {
               responsibleSurgeonId: responsibleSurgeonId.trim(),
@@ -633,24 +601,6 @@ export function ProgramarPacientesModal({ slots, currentUserId, schedulerRole, o
               {quickParseMessage && <InlineNotice variant="info">{quickParseMessage}</InlineNotice>}
             </div>
           )}
-        </div>
-        <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-          <label className="block">
-            <span className="block text-sm font-medium text-gray-700">2º cirujano (opcional)</span>
-            <input
-              type="text"
-              value={secondSurgeonName}
-              onChange={(e) => setSecondSurgeonName(e.target.value)}
-              placeholder="Nombre del otro cirujano o endoscopista"
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-              list="second-surgeon-list"
-            />
-            <datalist id="second-surgeon-list">
-              {otherSurgeons.map((u) => (
-                <option key={u.id} value={u.name} />
-              ))}
-            </datalist>
-          </label>
         </div>
         {over && (
           <InlineNotice variant="error" className="mb-4 font-medium">

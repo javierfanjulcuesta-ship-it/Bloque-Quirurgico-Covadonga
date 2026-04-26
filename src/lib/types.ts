@@ -97,7 +97,6 @@ export interface Reservation {
   shift: Shift;
   slotIndex: number;
   surgeonId: string;
-  coSurgeonIds?: string[];
   patients: PatientInBlock[];
   status: "pending" | "confirmed" | "cancelled" | "released";
   /** Estado lógico del bloque reservado (compatible/derivado, no rompe API existente). */

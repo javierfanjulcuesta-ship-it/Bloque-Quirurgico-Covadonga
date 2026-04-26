@@ -83,7 +83,7 @@ function isSlotUsableForTitularInRoom(
   );
   if (!r) return true;
   const isTitular =
-    r.surgeonId === titularSurgeonId || (r.coSurgeonIds?.includes(titularSurgeonId) ?? false);
+    r.surgeonId === titularSurgeonId;
   const noPatients = (r.patients?.length ?? 0) === 0;
   return (
     isTitular &&
@@ -743,7 +743,6 @@ export default function CirujanoPage() {
 
   const handleProgramarSave = async (
     patients: Omit<PatientInBlock, "id" | "order">[],
-    _coSurgeonIds?: string[],
     meta?: { responsibleSurgeonId: string; externalSurgeonName?: string }
   ) => {
     if (selectedSlots.length === 0) return;
@@ -1280,7 +1279,6 @@ export default function CirujanoPage() {
       {showProgramarModal && selectedSlots.length > 0 && (
 <ProgramarPacientesModal
         slots={selectedSlots}
-        currentUserId={user.id}
         schedulerRole={user.role}
         onSave={handleProgramarSave}
         onClose={() => setShowProgramarModal(false)}

@@ -66,7 +66,7 @@ export function BloqueEstadoGrid({
       if (!res) {
         return { date: dateStr, resourceId, shift, slotIndex, state: "free" };
       }
-      const isMine = currentUserId && (res.surgeonId === currentUserId || (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
+      const isMine = currentUserId && res.surgeonId === currentUserId;
       const hasPatients = res.patients.length > 0;
       if (viewAs === "gestor") {
         return {

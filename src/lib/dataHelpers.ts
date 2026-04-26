@@ -87,8 +87,7 @@ export function buildSlotViews(
         const isMine =
           currentUserId &&
           res &&
-          (res.surgeonId === currentUserId ||
-            (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
+          res.surgeonId === currentUserId;
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
         const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
@@ -134,8 +133,7 @@ export function buildSlotViews(
         const isMine =
           currentUserId &&
           res &&
-          (res.surgeonId === currentUserId ||
-            (res.coSurgeonIds && res.coSurgeonIds.includes(currentUserId)));
+          res.surgeonId === currentUserId;
         const hasPrivate = res ? res.patients?.some((p) => isPrivateFunding(p.entidadFinanciadora)) : false;
         const hasSespa = res ? reservationHasSespa(res) : false;
         const usedMinutes = res ? getEffectiveTotalMinutes(res.patients ?? []) : 0;
