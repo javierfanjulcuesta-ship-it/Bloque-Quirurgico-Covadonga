@@ -504,12 +504,14 @@ export default function CalendarioPage() {
             )}
           </div>
         </PageShellHeader>
-        <WorkspaceQuickActions
-          title={workspaceQuickActions.title}
-          subtitle={workspaceQuickActions.subtitle}
-          nextAction={workspaceQuickActions.nextAction}
-          actions={workspaceQuickActions.actions}
-        />
+        {viewTab !== "cuadro-de-mando" ? (
+          <WorkspaceQuickActions
+            title={workspaceQuickActions.title}
+            subtitle={workspaceQuickActions.subtitle}
+            nextAction={workspaceQuickActions.nextAction}
+            actions={workspaceQuickActions.actions}
+          />
+        ) : null}
 
         {user && viewTab === "perfil" && (
           <MiPerfil user={user} />
