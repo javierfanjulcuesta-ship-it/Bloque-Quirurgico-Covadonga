@@ -46,6 +46,11 @@ import { WorkspaceQuickActions } from "@/components/ui/WorkspaceQuickActions";
 
 const RESERVATIONS_STORAGE_KEY = "bloque_quirurgico_reservations";
 
+function canViewDashboard(user: { role?: string } | null | undefined): boolean {
+  const role = (user?.role ?? "").trim().toLowerCase().replace(/_/g, "-");
+  return role === "gestor" || role === "gestor-anestesista";
+}
+
 type CalendarioViewTab =
   | "calendario"
   | "perfil"
@@ -253,8 +258,9 @@ export default function CalendarioPage() {
   };
 
   const isGestor = user ? hasGestorAccess(user.role) : false;
+  const canViewDashboardByRole = canViewDashboard(user);
   const canViewCuadroDeMando =
-    !!user && isGestor && hasPermission(user.role, "metrics:view");
+    !!user && canViewDashboardByRole && hasPermission(user.role, "metrics:view");
 
   useEffect(() => {
     if (!isGestor || !canViewCuadroDeMando || viewTab !== "cuadro-de-mando") {
@@ -563,6 +569,15 @@ export default function CalendarioPage() {
             anesthetistAssignments={gestorOrAssignmentsForCuadro}
             usersDirectory={usersDirectory}
           />
+        )}
+
+        {user && viewTab === "cuadro-de-mando" && !canViewCuadroDeMando && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+            <p className="text-sm font-semibold text-amber-900">No tienes permisos para acceder al cuadro de mando.</p>
+            <p className="mt-1 text-sm text-amber-900/90">
+              Esta sección está disponible solo para perfiles de gestión.
+            </p>
+          </section>
         )}
 
         {user && isGestor && viewTab === "mensajes" && (

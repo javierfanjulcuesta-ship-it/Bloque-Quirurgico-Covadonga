@@ -38,6 +38,12 @@ import {
   type TurnOpeningEstado,
   type TurnProfitabilityCell,
 } from "@/lib/metrics/economicModel";
+import {
+  analyzeTemporalLoad,
+  computeBlockOptimization,
+  optimizeBlockIteratively,
+  simulateBlockConfigurations,
+} from "@/lib/metrics/optimizationEngine";
 
 export interface CuadroDeMandoProps {
   slotViews: SlotView[];
@@ -223,6 +229,46 @@ function formatPercent(p: number | null): string {
   return `${p.toFixed(1)} %`;
 }
 
+function formatRatio(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toFixed(2);
+}
+
+function structuralConfidenceBadge(level: "alta" | "media" | "baja"): {
+  label: string;
+  className: string;
+} {
+  if (level === "alta") {
+    return {
+      label: "Alta confianza",
+      className: "border-emerald-200 bg-emerald-100 text-emerald-900",
+    };
+  }
+  if (level === "media") {
+    return {
+      label: "Media confianza",
+      className: "border-amber-200 bg-amber-100 text-amber-950",
+    };
+  }
+  return {
+    label: "Baja confianza",
+    className: "border-rose-200 bg-rose-100 text-rose-900",
+  };
+}
+
+function confidenceFactor(level: RecommendationConfidenceLevel): number {
+  if (level === "alta") return 1.0;
+  if (level === "media") return 0.7;
+  return 0.4;
+}
+
+function executiveReasonByCategory(category: UnifiedRecommendation["category"]): string {
+  if (category === "estructural") return "Actividad dispersa en demasiados quirófanos";
+  if (category === "personal_franja") return "Pico de carga detectado";
+  if (category === "reagrupar_actividad") return "Margen bajo con baja ocupación";
+  return "Oportunidad operativa detectada";
+}
+
 const eurFmt = new Intl.NumberFormat("es-ES", {
   style: "currency",
   currency: "EUR",
@@ -357,6 +403,19 @@ function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
 
 type ConfianzaEstimada = "alta" | "media" | "baja";
 type OccupancyBand = "alta" | "media" | "baja" | "sin_actividad";
+type RecommendationConfidenceLevel = "alta" | "media" | "baja";
+
+type UnifiedRecommendation = {
+  title: string;
+  action: string;
+  mainReason: string;
+  description: string;
+  impactEuro: number;
+  confidenceLevel: RecommendationConfidenceLevel;
+  confidenceFactor: number;
+  impactWeighted: number;
+  category: "estructural" | "personal_franja" | "reagrupar_actividad" | "otras";
+};
 
 type TurnStrategicReading = {
   ocupacionTurno: number;
@@ -899,6 +958,8 @@ export function CuadroDeMando({
       margenAgregado: number;
       ingresosTotalesTurno: number;
       anestesia: BlockAnesthesiaScenarioReading;
+      optimization: ReturnType<typeof computeBlockOptimization>;
+      recommendationSimulation: string;
       recomendacion: string;
     }[] = [];
 
@@ -922,6 +983,24 @@ export function CuadroDeMando({
         const ocupacionGlobal =
           capacidadTotalMinutos > 0 ? Math.max(0, Math.min(1, minutosProgramadosTotales / capacidadTotalMinutos)) : 0;
         const anestesia = computeBlockAnesthesiaScenarioReading(ingresosTotalesTurno, margenAgregado);
+        const optimization = computeBlockOptimization({
+          date,
+          shift,
+          reservations,
+          assignments: anesthetistAssignments,
+          operatingRoomIds: orIds,
+          ingresosTurno: ingresosTotalesTurno,
+          margenTurno: margenAgregado,
+          ocupacionGlobal,
+          totalOperatingRoomsInBlock: orIds.length,
+        });
+        const recommendationSimulation =
+          `Movimiento recomendado: simultaneidad ${formatRatio(Math.max(0, optimization.simultaneidad - 0.2))} -> ${formatRatio(optimization.simultaneidad)}. ` +
+          `Nivel de solapamiento ${Math.max(0, Math.round((optimization.nivelSolapamiento - 0.03) * 100))}% -> ${Math.round(optimization.nivelSolapamiento * 100)}%. ` +
+          `Impacto margen estimado +${Math.round(Math.max(0, optimization.eficienciaSolapamiento) * 1450)} EUR. ` +
+          (optimization.mejoraEficienciaAnestesia
+            ? "Mejora eficiencia de anestesia compartida."
+            : "Sin mejora clara de eficiencia de anestesia.");
         rows.push({
           date,
           shift,
@@ -932,12 +1011,145 @@ export function CuadroDeMando({
           margenAgregado,
           ingresosTotalesTurno,
           anestesia,
+          optimization,
+          recommendationSimulation,
           recomendacion: blockOpenRecommendation(margenAgregado, ocupacionGlobal, minutosProgramadosTotales),
         });
       }
     }
     return rows;
   }, [resources, weekDatesIso, turnProfitabilityMap, turnAvailableMinutesByKey, weekStart]);
+
+  const structuralOptimizationRows = useMemo(() => {
+    const orIds = mainOperatingRoomIds(resources);
+    if (orIds.length === 0) return [];
+    return lecturaBloqueAbiertoRows.map((row) => {
+      const capacidadPorQuirofano = row.shift === "morning" ? expectedShiftMinutes("morning") : expectedShiftMinutes("afternoon");
+      const structuralInput = {
+        date: row.date,
+        shift: row.shift,
+        reservations,
+        assignments: anesthetistAssignments,
+        operatingRoomIds: orIds,
+        ingresosActuales: row.ingresosTotalesTurno,
+        margenActual: row.margenAgregado,
+        minutosProgramadosActuales: row.minutosProgramadosTotales,
+        capacidadPorQuirofano,
+      };
+      const simulation = simulateBlockConfigurations(structuralInput);
+      const iterative = optimizeBlockIteratively(structuralInput);
+      return {
+        date: row.date,
+        shift: row.shift,
+        simulation,
+        iterative,
+      };
+    });
+  }, [resources, lecturaBloqueAbiertoRows, reservations, anesthetistAssignments]);
+
+  const structuralExecutive = useMemo(() => {
+    let mejoraTotal = 0;
+    let bloquesConMejora = 0;
+    for (const row of structuralOptimizationRows) {
+      if (row.simulation.marginDeltaOptimalVsCurrent > 0) {
+        bloquesConMejora += 1;
+        mejoraTotal += row.simulation.marginDeltaOptimalVsCurrent;
+      }
+    }
+    return { mejoraTotal, bloquesConMejora };
+  }, [structuralOptimizationRows]);
+
+  const temporalLoadRows = useMemo(() => {
+    const orIds = mainOperatingRoomIds(resources);
+    if (orIds.length === 0) return [];
+    return lecturaBloqueAbiertoRows.map((row) => {
+      const analysis = analyzeTemporalLoad({
+        date: row.date,
+        shift: row.shift,
+        reservations,
+        assignments: anesthetistAssignments,
+        operatingRoomIds: orIds,
+      });
+      return { date: row.date, shift: row.shift, analysis };
+    });
+  }, [resources, lecturaBloqueAbiertoRows, reservations, anesthetistAssignments]);
+
+  const unifiedRecommendations = useMemo(() => {
+    const items: UnifiedRecommendation[] = [];
+
+    for (const row of structuralOptimizationRows) {
+      const level = row.iterative.confidenceLevel as RecommendationConfidenceLevel;
+      const factor = confidenceFactor(level);
+      const impactEuro = Math.max(0, row.simulation.marginDeltaOptimalVsCurrent);
+      // Priorización (no impacto real): penaliza más recomendaciones de baja confianza.
+      const impactWeighted = impactEuro * factor * factor;
+      items.push({
+        title: `Optimización estructural (${row.date} · ${row.shift === "morning" ? "Mañana" : "Tarde"})`,
+        action: `Reducir actividad a ${row.simulation.optimal.openedOperatingRooms} quirófanos`,
+        mainReason: executiveReasonByCategory("estructural"),
+        description: row.simulation.recommendation,
+        impactEuro,
+        confidenceLevel: level,
+        confidenceFactor: factor,
+        impactWeighted,
+        category: "estructural",
+      });
+    }
+
+    for (const row of temporalLoadRows) {
+      const level: RecommendationConfidenceLevel = row.analysis.hasStaffDeficit
+        ? "media"
+        : row.analysis.hasPeak
+          ? "media"
+          : "baja";
+      const factor = confidenceFactor(level);
+      const impactEuro = row.analysis.hasPeak ? (row.analysis.estimatedImpact.evitaAperturaExtra ? 600 : 250) : 100;
+      const impactWeighted = impactEuro * factor * factor;
+      items.push({
+        title: `Personal por franja (${row.date} · ${row.shift === "morning" ? "Mañana" : "Tarde"})`,
+        action: row.analysis.hasPeak
+          ? `Añadir refuerzo de enfermería ${row.analysis.peakRangeLabel ?? "en franja pico"}`
+          : "Mantener dotación actual",
+        mainReason: executiveReasonByCategory("personal_franja"),
+        description: row.analysis.recommendation,
+        impactEuro,
+        confidenceLevel: level,
+        confidenceFactor: factor,
+        impactWeighted,
+        category: "personal_franja",
+      });
+    }
+
+    for (const c of turnProfitabilityMap.values()) {
+      if (c.estado !== "infrautilizado") continue;
+      const level: RecommendationConfidenceLevel = "media";
+      const factor = confidenceFactor(level);
+      const impactEuro = Math.max(0, c.margenTurno * 0.2);
+      const impactWeighted = impactEuro * factor * factor;
+      items.push({
+        title: `Reagrupar actividad (${c.date} · ${c.shift === "morning" ? "Mañana" : "Tarde"})`,
+        action: "Reagrupar actividad infrautilizada",
+        mainReason: executiveReasonByCategory("reagrupar_actividad"),
+        description: `Turno infrautilizado en ${c.resourceId}. Reagrupar puede mejorar densidad operativa sin cambios automáticos.`,
+        impactEuro,
+        confidenceLevel: level,
+        confidenceFactor: factor,
+        impactWeighted,
+        category: "reagrupar_actividad",
+      });
+    }
+
+    items.sort((a, b) => b.impactWeighted - a.impactWeighted);
+    return items;
+  }, [structuralOptimizationRows, temporalLoadRows, turnProfitabilityMap]);
+
+  const groupedUnifiedRecommendations = useMemo(() => {
+    const top = unifiedRecommendations.slice(0, 3);
+    const rest = unifiedRecommendations.slice(3);
+    const medio = rest.filter((r) => r.impactWeighted >= 300);
+    const bajo = rest.filter((r) => r.impactWeighted < 300);
+    return { top, medio, bajo };
+  }, [unifiedRecommendations]);
 
   const mapExecutiveStats = useMemo(() => {
     const labelById = new Map(resources.map((r) => [r.id, r.label]));
@@ -1278,6 +1490,9 @@ export function CuadroDeMando({
                     <th className="px-2 py-2 text-right">Capacidad visible total</th>
                     <th className="px-2 py-2 text-right">Ocupación bloque</th>
                     <th className="px-2 py-2 text-right">Margen agregado</th>
+                    <th className="px-2 py-2 text-right">Simultaneidad</th>
+                    <th className="px-2 py-2 text-right">Nivel solap.</th>
+                    <th className="px-2 py-2">Eficiencia anestesia</th>
                     <th className="px-2 py-2">Recomendación</th>
                   </tr>
                 </thead>
@@ -1301,11 +1516,20 @@ export function CuadroDeMando({
                             {(row.ocupacionGlobal * 100).toFixed(0)}%
                           </td>
                           <td className="px-2 py-2 text-right tabular-nums text-slate-800">{formatEur(row.margenAgregado)}</td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                            {formatRatio(row.optimization.simultaneidad)}
+                          </td>
+                          <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                            {(row.optimization.nivelSolapamiento * 100).toFixed(0)}%
+                          </td>
+                          <td className="px-2 py-2 text-slate-700">
+                            {row.optimization.mejoraEficienciaAnestesia ? "Mejora" : "Sin mejora"}
+                          </td>
                           <td className="px-2 py-2 text-slate-700">{row.recomendacion}</td>
                         </tr>
                         <tr className="border-b border-slate-200 bg-slate-50/80 last:border-0">
                           <td
-                            colSpan={8}
+                            colSpan={11}
                             className="px-2 py-1.5 text-[11px] leading-snug text-slate-600"
                             title="No incluye enfermería, TCAE, material, farmacia, limpieza ni costes estructurales."
                           >
@@ -1337,6 +1561,19 @@ export function CuadroDeMando({
                                 bloque.
                               </span>
                             ) : null}
+                            {" "}
+                            <span className="font-medium text-slate-700">
+                              Simultaneidad bloque: {formatRatio(row.optimization.simultaneidad)} (Q activos:{" "}
+                              {row.optimization.numeroQuirofanosActivos} / recursos críticos: {row.optimization.recursosCriticos}).
+                            </span>{" "}
+                            Nivel de solapamiento: {(row.optimization.nivelSolapamiento * 100).toFixed(0)}%.{" "}
+                            Eficiencia anestesia:{" "}
+                            {row.optimization.eficienciaBand === "positiva"
+                              ? "positiva"
+                              : row.optimization.eficienciaBand === "neutra"
+                                ? "neutra"
+                                : "negativa"}
+                            . {row.recommendationSimulation}
                           </td>
                         </tr>
                       </Fragment>
@@ -1346,6 +1583,261 @@ export function CuadroDeMando({
               </table>
             </div>
           )}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+          <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Optimización estructural del bloque</h4>
+          <p className="mt-1 text-sm text-slate-700">
+            Simulación de apertura (1, 2 o 3 quirófanos) para decidir concentración óptima sin modificar reservas reales.
+          </p>
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+            Esta optimización es una simulación. No modifica la programación real. Los cambios deben ser validados manualmente.
+          </p>
+          <div className="mt-2">
+            <button
+              type="button"
+              disabled
+              title="Sin efecto: requiere implementación futura y validación manual."
+              className="rounded-md border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500"
+            >
+              Aplicar cambios (requiere implementación futura)
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">
+            La confianza indica fiabilidad de la recomendación simulada, no rentabilidad.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-3 shadow-sm">
+              <p className="text-[11px] font-medium text-emerald-900">Bloques con mejora simulada</p>
+              <p className="text-lg font-bold text-emerald-900">{structuralExecutive.bloquesConMejora}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm">
+              <p className="text-[11px] font-medium text-slate-700">Mejora económica estimada total</p>
+              <p className="text-lg font-bold text-slate-900">{formatEur(structuralExecutive.mejoraTotal)}</p>
+            </div>
+          </div>
+          {structuralOptimizationRows.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">No hay datos suficientes para simular configuraciones de bloque.</p>
+          ) : (
+            <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white shadow-sm">
+              <table className="min-w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <th className="px-2 py-2">Día</th>
+                    <th className="px-2 py-2">Turno</th>
+                    <th className="px-2 py-2">Estado actual</th>
+                    <th className="px-2 py-2">Configuración sugerida (no aplicada)</th>
+                    <th className="px-2 py-2 text-right">Mejora estimada</th>
+                    <th className="px-2 py-2">Recomendación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {structuralOptimizationRows.map((row) => {
+                    const s = row.simulation;
+                    const trace = row.iterative;
+                    const improving = s.marginDeltaOptimalVsCurrent > 0;
+                    const confidence = structuralConfidenceBadge(trace.confidenceLevel);
+                    return (
+                      <tr
+                        key={`struct-${row.date}-${row.shift}`}
+                        className={`border-b border-slate-100 last:border-0 ${improving ? "bg-emerald-50/50" : "bg-slate-50/40"}`}
+                      >
+                        <td className="px-2 py-2 font-medium text-slate-800">{row.date}</td>
+                        <td className="px-2 py-2 text-slate-700">{row.shift === "morning" ? "Mañana" : "Tarde"}</td>
+                        <td className="px-2 py-2 text-slate-700">
+                          {s.current.openedOperatingRooms} Q · margen {formatEur(s.current.margen)} · score{" "}
+                          {s.current.score.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-2 text-slate-700">
+                          {s.optimal.openedOperatingRooms} Q · margen {formatEur(s.optimal.margen)} · score{" "}
+                          {s.optimal.score.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                          {s.marginDeltaOptimalVsCurrent >= 0 ? "+" : ""}
+                          {formatEur(s.marginDeltaOptimalVsCurrent)}
+                        </td>
+                        <td className="px-2 py-2 text-slate-700">
+                          <span className={`mb-1 inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${confidence.className}`}>
+                            {confidence.label}
+                          </span>{" "}
+                          {s.recommendation} Ocupación {Math.round(s.current.ocupacion * 100)}% →{" "}
+                          {Math.round(s.optimal.ocupacion * 100)}%. Dispersión {s.current.dispersion.toFixed(1)} →{" "}
+                          {s.optimal.dispersion.toFixed(1)}.
+                          <details className="mt-2 rounded border border-slate-200 bg-white px-2 py-1">
+                            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                              Ver traza de optimización
+                            </summary>
+                            <div className="mt-1 space-y-1 text-xs text-slate-600">
+                              {trace.steps.length === 0 ? (
+                                <p>Sin pasos aplicables: {trace.reason}</p>
+                              ) : (
+                                trace.steps.map((step) => (
+                                  <p key={`step-${row.date}-${row.shift}-${step.iteration}`}>
+                                    Iteración {step.iteration}: {step.fromOpenedRooms} quirófanos → {step.toOpenedRooms}{" "}
+                                    quirófanos. Score {step.scoreBefore.toFixed(1)} → {step.scoreAfter.toFixed(1)}. Margen{" "}
+                                    {formatEur(step.marginBefore)} → {formatEur(step.marginAfter)}.
+                                    Motivo: {step.reason}
+                                  </p>
+                                ))
+                              )}
+                              <p className="font-medium text-slate-700">
+                                Motivos de confianza:{" "}
+                                {trace.confidenceReasons.length > 0 ? trace.confidenceReasons.join("; ") : "sin motivos destacados"}.
+                              </p>
+                              <p className="font-medium text-amber-900">
+                                Requiere validación manual antes de aplicar.
+                              </p>
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+          <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">
+            Optimización de personal por franja
+          </h4>
+          <p className="mt-1 text-sm text-slate-700">
+            Detección de picos intra-turno para sugerir refuerzo parcial de personal. Solo simulación de lectura.
+          </p>
+          {temporalLoadRows.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">No hay datos suficientes para analizar carga temporal por franja.</p>
+          ) : (
+            <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white shadow-sm">
+              <table className="min-w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    <th className="px-2 py-2">Día</th>
+                    <th className="px-2 py-2">Turno</th>
+                    <th className="px-2 py-2">Tramos</th>
+                    <th className="px-2 py-2">Recomendación</th>
+                    <th className="px-2 py-2 text-right">Impacto estimado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {temporalLoadRows.map((row) => (
+                    <tr key={`temporal-${row.date}-${row.shift}`} className="border-b border-slate-100 last:border-0">
+                      <td className="px-2 py-2 font-medium text-slate-800">{row.date}</td>
+                      <td className="px-2 py-2 text-slate-700">{row.shift === "morning" ? "Mañana" : "Tarde"}</td>
+                      <td className="px-2 py-2 text-slate-700">
+                        <div className="flex flex-wrap gap-1">
+                          {row.analysis.buckets.map((b) => (
+                            <span
+                              key={`bucket-${row.date}-${row.shift}-${b.index}`}
+                              className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                                b.hasStaffDeficit
+                                  ? "border-rose-200 bg-rose-50 text-rose-900"
+                                  : b.isPeak
+                                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                                    : "border-slate-200 bg-slate-50 text-slate-700"
+                              }`}
+                              title={`Ocupados: ${Math.round(b.minutosOcupados)} min · Simultáneas: ${b.intervencionesSimultaneas} · Q activos: ${b.quirofanosActivos}`}
+                            >
+                              {b.rangeLabel}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-slate-700">
+                        <span className="inline-block rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-900">
+                          Sugerencia (no aplicada)
+                        </span>{" "}
+                        {row.analysis.recommendation}
+                      </td>
+                      <td className="px-2 py-2 text-right text-slate-700">
+                        Ocupación +{row.analysis.estimatedImpact.mejoraOcupacionPct}% · Simultaneidad +
+                        {row.analysis.estimatedImpact.mejoraSimultaneidadPct}% ·{" "}
+                        {row.analysis.estimatedImpact.evitaAperturaExtra ? "Evita apertura de quirófano extra" : "Sin impacto en apertura"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+          <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">
+            🔥 Recomendaciones principales (top impacto)
+          </h4>
+          <p className="mt-1 text-xs text-slate-600">
+            Ordenado por impacto económico estimado ajustado por confianza.
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            Estas recomendaciones no modifican la programación; priorizan dónde revisar primero.
+          </p>
+          <div className="mt-3 space-y-2">
+            {groupedUnifiedRecommendations.top.length === 0 ? (
+              <p className="text-xs text-slate-500">No hay recomendaciones disponibles.</p>
+            ) : (
+              groupedUnifiedRecommendations.top.map((r, i) => {
+                const badge = structuralConfidenceBadge(r.confidenceLevel);
+                return (
+                  <div key={`top-rec-${i}`} className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800">{r.title}</p>
+                    </div>
+                    <p className="mt-1 text-sm font-semibold text-[var(--ribera-navy)]">{r.action}</p>
+                    <p className="mt-0.5 text-xs text-slate-600">Motivo principal: {r.mainReason}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>
+                        {badge.label}
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Impacto bruto: {formatEur(r.impactEuro)} · Ajustado: {formatEur(r.impactWeighted)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs font-medium text-amber-900">Requiere validación manual antes de aplicar.</p>
+                    <details className="mt-2 rounded border border-slate-200 bg-slate-50/60 px-2 py-1">
+                      <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">Detalle técnico</summary>
+                      <p className="mt-1 text-[11px] text-slate-600">{r.description}</p>
+                    </details>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <details className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">Impacto medio</summary>
+            <div className="mt-2 space-y-1">
+              {groupedUnifiedRecommendations.medio.length === 0 ? (
+                <p className="text-xs text-slate-500">Sin recomendaciones de impacto medio.</p>
+              ) : (
+                groupedUnifiedRecommendations.medio.map((r, i) => (
+                  <p key={`mid-rec-${i}`} className="text-xs text-slate-700">
+                    {r.action} · bruto {formatEur(r.impactEuro)} · ajustado {formatEur(r.impactWeighted)} · confianza{" "}
+                    {r.confidenceLevel}.
+                  </p>
+                ))
+              )}
+            </div>
+          </details>
+
+          <details className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+              Impacto bajo / exploratorio
+            </summary>
+            <div className="mt-2 space-y-1">
+              {groupedUnifiedRecommendations.bajo.length === 0 ? (
+                <p className="text-xs text-slate-500">Sin recomendaciones exploratorias.</p>
+              ) : (
+                groupedUnifiedRecommendations.bajo.map((r, i) => (
+                  <p key={`low-rec-${i}`} className="text-xs text-slate-700">
+                    {r.action} · bruto {formatEur(r.impactEuro)} · ajustado {formatEur(r.impactWeighted)} · confianza{" "}
+                    {r.confidenceLevel}.
+                  </p>
+                ))
+              )}
+            </div>
+          </details>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

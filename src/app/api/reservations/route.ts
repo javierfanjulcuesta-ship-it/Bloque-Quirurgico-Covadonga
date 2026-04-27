@@ -5,9 +5,10 @@
  */
 
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { UserRole } from "@prisma/client";
 import { getSessionFromCookie } from "@/lib/auth/session";
-import { toAuthSession, requireAuth, requirePermission, requireAnyPermission } from "@/lib/auth";
+import { toAuthSession, requireAuth, requirePermission, requireAnyPermission, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
@@ -44,10 +45,12 @@ const RESERVATION_SELECT = {
   },
 } as const;
 
-/** Gestor, gestor-anestesista y anestesista ven todo con detalle. Cirujano/endoscopista solo propios con detalle. */
+/** Vista completa solo para gestión/métricas; resto de perfiles reciben agenda propia. */
 function hasFullReservationView(role: string): boolean {
   const r = role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
-  return r === "gestor" || r === "gestor-anestesista" || r === "anestesista";
+  if (r === "gestor" || r === "gestor-anestesista") return true;
+  // Endurecimiento backend: full dataset solo para roles/permisos de gestión/métricas.
+  return hasPermission(role, "metrics:view") || hasPermission(role, "booking:view:all");
 }
 
 export async function GET(request: Request) {
@@ -83,15 +86,26 @@ export async function GET(request: Request) {
     );
   }
 
-  const where: { date?: { gte?: Date; lte?: Date }; resourceId?: string } = {};
+  const where: Prisma.ReservationWhereInput = {};
+  const dateFilter: Prisma.DateTimeFilter = {};
   if (filters.dateFrom) {
-    where.date = { ...where.date, gte: new Date(filters.dateFrom + "T00:00:00.000Z") };
+    dateFilter.gte = new Date(filters.dateFrom + "T00:00:00.000Z");
   }
   if (filters.dateTo) {
-    where.date = { ...where.date, lte: new Date(filters.dateTo + "T23:59:59.999Z") };
+    dateFilter.lte = new Date(filters.dateTo + "T23:59:59.999Z");
+  }
+  if (dateFilter.gte || dateFilter.lte) {
+    where.date = dateFilter;
   }
   if (filters.resourceId) {
     where.resourceId = filters.resourceId;
+  }
+
+  const fullView = hasFullReservationView(session!.role);
+  const myId = session!.userId;
+  if (!fullView) {
+    // No gestión: solo datos estrictamente necesarios para agenda propia.
+    where.OR = [{ surgeonId: myId }, { createdByUserId: myId }, { anesthetistId: myId }];
   }
 
   const list = await prisma.reservation.findMany({
@@ -99,9 +113,6 @@ export async function GET(request: Request) {
     select: RESERVATION_SELECT,
     orderBy: [{ date: "asc" }, { shift: "asc" }, { slotIndex: "asc" }],
   });
-
-  const fullView = hasFullReservationView(session!.role);
-  const myId = session!.userId;
 
   const reservations = list.map((r) => {
     const api = toApiReservation(r as Parameters<typeof toApiReservation>[0]);

@@ -156,11 +156,12 @@ export async function GET(request: Request) {
         }))
       : dbUsers.map((u) => ({
           id: u.id,
+          // Lista mínima para selectores no-gestión (sin datos internos).
           email: "",
           name: u.name,
           role: roleToFrontend(u.role),
           approved: u.approved,
-          canSespa: u.canSespa,
+          canSespa: undefined,
           isActive: u.approved,
           deletedAt: null,
         }));
