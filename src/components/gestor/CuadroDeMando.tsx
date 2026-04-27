@@ -44,6 +44,7 @@ import {
   optimizeBlockIteratively,
   simulateBlockConfigurations,
 } from "@/lib/metrics/optimizationEngine";
+import { analyzeSurgeonDynamics } from "@/lib/metrics/surgeonDynamics";
 
 export interface CuadroDeMandoProps {
   slotViews: SlotView[];
@@ -423,6 +424,7 @@ type DashboardInternalTab =
   | "mapa-economico"
   | "bloque-abierto"
   | "personal"
+  | "dinamica-quirurgica"
   | "metricas";
 
 type TurnStrategicReading = {
@@ -1160,6 +1162,23 @@ export function CuadroDeMando({
     return { top, medio, bajo };
   }, [unifiedRecommendations]);
 
+  const surgeonDynamicsRows = useMemo(
+    () => analyzeSurgeonDynamics({ reservations, slotViews, economicConfig, usersDirectory }),
+    [reservations, slotViews, economicConfig, usersDirectory]
+  );
+
+  const surgeonDynamicsHighlights = useMemo(() => {
+    const byActivity = surgeonDynamicsRows[0] ?? null;
+    const byLead = [...surgeonDynamicsRows]
+      .filter((r) => r.antelacionMediaDias != null)
+      .sort((a, b) => (b.antelacionMediaDias ?? 0) - (a.antelacionMediaDias ?? 0))[0] ?? null;
+    const byCancel = [...surgeonDynamicsRows].sort((a, b) => b.tasaCancelacion - a.tasaCancelacion)[0] ?? null;
+    const byVar = [...surgeonDynamicsRows]
+      .filter((r) => r.variabilidadDuracion != null)
+      .sort((a, b) => (b.variabilidadDuracion ?? 0) - (a.variabilidadDuracion ?? 0))[0] ?? null;
+    return { byActivity, byLead, byCancel, byVar };
+  }, [surgeonDynamicsRows]);
+
   const mapExecutiveStats = useMemo(() => {
     const labelById = new Map(resources.map((r) => [r.id, r.label]));
     const grouped = {
@@ -1255,6 +1274,7 @@ export function CuadroDeMando({
             { id: "mapa-economico", label: "Mapa económico" },
             { id: "bloque-abierto", label: "Bloque abierto" },
             { id: "personal", label: "Personal" },
+            { id: "dinamica-quirurgica", label: "Dinámica quirúrgica" },
             { id: "metricas", label: "Métricas" },
           ].map((tab) => {
             const active = activeDashboardTab === (tab.id as DashboardInternalTab);
@@ -1814,6 +1834,147 @@ export function CuadroDeMando({
             </div>
           )}
         </div>
+        )}
+
+        {activeDashboardTab === "dinamica-quirurgica" && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+            <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Dinámica quirúrgica</h4>
+            <p className="mt-1 text-sm text-slate-700">
+              Este análisis describe patrones de programación y variabilidad operativa. No evalúa calidad clínica.
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Las métricas por cirujano requieren volumen suficiente para interpretarse correctamente.
+            </p>
+
+            {surgeonDynamicsRows.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">
+                No hay suficiente actividad esta semana para analizar dinámica quirúrgica.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-emerald-900">Mayor actividad</p>
+                    <p className="text-sm font-semibold text-emerald-900">
+                      {surgeonDynamicsHighlights.byActivity?.surgeonName ?? "—"}
+                    </p>
+                    <p className="text-xs text-emerald-800">
+                      {surgeonDynamicsHighlights.byActivity
+                        ? `${Math.round(surgeonDynamicsHighlights.byActivity.minutosProgramados)} min`
+                        : "dato no disponible"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-sky-900">Mayor antelación</p>
+                    <p className="text-sm font-semibold text-sky-900">{surgeonDynamicsHighlights.byLead?.surgeonName ?? "—"}</p>
+                    <p className="text-xs text-sky-800">
+                      {surgeonDynamicsHighlights.byLead?.antelacionMediaDias != null
+                        ? `${surgeonDynamicsHighlights.byLead.antelacionMediaDias.toFixed(1)} días`
+                        : "dato no disponible"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-amber-950">
+                      Mayor oportunidad de revisión por cancelaciones
+                    </p>
+                    {surgeonDynamicsHighlights.byCancel && surgeonDynamicsHighlights.byCancel.numeroReservas >= 3 ? (
+                      <>
+                        <p className="text-sm font-semibold text-amber-950">{surgeonDynamicsHighlights.byCancel.surgeonName}</p>
+                        <p className="text-xs text-amber-900">
+                          {surgeonDynamicsHighlights.byCancel.tasaCancelacion.toFixed(1)} %
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-amber-900">Datos insuficientes para valorar cancelaciones</p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-rose-900">Mayor variabilidad de tiempos</p>
+                    <p className="text-sm font-semibold text-rose-900">{surgeonDynamicsHighlights.byVar?.surgeonName ?? "—"}</p>
+                    <p className="text-xs text-rose-800">
+                      {surgeonDynamicsHighlights.byVar?.variabilidadDuracion != null
+                        ? `${surgeonDynamicsHighlights.byVar.variabilidadDuracion.toFixed(1)} min`
+                        : "dato no disponible"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-x-auto rounded-md border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full text-left text-xs sm:text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        <th className="px-2 py-2">Cirujano</th>
+                        <th className="px-2 py-2 text-right">Reservas</th>
+                        <th className="px-2 py-2 text-right">Pacientes</th>
+                        <th className="px-2 py-2 text-right">Minutos</th>
+                        <th className="px-2 py-2 text-right">Antelación media</th>
+                        <th className="px-2 py-2 text-right">Cancelación</th>
+                        <th className="px-2 py-2 text-right">Margen estimado asociado</th>
+                        <th className="px-2 py-2">Observación</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {surgeonDynamicsRows.map((row) => {
+                        const lowLead = (row.antelacionMediaDias ?? 999) < 3;
+                        const highVar = (row.variabilidadDuracion ?? 0) > 45;
+                        const highCancel = row.tasaCancelacion > 20;
+                        const observation =
+                          highCancel
+                            ? "Patrón de cancelación elevado"
+                            : lowLead
+                              ? "Planificación tardía"
+                              : highVar
+                                ? "Alta variabilidad de tiempos"
+                                : "Buena planificación";
+                        return (
+                          <tr key={`dyn-${row.surgeonId}`} className="border-b border-slate-100 last:border-0">
+                            <td className="px-2 py-2 font-medium text-slate-800">{row.surgeonName}</td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">{row.numeroReservas}</td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">{row.numeroPacientes}</td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">
+                              {Math.round(row.minutosProgramados)}
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">
+                              {row.antelacionMediaDias != null ? `${row.antelacionMediaDias.toFixed(1)} d` : "dato no disponible"}
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">
+                              {row.tasaCancelacion.toFixed(1)} %
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-700">
+                              {row.margenEstimado != null ? formatEur(row.margenEstimado) : "dato no disponible"}
+                            </td>
+                            <td className="px-2 py-2 text-slate-700">
+                              {observation}
+                              <details className="mt-1 rounded border border-slate-200 bg-slate-50/60 px-2 py-1">
+                                <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">Detalle</summary>
+                                <p className="mt-1 text-[11px] text-slate-600">
+                                  Procedimientos frecuentes:{" "}
+                                  {row.procedimientosFrecuentes.length > 0
+                                    ? row.procedimientosFrecuentes.join(", ")
+                                    : "dato no disponible"}
+                                  . Menos de 7 días:{" "}
+                                  {row.porcentajeProgramadoMenos7Dias != null
+                                    ? `${row.porcentajeProgramadoMenos7Dias.toFixed(1)}%`
+                                    : "dato no disponible"}
+                                  . Menos de 48h:{" "}
+                                  {row.porcentajeProgramadoMenos48h != null
+                                    ? `${row.porcentajeProgramadoMenos48h.toFixed(1)}%`
+                                    : "dato no disponible"}
+                                  . Reservas liberadas: {row.reservasLiberadas}. Reservas sin pacientes: {row.reservasSinPacientes}.
+                                  Quirófanos utilizados: {row.quirofanosUtilizados}. Variabilidad:{" "}
+                                  {row.variabilidadDuracion != null ? `${row.variabilidadDuracion.toFixed(1)} min` : "dato no disponible"}.
+                                </p>
+                              </details>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {activeDashboardTab === "recomendaciones" && (
