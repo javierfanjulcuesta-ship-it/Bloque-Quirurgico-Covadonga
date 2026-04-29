@@ -44,7 +44,9 @@ import {
   optimizeBlockIteratively,
   simulateBlockConfigurations,
 } from "@/lib/metrics/optimizationEngine";
+import { analyzeBlockProfitability } from "@/lib/metrics/blockProfitability";
 import { analyzeSurgeonDynamics } from "@/lib/metrics/surgeonDynamics";
+import { buildUnifiedRecommendations } from "@/lib/metrics/unifiedRecommendations";
 
 export interface CuadroDeMandoProps {
   slotViews: SlotView[];
@@ -257,17 +259,20 @@ function structuralConfidenceBadge(level: "alta" | "media" | "baja"): {
   };
 }
 
-function confidenceFactor(level: RecommendationConfidenceLevel): number {
-  if (level === "alta") return 1.0;
-  if (level === "media") return 0.7;
-  return 0.4;
-}
-
-function executiveReasonByCategory(category: UnifiedRecommendation["category"]): string {
-  if (category === "estructural") return "Actividad dispersa en demasiados quirófanos";
-  if (category === "personal_franja") return "Pico de carga detectado";
-  if (category === "reagrupar_actividad") return "Margen bajo con baja ocupación";
-  return "Oportunidad operativa detectada";
+function decisionOutcomeBadge(outcome: "FAVORABLE" | "CONDICIONAL" | "NO_RECOMENDADO" | "NO_CONCLUYENTE"): {
+  label: string;
+  className: string;
+} {
+  if (outcome === "FAVORABLE") {
+    return { label: "FAVORABLE", className: "border-emerald-300 bg-emerald-100 text-emerald-900" };
+  }
+  if (outcome === "CONDICIONAL") {
+    return { label: "CONDICIONAL", className: "border-amber-300 bg-amber-100 text-amber-950" };
+  }
+  if (outcome === "NO_RECOMENDADO") {
+    return { label: "NO RECOMENDADO", className: "border-rose-300 bg-rose-100 text-rose-900" };
+  }
+  return { label: "NO CONCLUYENTE", className: "border-slate-300 bg-slate-100 text-slate-800" };
 }
 
 const eurFmt = new Intl.NumberFormat("es-ES", {
@@ -402,30 +407,32 @@ function turnMapHalfCellClasses(estado: TurnOpeningEstado): string {
   return "border-rose-200 bg-rose-50 text-rose-800";
 }
 
+function profitabilityBandPillClasses(band: "rentable" | "ajustado" | "perdida"): string {
+  if (band === "rentable") return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  if (band === "ajustado") return "border-amber-200 bg-amber-50 text-amber-900";
+  return "border-rose-200 bg-rose-50 text-rose-900";
+}
+
 type ConfianzaEstimada = "alta" | "media" | "baja";
 type OccupancyBand = "alta" | "media" | "baja" | "sin_actividad";
-type RecommendationConfidenceLevel = "alta" | "media" | "baja";
-
-type UnifiedRecommendation = {
-  title: string;
-  action: string;
-  mainReason: string;
-  description: string;
-  impactEuro: number;
-  confidenceLevel: RecommendationConfidenceLevel;
-  confidenceFactor: number;
-  impactWeighted: number;
-  category: "estructural" | "personal_franja" | "reagrupar_actividad" | "otras";
-};
 
 type DashboardInternalTab =
   | "resumen"
   | "recomendaciones"
+  | "analisis-rentabilidad"
   | "mapa-economico"
   | "bloque-abierto"
   | "personal"
   | "dinamica-quirurgica"
   | "metricas";
+type RecommendationQuickFilter =
+  | "todas"
+  | "impacto_neto_positivo"
+  | "riesgo_operativo"
+  | "perdidas_economicas"
+  | "oportunidades"
+  | "baja_confianza";
+type ProfitabilityQuickFilter = "todas" | "solo_perdidas" | "solo_rentables" | "solo_baja_ocupacion";
 
 type TurnStrategicReading = {
   ocupacionTurno: number;
@@ -813,6 +820,8 @@ export function CuadroDeMando({
   usersDirectory = [],
 }: CuadroDeMandoProps) {
   const [activeDashboardTab, setActiveDashboardTab] = useState<DashboardInternalTab>("resumen");
+  const [recommendationFilter, setRecommendationFilter] = useState<RecommendationQuickFilter>("todas");
+  const [profitabilityFilter, setProfitabilityFilter] = useState<ProfitabilityQuickFilter>("todas");
   const [economicConfig, setEconomicConfig] = useState<EconomicConfig>(() => ({ ...DEFAULT_ECONOMIC_CONFIG }));
   const [economicImportError, setEconomicImportError] = useState<string | null>(null);
   const economicFileInputRef = useRef<HTMLInputElement>(null);
@@ -1085,83 +1094,6 @@ export function CuadroDeMando({
     });
   }, [resources, lecturaBloqueAbiertoRows, reservations, anesthetistAssignments]);
 
-  const unifiedRecommendations = useMemo(() => {
-    const items: UnifiedRecommendation[] = [];
-
-    for (const row of structuralOptimizationRows) {
-      const level = row.iterative.confidenceLevel as RecommendationConfidenceLevel;
-      const factor = confidenceFactor(level);
-      const impactEuro = Math.max(0, row.simulation.marginDeltaOptimalVsCurrent);
-      // Priorización (no impacto real): penaliza más recomendaciones de baja confianza.
-      const impactWeighted = impactEuro * factor * factor;
-      items.push({
-        title: `Optimización estructural (${row.date} · ${row.shift === "morning" ? "Mañana" : "Tarde"})`,
-        action: `Reducir actividad a ${row.simulation.optimal.openedOperatingRooms} quirófanos`,
-        mainReason: executiveReasonByCategory("estructural"),
-        description: row.simulation.recommendation,
-        impactEuro,
-        confidenceLevel: level,
-        confidenceFactor: factor,
-        impactWeighted,
-        category: "estructural",
-      });
-    }
-
-    for (const row of temporalLoadRows) {
-      const level: RecommendationConfidenceLevel = row.analysis.hasStaffDeficit
-        ? "media"
-        : row.analysis.hasPeak
-          ? "media"
-          : "baja";
-      const factor = confidenceFactor(level);
-      const impactEuro = row.analysis.hasPeak ? (row.analysis.estimatedImpact.evitaAperturaExtra ? 600 : 250) : 100;
-      const impactWeighted = impactEuro * factor * factor;
-      items.push({
-        title: `Personal por franja (${row.date} · ${row.shift === "morning" ? "Mañana" : "Tarde"})`,
-        action: row.analysis.hasPeak
-          ? `Añadir refuerzo de enfermería ${row.analysis.peakRangeLabel ?? "en franja pico"}`
-          : "Mantener dotación actual",
-        mainReason: executiveReasonByCategory("personal_franja"),
-        description: row.analysis.recommendation,
-        impactEuro,
-        confidenceLevel: level,
-        confidenceFactor: factor,
-        impactWeighted,
-        category: "personal_franja",
-      });
-    }
-
-    for (const c of turnProfitabilityMap.values()) {
-      if (c.estado !== "infrautilizado") continue;
-      const level: RecommendationConfidenceLevel = "media";
-      const factor = confidenceFactor(level);
-      const impactEuro = Math.max(0, c.margenTurno * 0.2);
-      const impactWeighted = impactEuro * factor * factor;
-      items.push({
-        title: `Reagrupar actividad (${c.date} · ${c.shift === "morning" ? "Mañana" : "Tarde"})`,
-        action: "Reagrupar actividad infrautilizada",
-        mainReason: executiveReasonByCategory("reagrupar_actividad"),
-        description: `Turno infrautilizado en ${c.resourceId}. Reagrupar puede mejorar densidad operativa sin cambios automáticos.`,
-        impactEuro,
-        confidenceLevel: level,
-        confidenceFactor: factor,
-        impactWeighted,
-        category: "reagrupar_actividad",
-      });
-    }
-
-    items.sort((a, b) => b.impactWeighted - a.impactWeighted);
-    return items;
-  }, [structuralOptimizationRows, temporalLoadRows, turnProfitabilityMap]);
-
-  const groupedUnifiedRecommendations = useMemo(() => {
-    const top = unifiedRecommendations.slice(0, 3);
-    const rest = unifiedRecommendations.slice(3);
-    const medio = rest.filter((r) => r.impactWeighted >= 300);
-    const bajo = rest.filter((r) => r.impactWeighted < 300);
-    return { top, medio, bajo };
-  }, [unifiedRecommendations]);
-
   const surgeonDynamicsRows = useMemo(
     () => analyzeSurgeonDynamics({ reservations, slotViews, economicConfig, usersDirectory }),
     [reservations, slotViews, economicConfig, usersDirectory]
@@ -1178,6 +1110,131 @@ export function CuadroDeMando({
       .sort((a, b) => (b.variabilidadDuracion ?? 0) - (a.variabilidadDuracion ?? 0))[0] ?? null;
     return { byActivity, byLead, byCancel, byVar };
   }, [surgeonDynamicsRows]);
+
+  const profitabilityAnalysis = useMemo(
+    () => analyzeBlockProfitability({ reservations, slotViews, economicConfig, usersDirectory }),
+    [reservations, slotViews, economicConfig, usersDirectory]
+  );
+
+  const profitabilityHasEnoughData = useMemo(
+    () =>
+      profitabilityAnalysis.byTurn.length >= 2 ||
+      profitabilityAnalysis.bySurgeon.length >= 2 ||
+      profitabilityAnalysis.byProcedure.length >= 2,
+    [profitabilityAnalysis]
+  );
+
+  const profitabilityView = useMemo(() => {
+    const lowOccupancyThreshold = 0.45;
+    const byTurn = profitabilityAnalysis.byTurn.filter((row) => {
+      if (profitabilityFilter === "todas") return true;
+      if (profitabilityFilter === "solo_perdidas") return row.band === "perdida";
+      if (profitabilityFilter === "solo_rentables") return row.band === "rentable";
+      return row.occupancy < lowOccupancyThreshold;
+    });
+    const bySurgeon = profitabilityAnalysis.bySurgeon.filter((row) => {
+      if (profitabilityFilter === "todas") return true;
+      if (profitabilityFilter === "solo_perdidas") return row.band === "perdida";
+      if (profitabilityFilter === "solo_rentables") return row.band === "rentable";
+      return false;
+    });
+    const byProcedure = profitabilityAnalysis.byProcedure.filter((row) => {
+      if (profitabilityFilter === "todas") return true;
+      if (profitabilityFilter === "solo_perdidas") return row.band === "perdida";
+      if (profitabilityFilter === "solo_rentables") return row.band === "rentable";
+      return false;
+    });
+    const topLossSources = profitabilityAnalysis.topLossSources.filter((loss) => {
+      if (profitabilityFilter === "todas") return true;
+      if (profitabilityFilter === "solo_perdidas") return loss.margin < 0;
+      if (profitabilityFilter === "solo_rentables") return loss.margin > 0;
+      return loss.source.startsWith("Turno");
+    });
+    return { byTurn, bySurgeon, byProcedure, topLossSources };
+  }, [profitabilityAnalysis, profitabilityFilter]);
+
+  const profitabilitySummary = useMemo(() => {
+    const marginTotal = profitabilityAnalysis.byTurn.reduce((sum, row) => sum + row.marginTotal, 0);
+    const turnoMasRentable = profitabilityAnalysis.byTurn[0] ?? null;
+    const mayorFuentePerdida = profitabilityAnalysis.topLossSources[0] ?? null;
+    const procedimientoMasRentable = profitabilityAnalysis.byProcedure[0] ?? null;
+    return { marginTotal, turnoMasRentable, mayorFuentePerdida, procedimientoMasRentable };
+  }, [profitabilityAnalysis]);
+
+  const unifiedRecommendations = useMemo(
+    () =>
+      buildUnifiedRecommendations({
+        structural: structuralOptimizationRows.map((row) => ({
+          date: row.date,
+          shift: row.shift,
+          currentRooms: row.simulation.current.openedOperatingRooms,
+          optimalRooms: row.simulation.optimal.openedOperatingRooms,
+          marginDelta: row.simulation.marginDeltaOptimalVsCurrent,
+          confidenceLevel: row.iterative.confidenceLevel,
+          recommendation: row.simulation.recommendation,
+        })),
+        temporal: temporalLoadRows.map((row) => ({
+          date: row.date,
+          shift: row.shift,
+          hasPeak: row.analysis.hasPeak,
+          hasStaffDeficit: row.analysis.hasStaffDeficit,
+          peakRangeLabel: row.analysis.peakRangeLabel,
+          estimatedImpact: row.analysis.estimatedImpact,
+          recommendation: row.analysis.recommendation,
+        })),
+        mapEconomic: [...turnProfitabilityMap.values()].map((c) => ({
+          date: c.date,
+          shift: c.shift,
+          resourceId: c.resourceId,
+          estado: c.estado,
+          margin: c.margenTurno,
+          minutosProgramados: c.minutosProgramados,
+        })),
+        surgeonDynamics: surgeonDynamicsRows.map((r) => ({
+          surgeonId: r.surgeonId,
+          surgeonName: r.surgeonName,
+          numeroReservas: r.numeroReservas,
+          tasaCancelacion: r.tasaCancelacion,
+          antelacionMediaDias: r.antelacionMediaDias,
+          variabilidadDuracion: r.variabilidadDuracion,
+        })),
+      }),
+    [structuralOptimizationRows, temporalLoadRows, turnProfitabilityMap, surgeonDynamicsRows]
+  );
+
+  const filteredUnifiedRecommendations = useMemo(() => {
+    return unifiedRecommendations.filter((r) => {
+      if (recommendationFilter === "todas") return true;
+      if (recommendationFilter === "impacto_neto_positivo") return r.netImpactEuro > 0;
+      if (recommendationFilter === "riesgo_operativo") {
+        return r.category === "BOTTLENECK" || r.category === "RISK_CONTAINMENT";
+      }
+      if (recommendationFilter === "perdidas_economicas") return r.category === "DIRECT_LOSS";
+      if (recommendationFilter === "oportunidades") return r.category === "ECONOMIC_OPPORTUNITY";
+      return r.confidenceLevel === "baja";
+    });
+  }, [unifiedRecommendations, recommendationFilter]);
+
+  const recommendationsByGroup = useMemo(() => {
+    const groups = {
+      riesgoOperativo: filteredUnifiedRecommendations
+        .filter((r) => r.category === "BOTTLENECK" || r.category === "RISK_CONTAINMENT")
+        .sort((a, b) => b.priorityScore - a.priorityScore),
+      perdidasEconomicas: filteredUnifiedRecommendations
+        .filter((r) => r.category === "DIRECT_LOSS")
+        .sort((a, b) => b.priorityScore - a.priorityScore),
+      ineficienciaEstructural: filteredUnifiedRecommendations
+        .filter((r) => r.category === "STRUCTURAL_INEFFICIENCY")
+        .sort((a, b) => b.priorityScore - a.priorityScore),
+      oportunidadesEconomicas: filteredUnifiedRecommendations
+        .filter((r) => r.category === "ECONOMIC_OPPORTUNITY")
+        .sort((a, b) => b.priorityScore - a.priorityScore),
+      calidadDatos: filteredUnifiedRecommendations
+        .filter((r) => r.category === "DATA_QUALITY")
+        .sort((a, b) => b.priorityScore - a.priorityScore),
+    };
+    return groups;
+  }, [filteredUnifiedRecommendations]);
 
   const mapExecutiveStats = useMemo(() => {
     const labelById = new Map(resources.map((r) => [r.id, r.label]));
@@ -1264,13 +1321,14 @@ export function CuadroDeMando({
         <h2 className="text-lg font-bold tracking-tight text-[var(--ribera-navy)]">Cuadro de mando</h2>
         <p className="mt-1 text-sm text-slate-600">Seguimiento operativo y económico semanal del bloque quirúrgico.</p>
         <p className="mt-1 text-xs text-slate-500">
-          El cuadro de mando está organizado por decisión: resumen, recomendaciones, mapa económico, bloque abierto,
-          personal y métricas.
+          El cuadro de mando está organizado por decisión: resumen, recomendaciones, análisis de rentabilidad, mapa
+          económico, bloque abierto, personal y métricas.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {[
             { id: "resumen", label: "Resumen" },
             { id: "recomendaciones", label: "Recomendaciones" },
+            { id: "analisis-rentabilidad", label: "Análisis de rentabilidad" },
             { id: "mapa-economico", label: "Mapa económico" },
             { id: "bloque-abierto", label: "Bloque abierto" },
             { id: "personal", label: "Personal" },
@@ -1977,82 +2035,348 @@ export function CuadroDeMando({
           </div>
         )}
 
+        {activeDashboardTab === "analisis-rentabilidad" && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
+            <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">Análisis de rentabilidad</h4>
+            <p className="mt-1 text-sm text-slate-700">
+              Visión simulada de las fuentes de margen y pérdida del bloque quirúrgico para orientar revisión ejecutiva.
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Semáforo: verde rentable, ámbar ajustado, rojo pérdida. No modifica programación real.
+            </p>
+            {!profitabilityHasEnoughData ? (
+              <p className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                No hay suficiente actividad para calcular rentabilidad con fiabilidad.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-slate-600">Margen total estimado</p>
+                    <p className="mt-1 text-lg font-bold text-slate-900">{formatEur(profitabilitySummary.marginTotal)}</p>
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-emerald-900">Turno más rentable</p>
+                    <p className="mt-1 text-sm font-semibold text-emerald-900">
+                      {profitabilitySummary.turnoMasRentable
+                        ? `${profitabilitySummary.turnoMasRentable.date} · ${
+                            profitabilitySummary.turnoMasRentable.shift === "morning" ? "Mañana" : "Tarde"
+                          }`
+                        : "Sin dato"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-rose-900">Mayor fuente de pérdida</p>
+                    <p className="mt-1 text-sm font-semibold text-rose-900">
+                      {profitabilitySummary.mayorFuentePerdida
+                        ? `${profitabilitySummary.mayorFuentePerdida.source}: ${formatEur(
+                            profitabilitySummary.mayorFuentePerdida.margin
+                          )}`
+                        : "Sin dato"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-3 shadow-sm">
+                    <p className="text-[11px] font-medium text-amber-900">Procedimiento más rentable</p>
+                    <p className="mt-1 text-sm font-semibold text-amber-900">
+                      {profitabilitySummary.procedimientoMasRentable?.procedure ?? "Sin dato"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    { id: "todas", label: "Todos" },
+                    { id: "solo_perdidas", label: "Solo pérdidas" },
+                    { id: "solo_rentables", label: "Solo rentables" },
+                    { id: "solo_baja_ocupacion", label: "Solo baja ocupación" },
+                  ].map((filter) => {
+                    const active = profitabilityFilter === (filter.id as ProfitabilityQuickFilter);
+                    return (
+                      <button
+                        key={filter.id}
+                        type="button"
+                        onClick={() => setProfitabilityFilter(filter.id as ProfitabilityQuickFilter)}
+                        className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                          active
+                            ? "border-[var(--ribera-navy)] bg-[var(--ribera-navy)] text-white"
+                            : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div className="rounded-lg border border-emerald-200 bg-white px-3 py-3 shadow-sm">
+                    <p className="text-xs font-semibold text-emerald-900">Top turnos más rentables</p>
+                    <div className="mt-2 space-y-2 text-xs">
+                      {profitabilityView.byTurn.slice(0, 5).map((row) => (
+                        <div key={`top-turn-${row.date}-${row.shift}`} className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium text-slate-800">
+                              {row.date} · {row.shift === "morning" ? "Mañana" : "Tarde"}
+                            </p>
+                            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${profitabilityBandPillClasses(row.band)}`}>
+                              {row.band}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-slate-700">
+                            Margen {formatEur(row.marginTotal)} · {Math.round(row.occupancy * 100)}% ocupación ·{" "}
+                            {Math.round(row.idleMinutes)} min ociosos
+                          </p>
+                        </div>
+                      ))}
+                      {profitabilityView.byTurn.length === 0 ? (
+                        <p className="text-slate-500">No hay turnos para el filtro seleccionado.</p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-rose-200 bg-white px-3 py-3 shadow-sm">
+                    <p className="text-xs font-semibold text-rose-900">Turnos con pérdidas</p>
+                    <div className="mt-2 space-y-2 text-xs">
+                      {profitabilityView.byTurn
+                        .filter((row) => row.marginTotal < 0)
+                        .slice(0, 5)
+                        .map((row) => (
+                          <div key={`loss-turn-${row.date}-${row.shift}`} className="rounded border border-rose-200 bg-rose-50/50 px-2 py-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-medium text-rose-900">
+                                {row.date} · {row.shift === "morning" ? "Mañana" : "Tarde"}
+                              </p>
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[11px] ${profitabilityBandPillClasses(
+                                  row.band
+                                )}`}
+                              >
+                                {row.band}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-rose-900">
+                              Margen {formatEur(row.marginTotal)} · {Math.round(row.occupancy * 100)}% ocupación
+                            </p>
+                          </div>
+                        ))}
+                      {profitabilityView.byTurn.filter((row) => row.marginTotal < 0).length === 0 ? (
+                        <p className="text-slate-500">No hay turnos con pérdida para el filtro seleccionado.</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-800">Cirujanos con mayor margen asociado y variabilidad</p>
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="min-w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-600">
+                            <th className="px-2 py-1">Cirujano</th>
+                            <th className="px-2 py-1 text-right">Mayor margen asociado</th>
+                            <th className="px-2 py-1 text-right">Duración media</th>
+                            <th className="px-2 py-1 text-right">Variabilidad</th>
+                            <th className="px-2 py-1 text-right">Cancelación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {profitabilityView.bySurgeon.slice(0, 6).map((row) => (
+                            <tr key={`profit-surgeon-${row.surgeonId}`} className="border-b border-slate-100 last:border-0">
+                              <td className="px-2 py-1.5">
+                                <span className={`rounded-full border px-2 py-0.5 text-[11px] ${profitabilityBandPillClasses(row.band)}`}>
+                                  {row.surgeonName}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.avgMargin != null ? formatEur(row.avgMargin) : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.avgDuration != null ? `${Math.round(row.avgDuration)} min` : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.variability != null ? `${row.variability.toFixed(1)} min` : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{row.cancellationRate.toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {profitabilityView.bySurgeon.length === 0 ? (
+                      <p className="mt-2 text-xs text-slate-500">No hay cirujanos para el filtro seleccionado.</p>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-800">Procedimientos más rentables</p>
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="min-w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-600">
+                            <th className="px-2 py-1">Procedimiento</th>
+                            <th className="px-2 py-1 text-right">Margen medio</th>
+                            <th className="px-2 py-1 text-right">Duración media</th>
+                            <th className="px-2 py-1 text-right">Variabilidad</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {profitabilityView.byProcedure.slice(0, 6).map((row) => (
+                            <tr key={`profit-procedure-${row.procedure}`} className="border-b border-slate-100 last:border-0">
+                              <td className="px-2 py-1.5">
+                                <span className={`rounded-full border px-2 py-0.5 text-[11px] ${profitabilityBandPillClasses(row.band)}`}>
+                                  {row.procedure}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.avgMargin != null ? formatEur(row.avgMargin) : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.avgDuration != null ? `${Math.round(row.avgDuration)} min` : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">
+                                {row.variability != null ? `${row.variability.toFixed(1)} min` : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {profitabilityView.byProcedure.length === 0 ? (
+                      <p className="mt-2 text-xs text-slate-500">No hay procedimientos para el filtro seleccionado.</p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50/60 px-3 py-3 shadow-sm">
+                  <p className="text-xs font-semibold text-rose-900">Top 3 fuentes de pérdida</p>
+                  <ul className="mt-2 space-y-1 text-xs text-rose-900">
+                    {profitabilityView.topLossSources.length === 0 ? (
+                      <li>No se detectan fuentes de pérdida con el filtro activo.</li>
+                    ) : (
+                      profitabilityView.topLossSources.slice(0, 3).map((loss, index) => (
+                        <li key={`loss-source-${index}`}>
+                          {index + 1}. {loss.source}: {formatEur(loss.margin)}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {activeDashboardTab === "recomendaciones" && (
         <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-5">
           <h4 className="text-base font-bold tracking-tight text-[var(--ribera-navy)]">
-            🔥 Recomendaciones principales (top impacto)
+            Decisiones prioritarias
           </h4>
           <p className="mt-1 text-xs text-slate-600">
-            Ordenado por impacto económico estimado ajustado por confianza.
+            QXFlow prioriza dónde revisar primero: distingue entre pérdidas económicas, cuellos de botella,
+            oportunidades y problemas de calidad de datos. Las recomendaciones son simuladas y no modifican la programación.
           </p>
-          <p className="mt-1 text-xs text-slate-600">
-            Estas recomendaciones no modifican la programación; priorizan dónde revisar primero.
-          </p>
-          <div className="mt-3 space-y-2">
-            {groupedUnifiedRecommendations.top.length === 0 ? (
-              <p className="text-xs text-slate-500">No hay recomendaciones disponibles.</p>
-            ) : (
-              groupedUnifiedRecommendations.top.map((r, i) => {
-                const badge = structuralConfidenceBadge(r.confidenceLevel);
-                return (
-                  <div key={`top-rec-${i}`} className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-semibold text-slate-800">{r.title}</p>
-                    </div>
-                    <p className="mt-1 text-sm font-semibold text-[var(--ribera-navy)]">{r.action}</p>
-                    <p className="mt-0.5 text-xs text-slate-600">Motivo principal: {r.mainReason}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>
-                        {badge.label}
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        Impacto bruto: {formatEur(r.impactEuro)} · Ajustado: {formatEur(r.impactWeighted)}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-amber-900">Requiere validación manual antes de aplicar.</p>
-                    <details className="mt-2 rounded border border-slate-200 bg-slate-50/60 px-2 py-1">
-                      <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">Detalle técnico</summary>
-                      <p className="mt-1 text-[11px] text-slate-600">{r.description}</p>
-                    </details>
-                  </div>
-                );
-              })
-            )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[
+              { id: "todas", label: "Todas" },
+              { id: "impacto_neto_positivo", label: "Impacto neto positivo" },
+              { id: "riesgo_operativo", label: "Riesgo operativo" },
+              { id: "perdidas_economicas", label: "Pérdidas económicas" },
+              { id: "oportunidades", label: "Oportunidades" },
+              { id: "baja_confianza", label: "Baja confianza" },
+            ].map((f) => {
+              const active = recommendationFilter === (f.id as RecommendationQuickFilter);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setRecommendationFilter(f.id as RecommendationQuickFilter)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                    active
+                      ? "border-[var(--ribera-navy)] bg-[var(--ribera-navy)] text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
           </div>
 
-          <details className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-700">Impacto medio</summary>
-            <div className="mt-2 space-y-1">
-              {groupedUnifiedRecommendations.medio.length === 0 ? (
-                <p className="text-xs text-slate-500">Sin recomendaciones de impacto medio.</p>
-              ) : (
-                groupedUnifiedRecommendations.medio.map((r, i) => (
-                  <p key={`mid-rec-${i}`} className="text-xs text-slate-700">
-                    {r.action} · bruto {formatEur(r.impactEuro)} · ajustado {formatEur(r.impactWeighted)} · confianza{" "}
-                    {r.confidenceLevel}.
-                  </p>
-                ))
-              )}
-            </div>
-          </details>
+          {[
+            { key: "riesgoOperativo", label: "Riesgo operativo", items: recommendationsByGroup.riesgoOperativo },
+            { key: "perdidasEconomicas", label: "Pérdidas económicas", items: recommendationsByGroup.perdidasEconomicas },
+            {
+              key: "ineficienciaEstructural",
+              label: "Ineficiencia estructural",
+              items: recommendationsByGroup.ineficienciaEstructural,
+            },
+            {
+              key: "oportunidadesEconomicas",
+              label: "Oportunidades económicas",
+              items: recommendationsByGroup.oportunidadesEconomicas,
+            },
+            { key: "calidadDatos", label: "Calidad de datos", items: recommendationsByGroup.calidadDatos },
+          ]
+            .filter((group) => group.items.length > 0)
+            .map((group) => (
+              <div key={group.key} className="mt-4 space-y-2">
+                <h5 className="text-sm font-semibold text-[var(--ribera-navy)]">{group.label}</h5>
+                {group.items.map((r) => {
+                  const badge = structuralConfidenceBadge(r.confidenceLevel);
+                  const outcome = decisionOutcomeBadge(r.decisionOutcome);
+                  return (
+                    <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                          {r.category}
+                        </span>
+                        <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                          Urgencia: {r.urgency}
+                        </span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                        <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcome.className}`}>
+                          {outcome.label}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-[var(--ribera-navy)]">{r.action}</p>
+                      <p className="mt-0.5 text-xs text-slate-600">Motivo principal: {r.mainReason}</p>
+                      {r.category === "BOTTLENECK" ? (
+                        <p className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                          Puede aumentar el coste directo, pero busca evitar una pérdida operativa mayor.
+                        </p>
+                      ) : null}
+                      <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-slate-700 sm:grid-cols-2">
+                        <p>Coste incremental: {formatEur(r.incrementalCostEuro)}</p>
+                        <p>Pérdida evitada: {formatEur(r.avoidedLossEuro)}</p>
+                        <p>Impacto neto: {formatEur(r.netImpactEuro)}</p>
+                        <p>Impacto ajustado: {formatEur(r.adjustedImpactEuro)}</p>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Si no actúas: pérdida estimada {formatEur(r.costOfInaction)}.
+                      </p>
+                      {r.isMisleadingRisk ? (
+                        <p className="mt-1 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-900">
+                          Riesgo de lectura engañosa: impacto bruto alto con neto/fiabilidad limitada.
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-xs font-medium text-amber-900">Simulación. Requiere validación manual.</p>
+                      <details className="mt-2 rounded border border-slate-200 bg-slate-50/60 px-2 py-1">
+                        <summary className="cursor-pointer text-[11px] font-semibold text-slate-700">Detalles</summary>
+                        <p className="mt-1 text-[11px] text-slate-600">{r.explanationForManager}</p>
+                        <p className="mt-1 text-[11px] text-slate-600">{r.technicalDetails}</p>
+                      </details>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
 
-          <details className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-              Impacto bajo / exploratorio
-            </summary>
-            <div className="mt-2 space-y-1">
-              {groupedUnifiedRecommendations.bajo.length === 0 ? (
-                <p className="text-xs text-slate-500">Sin recomendaciones exploratorias.</p>
-              ) : (
-                groupedUnifiedRecommendations.bajo.map((r, i) => (
-                  <p key={`low-rec-${i}`} className="text-xs text-slate-700">
-                    {r.action} · bruto {formatEur(r.impactEuro)} · ajustado {formatEur(r.impactWeighted)} · confianza{" "}
-                    {r.confidenceLevel}.
-                  </p>
-                ))
-              )}
-            </div>
-          </details>
+          {filteredUnifiedRecommendations.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500">No hay recomendaciones para el filtro seleccionado.</p>
+          ) : null}
         </div>
         )}
 
