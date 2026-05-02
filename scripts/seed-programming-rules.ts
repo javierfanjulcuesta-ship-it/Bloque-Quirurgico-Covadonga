@@ -24,6 +24,15 @@ const RULES = [
     valueJson: JSON.stringify({ text: NORMAS_PROGRAMACION_BLOQUE }),
   },
   {
+    key: "cirujano_aviso_coordinacion",
+    name: "Aviso de coordinación (cirujanos)",
+    description: "Norma breve category advisory; visible solo en lectura para cirujano/endoscopista",
+    category: "advisory",
+    valueJson: JSON.stringify({
+      text: "Antes de proponer bloques largos o fuera de patrón habitual, confirme con coordinación de quirófano y anestesia según protocolo del centro.",
+    }),
+  },
+  {
     key: "scheduling_deadline_day",
     name: "Día de cierre (0=Dom, 4=Jueves)",
     description: "Día de la semana en que cierra la reserva (jueves=4)",

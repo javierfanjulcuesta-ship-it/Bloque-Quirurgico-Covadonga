@@ -1,14 +1,15 @@
 /**
  * GET /api/programming-rules
  * Reglas de programación.
- * - Cirujano/Endoscopista: solo advisory (normas texto) para lectura.
- * - Gestor/GestorAnestesista: todas las reglas para ver y editar.
+ * - Cirujano/Endoscopista: normas_texto_completo y reglas category advisory (lectura, campo `content`).
+ * - Gestor/GestorAnestesista (rules:edit): todas las reglas completas para ver y editar.
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
 
 export interface ProgrammingRulePublic {
   key: string;
@@ -27,6 +28,23 @@ export interface ProgrammingRuleFull {
   updatedAt: string;
 }
 
+/** Texto legible para cirujano / endoscopista a partir de valueJson. */
+function programmingRuleToPublicContent(row: { key: string; valueJson: string | null }): string {
+  const raw = row.valueJson;
+  if (raw == null || raw.trim() === "") return "";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && "text" in parsed) {
+      const t = (parsed as { text: unknown }).text;
+      if (typeof t === "string") return t;
+    }
+    if (typeof parsed === "string") return parsed;
+  } catch {
+    return raw;
+  }
+  return raw;
+}
+
 export async function GET() {
   try {
     const session = toAuthSession(await getSessionFromCookie());
@@ -42,7 +60,7 @@ export async function GET() {
       orderBy: [{ category: "asc" }, { key: "asc" }],
     });
 
-    const rules: ProgrammingRuleFull[] = rows.map((r) => ({
+    const rulesFull: ProgrammingRuleFull[] = rows.map((r) => ({
       id: r.id,
       key: r.key,
       name: r.name,
@@ -53,7 +71,27 @@ export async function GET() {
       updatedAt: r.updatedAt.toISOString(),
     }));
 
-    return NextResponse.json({ rules });
+    const canEditRules = hasPermission(session!.role, "rules:edit");
+    if (canEditRules) {
+      return NextResponse.json({ rules: rulesFull });
+    }
+
+    const publicRows = rows.filter(
+      (r) =>
+        r.isActive &&
+        r.key !== ADMIN_NOTIFICATION_EMAIL_RULE_KEY &&
+        (r.key === "normas_texto_completo" || r.category === "advisory"),
+    );
+
+    const publicRules: ProgrammingRulePublic[] = publicRows
+      .map((r) => ({
+        key: r.key,
+        name: r.name,
+        content: programmingRuleToPublicContent(r),
+      }))
+      .filter((r) => r.content.trim() !== "");
+
+    return NextResponse.json({ rules: publicRules });
   } catch (err) {
     console.error("[programming-rules GET]", err);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

@@ -6,7 +6,7 @@
  * Si la API falla, muestra normas estáticas como fallback (nunca "no disponible").
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
 
@@ -21,6 +21,19 @@ interface ProgrammingRuleFull {
   updatedAt: string;
 }
 
+function parseAdminEmailFromValueJson(valueJson: string | null | undefined): string {
+  const raw = valueJson?.trim();
+  if (!raw) return "";
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return typeof v === "string" ? v : "";
+  } catch {
+    return raw.replace(/^"|"$/g, "");
+  }
+}
+
+const ADMIN_EMAIL_LABEL = "Email administrativo para financiación/autorizaciones";
+
 export function NormasGestorView() {
   const [rules, setRules] = useState<ProgrammingRuleFull[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +42,9 @@ export function NormasGestorView() {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -49,22 +65,21 @@ export function NormasGestorView() {
     fetchRules();
   }, [fetchRules]);
 
+  const adminSyncToken = useMemo(() => {
+    const r = rules.find((x) => x.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
+    return r ? `${r.id}:${r.updatedAt}` : "";
+  }, [rules]);
+
+  useEffect(() => {
+    if (!adminSyncToken) return;
+    const r = rules.find((x) => x.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
+    if (!r) return;
+    setAdminEmail(parseAdminEmailFromValueJson(r.valueJson));
+  }, [adminSyncToken]);
+
   const startEdit = (rule: ProgrammingRuleFull) => {
     setEditingId(rule.id);
-    if (rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY) {
-      const raw = rule.valueJson?.trim();
-      if (!raw) setEditValue("");
-      else {
-        try {
-          const v = JSON.parse(raw) as unknown;
-          setEditValue(typeof v === "string" ? v : "");
-        } catch {
-          setEditValue(raw.replace(/^"|"$/g, ""));
-        }
-      }
-    } else {
-      setEditValue(rule.valueJson ?? "");
-    }
+    setEditValue(rule.valueJson ?? "");
     setSaveError(null);
   };
 
@@ -79,14 +94,7 @@ export function NormasGestorView() {
     const rule = rules.find((r) => r.id === editingId);
     if (!rule) return;
     let valueToSend = editValue;
-    if (rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY) {
-      const t = editValue.trim();
-      if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
-        setSaveError("Introduzca un email válido o déjelo vacío");
-        return;
-      }
-      valueToSend = JSON.stringify(t);
-    } else if (
+    if (
       rule &&
       ["scheduling_deadline_day", "scheduling_deadline_hour", "scheduling_deadline_minute", "transition_minutes", "max_weeks_ahead"].includes(rule.key)
     ) {
@@ -117,6 +125,36 @@ export function NormasGestorView() {
     }
   };
 
+  const saveAdminEmail = async () => {
+    const adminRule = rules.find((r) => r.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
+    if (!adminRule) {
+      setAdminSaveError("No existe la regla admin_notification_email en la base de datos. Ejecute el seed de reglas.");
+      return;
+    }
+    const t = adminEmail.trim();
+    if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
+      setAdminSaveError("Introduzca un email válido o déjelo vacío");
+      return;
+    }
+    setAdminSaving(true);
+    setAdminSaveError(null);
+    try {
+      const res = await fetch(`/api/programming-rules/${adminRule.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ valueJson: JSON.stringify(t) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Error al guardar");
+      await fetchRules();
+    } catch (e) {
+      setAdminSaveError(e instanceof Error ? e.message : "Error al guardar");
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <section className="rounded-xl border border-gray-200 bg-white p-6">
@@ -138,6 +176,9 @@ export function NormasGestorView() {
     );
   }
 
+  const adminRule = rules.find((r) => r.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
+  const rulesSinAdmin = rules.filter((r) => r.key !== ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
+
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-6">
       <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Normas de programación</h2>
@@ -145,8 +186,55 @@ export function NormasGestorView() {
         Reglas editables. Los cambios afectan a correos, pestaña Normas de cirujanos y, cuando esté conectado, a la lógica de cierre.
       </p>
 
+      <div className="mb-8 rounded-lg border border-slate-200 bg-slate-50/80 p-5">
+        <h3 className="text-lg font-semibold text-[var(--ribera-navy)]">Notificaciones administrativas</h3>
+        <p className="mt-1 text-sm text-gray-600">
+          No crea un usuario administrativo; solo recibe avisos por correo.
+        </p>
+        {adminRule ? (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label htmlFor="admin-notification-email" className="mb-1 block text-sm font-medium text-gray-800">
+                {ADMIN_EMAIL_LABEL}
+              </label>
+              <input
+                id="admin-notification-email"
+                type="email"
+                autoComplete="off"
+                placeholder="ej. administracion@centro.es (opcional)"
+                value={adminEmail}
+                onChange={(e) => {
+                  setAdminEmail(e.target.value);
+                  setAdminSaveError(null);
+                }}
+                className="w-full max-w-xl rounded border border-gray-300 bg-white p-2 text-sm"
+              />
+            </div>
+            {adminSaveError && <p className="text-sm text-red-600">{adminSaveError}</p>}
+            <button
+              type="button"
+              onClick={saveAdminEmail}
+              disabled={adminSaving}
+              className="rounded-lg bg-[var(--ribera-red)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {adminSaving ? "Guardando…" : "Guardar email administrativo"}
+            </button>
+            <p className="text-xs text-gray-500">
+              Última actualización:{" "}
+              {adminRule.updatedAt ? new Date(adminRule.updatedAt).toLocaleString("es-ES") : "—"}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-amber-800">
+            Falta la regla <code className="rounded bg-white px-1">admin_notification_email</code>. Ejecute{" "}
+            <code className="rounded bg-white px-1">npm run rules:seed</code>.
+          </p>
+        )}
+      </div>
+
+      <h3 className="mb-3 text-base font-semibold text-gray-800">Otras reglas</h3>
       <div className="space-y-4">
-        {rules.map((rule) => (
+        {rulesSinAdmin.map((rule) => (
           <div
             key={rule.id}
             className="rounded-lg border border-gray-200 bg-gray-50/50 p-4"
@@ -165,21 +253,7 @@ export function NormasGestorView() {
 
             {editingId === rule.id ? (
               <div className="space-y-2">
-                {rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY ? (
-                  <div className="space-y-1">
-                    <input
-                      type="email"
-                      autoComplete="off"
-                      placeholder="ej. coordinacion@centro.es (opcional)"
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      className="w-full rounded border border-gray-300 p-2 text-sm"
-                    />
-                    <p className="text-xs text-gray-500">
-                      Solo notificaciones; no crea acceso a la aplicación. Si está vacío, el circuito registra que se omitió el aviso al administrativo.
-                    </p>
-                  </div>
-                ) : rule.key === "normas_texto_completo" ? (
+                {rule.key === "normas_texto_completo" ? (
                   <textarea
                     value={editValue.startsWith("{") ? (() => {
                       try {
@@ -228,18 +302,7 @@ export function NormasGestorView() {
             ) : (
               <div className="flex items-center justify-between gap-2">
                 <pre className="max-h-24 overflow-auto rounded bg-white p-2 text-xs text-gray-700">
-                  {rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY
-                    ? (() => {
-                        const raw = rule.valueJson?.trim();
-                        if (!raw) return "(vacío)";
-                        try {
-                          const v = JSON.parse(raw) as unknown;
-                          return typeof v === "string" && v ? v : "(vacío)";
-                        } catch {
-                          return raw;
-                        }
-                      })()
-                    : rule.key === "normas_texto_completo"
+                  {rule.key === "normas_texto_completo"
                     ? (() => {
                         try {
                           const o = rule.valueJson ? JSON.parse(rule.valueJson) : null;
