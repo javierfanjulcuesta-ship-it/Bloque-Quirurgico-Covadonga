@@ -10,6 +10,10 @@ import { canModifyPatientInBooking } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
+import {
+  defaultPatientCircuitColumns,
+  logPatientContactDryRunEvents,
+} from "@/lib/reservations/surgicalPatientCircuit";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { updatePatientSchema } from "@/lib/validations/reservation";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
@@ -57,6 +61,20 @@ export async function PATCH(
     }
 
     const { patientId, ...updates } = parsed.data;
+    const contactOnlyUpdate =
+      updates.patientEmail !== undefined || updates.patientPhone !== undefined;
+    const shouldReinitCircuitStatuses =
+      contactOnlyUpdate &&
+      updates.historyNumber === undefined &&
+      updates.fullName === undefined &&
+      updates.procedure === undefined &&
+      updates.estimatedDurationMinutes === undefined &&
+      updates.anesthesiaType === undefined &&
+      updates.insuranceType === undefined &&
+      updates.admissionType === undefined &&
+      updates.orderIndex === undefined &&
+      updates.notes === undefined &&
+      updates.solicitudRecursos === undefined;
 
     const patient = await prisma.patientInBlock.findFirst({
       where: { id: patientId, reservationId: id },
@@ -74,6 +92,11 @@ export async function PATCH(
     if (updates.orderIndex !== undefined) data.orderIndex = updates.orderIndex;
     if (updates.notes !== undefined) data.notes = updates.notes;
     if (updates.solicitudRecursos !== undefined) data.solicitudRecursos = updates.solicitudRecursos;
+    if (updates.patientEmail !== undefined) data.patientEmail = updates.patientEmail ?? null;
+    if (updates.patientPhone !== undefined) data.patientPhone = updates.patientPhone ?? null;
+    if (shouldReinitCircuitStatuses) {
+      Object.assign(data, defaultPatientCircuitColumns());
+    }
 
     if (updates.estimatedDurationMinutes !== undefined) {
       const dateStr = reservation.date instanceof Date
@@ -144,6 +167,21 @@ export async function PATCH(
       origin: "app",
       detailsJson: { patientId, fields: Object.keys(updates) },
     });
+
+    if (updates.patientEmail !== undefined || updates.patientPhone !== undefined) {
+      const emailAfter =
+        updates.patientEmail !== undefined ? updates.patientEmail ?? null : patient.patientEmail;
+      const phoneAfter =
+        updates.patientPhone !== undefined ? updates.patientPhone ?? null : patient.patientPhone;
+      await logPatientContactDryRunEvents({
+        reservationId: id,
+        patientId,
+        actorUserId: session!.userId,
+        origin: "app",
+        patientEmail: emailAfter,
+        patientPhone: phoneAfter,
+      });
+    }
 
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });

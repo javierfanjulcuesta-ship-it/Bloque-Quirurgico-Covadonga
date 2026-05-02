@@ -559,6 +559,8 @@ export function ProgramarPacientesModal({
         notes: notesJoined,
         solicitudRecursos: (p.solicitudRecursos ? p.solicitudRecursos : defaultSolicitud) as SolicitudRecursosId,
         order: i,
+        patientEmail: p.patientEmail?.trim() || undefined,
+        patientPhone: p.patientPhone?.trim() || undefined,
       };
     });
 
@@ -796,6 +798,28 @@ export function ProgramarPacientesModal({
                     onChange={(e) => updatePatient(index, "numeroHistoria", e.target.value)}
                     className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
                     required
+                  />
+                </label>
+                <label>
+                  <span className="block text-sm font-medium text-gray-700">Email del paciente (opcional)</span>
+                  <input
+                    type="email"
+                    autoComplete="off"
+                    value={p.patientEmail ?? ""}
+                    onChange={(e) => updatePatient(index, "patientEmail", e.target.value)}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="contacto@ejemplo.com"
+                  />
+                </label>
+                <label>
+                  <span className="block text-sm font-medium text-gray-700">Teléfono del paciente (opcional)</span>
+                  <input
+                    type="tel"
+                    autoComplete="off"
+                    value={p.patientPhone ?? ""}
+                    onChange={(e) => updatePatient(index, "patientPhone", e.target.value)}
+                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="Ej. 600 000 000"
                   />
                 </label>
                 <label>

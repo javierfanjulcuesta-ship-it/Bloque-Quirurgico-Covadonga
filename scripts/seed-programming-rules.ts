@@ -58,6 +58,14 @@ const RULES = [
     category: "scheduling",
     valueJson: JSON.stringify(4),
   },
+  {
+    key: "admin_notification_email",
+    name: "Email de notificación (administración externa)",
+    description:
+      "Dirección para avisos dry-run / futuros de financiación y autorización. No crea usuario en la app. Opcional: si está vacío no se bloquean reservas.",
+    category: "informational",
+    valueJson: JSON.stringify(""),
+  },
 ];
 
 async function main() {

@@ -129,6 +129,12 @@ export interface PatientInBlock {
   solicitudRecursos?: SolicitudRecursosId;
   /** Estado lógico del paciente dentro del bloque (por defecto SCHEDULED). */
   scheduleStatus?: PatientScheduleStatus;
+  /** Contacto para circuito preanestesia / notificaciones (fase 1: persistido, sin envío automático). */
+  patientEmail?: string;
+  patientPhone?: string;
+  workflowStatus?: string;
+  preanesthesiaStatus?: string;
+  financingStatus?: string;
 }
 
 /** Perfil extendido del usuario (foto, apellidos, teléfono, especialidad). Rellenado en primer acceso. */

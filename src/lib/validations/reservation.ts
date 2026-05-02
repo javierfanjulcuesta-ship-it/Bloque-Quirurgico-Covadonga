@@ -18,6 +18,16 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida (YYY
   { message: "Fecha no válida" }
 );
 
+const optionalPatientEmail = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().email("Email del paciente no válido").optional()
+);
+
+const optionalPatientPhone = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().max(40, "Teléfono demasiado largo").optional()
+);
+
 const patientSchema = z.object({
   historyNumber: z.string().min(1, "Nº historia obligatorio"),
   fullName: z.string().optional(),
@@ -29,6 +39,8 @@ const patientSchema = z.object({
   orderIndex: z.number().int().min(0),
   notes: z.string().optional(),
   solicitudRecursos: z.string().optional(),
+  patientEmail: optionalPatientEmail,
+  patientPhone: optionalPatientPhone,
 });
 
 export const createReservationSchema = z.object({
@@ -71,10 +83,13 @@ export const updatePatientSchema = z.object({
   orderIndex: z.number().int().min(0).optional(),
   notes: z.string().optional(),
   solicitudRecursos: z.string().optional(),
+  patientEmail: optionalPatientEmail,
+  patientPhone: optionalPatientPhone,
 }).refine((d) => {
   const hasUpdate = d.historyNumber !== undefined || d.fullName !== undefined || d.procedure !== undefined
     || d.estimatedDurationMinutes !== undefined || d.anesthesiaType !== undefined || d.insuranceType !== undefined
-    || d.admissionType !== undefined || d.orderIndex !== undefined || d.notes !== undefined || d.solicitudRecursos !== undefined;
+    || d.admissionType !== undefined || d.orderIndex !== undefined || d.notes !== undefined || d.solicitudRecursos !== undefined
+    || d.patientEmail !== undefined || d.patientPhone !== undefined;
   return hasUpdate;
 }, { message: "Proporcione al menos un campo a actualizar" });
 

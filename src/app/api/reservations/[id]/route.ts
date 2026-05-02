@@ -10,6 +10,7 @@ import { canAccessBooking } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { updateReservationSchema } from "@/lib/validations/reservation";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
+import { defaultPatientCircuitColumns, logNewPatientCircuitDryRunEvents } from "@/lib/reservations/surgicalPatientCircuit";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
 import {
@@ -142,10 +143,11 @@ export async function PATCH(
       );
     }
 
+    const addedMeta: { id: string; patientEmail?: string | null; patientPhone?: string | null }[] = [];
     await prisma.$transaction(async (tx) => {
       for (let i = 0; i < patients.length; i++) {
         const p = patients[i]!;
-        await tx.patientInBlock.create({
+        const row = await tx.patientInBlock.create({
           data: {
             reservationId: id,
             historyNumber: p.historyNumber,
@@ -158,7 +160,15 @@ export async function PATCH(
             orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
             notes: p.notes ?? null,
             solicitudRecursos: p.solicitudRecursos ?? null,
+            patientEmail: p.patientEmail ?? null,
+            patientPhone: p.patientPhone ?? null,
+            ...defaultPatientCircuitColumns(),
           },
+        });
+        addedMeta.push({
+          id: row.id,
+          patientEmail: p.patientEmail ?? null,
+          patientPhone: p.patientPhone ?? null,
         });
       }
 
@@ -170,6 +180,17 @@ export async function PATCH(
         },
       });
     });
+
+    for (const c of addedMeta) {
+      await logNewPatientCircuitDryRunEvents({
+        reservationId: id,
+        patientId: c.id,
+        actorUserId: session!.userId,
+        origin: "app",
+        patientEmail: c.patientEmail,
+        patientPhone: c.patientPhone,
+      });
+    }
 
     await logReservationEvent({
       eventType: "RESERVATION_UPDATED",

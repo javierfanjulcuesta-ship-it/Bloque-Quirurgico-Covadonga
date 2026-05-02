@@ -27,6 +27,11 @@ export interface ReservationWithPatients {
     orderIndex: number;
     notes: string | null;
     solicitudRecursos: string | null;
+    patientEmail: string | null;
+    patientPhone: string | null;
+    workflowStatus: string;
+    preanesthesiaStatus: string;
+    financingStatus: string;
   }>;
 }
 
@@ -54,6 +59,11 @@ export function toApiReservation(r: ReservationWithPatients) {
       orderIndex: p.orderIndex,
       notes: p.notes ?? undefined,
       solicitudRecursos: p.solicitudRecursos ?? undefined,
+      patientEmail: p.patientEmail ?? undefined,
+      patientPhone: p.patientPhone ?? undefined,
+      workflowStatus: p.workflowStatus,
+      preanesthesiaStatus: p.preanesthesiaStatus,
+      financingStatus: p.financingStatus,
     })),
   };
 }
@@ -82,6 +92,11 @@ const RESERVATION_SELECT = {
       orderIndex: true,
       notes: true,
       solicitudRecursos: true,
+      patientEmail: true,
+      patientPhone: true,
+      workflowStatus: true,
+      preanesthesiaStatus: true,
+      financingStatus: true,
     },
   },
 } as const;

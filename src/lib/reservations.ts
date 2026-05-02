@@ -103,6 +103,8 @@ export interface UpdatePatientData {
   admissionType?: PatientInBlock["admissionType"];
   notes?: string;
   solicitudRecursos?: PatientInBlock["solicitudRecursos"];
+  patientEmail?: string;
+  patientPhone?: string;
 }
 
 /** Cancelar un paciente. En modoDemo no disponible (usa API real si useRealReservationsApi). */
@@ -144,5 +146,7 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     admissionType: data.admissionType,
     notes: data.notes,
     solicitudRecursos: data.solicitudRecursos,
+    patientEmail: data.patientEmail?.trim() || undefined,
+    patientPhone: data.patientPhone?.trim() || undefined,
   });
 }

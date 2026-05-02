@@ -3,14 +3,12 @@
  * Reglas de programación.
  * - Cirujano/Endoscopista: solo advisory (normas texto) para lectura.
  * - Gestor/GestorAnestesista: todas las reglas para ver y editar.
- *
- * NOTA: Desactivado temporalmente porque ProgrammingRule no existe en schema.prisma
- * del proyecto desplegado.
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, hasPermission } from "@/lib/auth";
+import { prisma } from "@/lib/db/prisma";
 
 export interface ProgrammingRulePublic {
   key: string;
@@ -40,11 +38,22 @@ export async function GET() {
       return NextResponse.json({ error: "Sin acceso a esta información" }, { status: 403 });
     }
 
-    // Modelo ProgrammingRule no existe en schema.prisma desplegado.
-    return NextResponse.json(
-      { error: "Reglas de programación no disponibles temporalmente" },
-      { status: 503 }
-    );
+    const rows = await prisma.programmingRule.findMany({
+      orderBy: [{ category: "asc" }, { key: "asc" }],
+    });
+
+    const rules: ProgrammingRuleFull[] = rows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      name: r.name,
+      description: r.description,
+      category: r.category,
+      valueJson: r.valueJson,
+      isActive: r.isActive,
+      updatedAt: r.updatedAt.toISOString(),
+    }));
+
+    return NextResponse.json({ rules });
   } catch (err) {
     console.error("[programming-rules GET]", err);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db/prisma";
 import { createReservationSchema } from "@/lib/validations/reservation";
 import type { CreateReservationInput } from "@/lib/validations/reservation";
 import { logReservationEvent } from "./logReservationEvent";
+import { defaultPatientCircuitColumns, logNewPatientCircuitDryRunEvents } from "./surgicalPatientCircuit";
 import {
   findOverflowConflictAgainstOccupiedSlots,
   findOverflowInvaderForTargetSlot,
@@ -107,10 +108,11 @@ export async function createReservationInDb(
             message: "La duración total invade un tramo ya ocupado por otra reserva con pacientes",
           };
         }
+        const circuitMeta: { id: string; patientEmail?: string | null; patientPhone?: string | null }[] = [];
         await prisma.$transaction(async (tx) => {
           for (let i = 0; i < patients.length; i++) {
             const p = patients[i]!;
-            await tx.patientInBlock.create({
+            const row = await tx.patientInBlock.create({
               data: {
                 reservationId: existing.id,
                 historyNumber: p.historyNumber,
@@ -123,7 +125,15 @@ export async function createReservationInDb(
                 orderIndex: p.orderIndex ?? i,
                 notes: p.notes ?? null,
                 solicitudRecursos: p.solicitudRecursos ?? null,
+                patientEmail: p.patientEmail ?? null,
+                patientPhone: p.patientPhone ?? null,
+                ...defaultPatientCircuitColumns(),
               },
+            });
+            circuitMeta.push({
+              id: row.id,
+              patientEmail: p.patientEmail ?? null,
+              patientPhone: p.patientPhone ?? null,
             });
           }
           await tx.reservation.update({
@@ -134,6 +144,17 @@ export async function createReservationInDb(
             },
           });
         });
+        const originLower = origin.toLowerCase() as "app" | "email" | "gestor";
+        for (const c of circuitMeta) {
+          await logNewPatientCircuitDryRunEvents({
+            reservationId: existing.id,
+            patientId: c.id,
+            actorUserId,
+            origin: originLower,
+            patientEmail: c.patientEmail,
+            patientPhone: c.patientPhone,
+          });
+        }
         await logReservationEvent({
           eventType: "RESERVATION_UPDATED",
           reservationId: existing.id,
@@ -158,6 +179,7 @@ export async function createReservationInDb(
       };
     }
     if (existing.status === "CANCELLED" || existing.status === "RELEASED") {
+      const reusedMeta: { id: string; patientEmail?: string | null; patientPhone?: string | null }[] = [];
       await prisma.$transaction(async (tx) => {
         await tx.patientInBlock.deleteMany({ where: { reservationId: existing.id } });
         await tx.reservation.update({
@@ -176,7 +198,7 @@ export async function createReservationInDb(
         });
         for (let i = 0; i < patients.length; i++) {
           const p = patients[i]!;
-          await tx.patientInBlock.create({
+          const row = await tx.patientInBlock.create({
             data: {
               reservationId: existing.id,
               historyNumber: p.historyNumber,
@@ -189,10 +211,29 @@ export async function createReservationInDb(
               orderIndex: p.orderIndex ?? i,
               notes: p.notes ?? null,
               solicitudRecursos: p.solicitudRecursos ?? null,
+              patientEmail: p.patientEmail ?? null,
+              patientPhone: p.patientPhone ?? null,
+              ...defaultPatientCircuitColumns(),
             },
+          });
+          reusedMeta.push({
+            id: row.id,
+            patientEmail: p.patientEmail ?? null,
+            patientPhone: p.patientPhone ?? null,
           });
         }
       });
+      const originLowerReuse = origin.toLowerCase() as "app" | "email" | "gestor";
+      for (const c of reusedMeta) {
+        await logNewPatientCircuitDryRunEvents({
+          reservationId: existing.id,
+          patientId: c.id,
+          actorUserId,
+          origin: originLowerReuse,
+          patientEmail: c.patientEmail,
+          patientPhone: c.patientPhone,
+        });
+      }
       const eventType = origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED";
       await logReservationEvent({
         eventType,
@@ -246,9 +287,13 @@ export async function createReservationInDb(
             orderIndex: p.orderIndex ?? i,
             notes: p.notes ?? null,
             solicitudRecursos: p.solicitudRecursos ?? null,
+            patientEmail: p.patientEmail ?? null,
+            patientPhone: p.patientPhone ?? null,
+            ...defaultPatientCircuitColumns(),
           })),
         },
       },
+      include: { patients: true },
     });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
@@ -270,6 +315,20 @@ export async function createReservationInDb(
     origin: origin.toLowerCase() as "app" | "email" | "gestor",
     detailsJson: { date, resourceId, shift, slotIndex },
   });
+
+  const originLowerNew = origin.toLowerCase() as "app" | "email" | "gestor";
+  for (let i = 0; i < reservation.patients.length; i++) {
+    const row = reservation.patients[i]!;
+    const src = patients[i];
+    await logNewPatientCircuitDryRunEvents({
+      reservationId: reservation.id,
+      patientId: row.id,
+      actorUserId,
+      origin: originLowerNew,
+      patientEmail: src?.patientEmail ?? row.patientEmail,
+      patientPhone: src?.patientPhone ?? row.patientPhone,
+    });
+  }
 
   return { ok: true, reservationId: reservation.id };
 }

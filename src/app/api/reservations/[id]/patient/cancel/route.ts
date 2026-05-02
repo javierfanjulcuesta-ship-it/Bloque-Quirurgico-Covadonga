@@ -130,6 +130,19 @@ export async function PATCH(
       },
     });
 
+    await logReservationEvent({
+      eventType: "PATIENT_SURGICAL_CIRCUIT_SUSPENDED",
+      reservationId: id,
+      actorUserId: session!.userId,
+      origin: "app",
+      detailsJson: {
+        patientId,
+        historyNumber: patient.historyNumber,
+        dryRun: true,
+        reason: reasonTrimmed ?? null,
+      },
+    });
+
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 

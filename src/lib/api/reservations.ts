@@ -31,6 +31,11 @@ export interface ApiPatient {
   orderIndex: number;
   notes?: string;
   solicitudRecursos?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+  workflowStatus?: string;
+  preanesthesiaStatus?: string;
+  financingStatus?: string;
 }
 
 export interface CreateReservationPayload {
@@ -54,6 +59,8 @@ export interface ApiPatientInput {
   orderIndex: number;
   notes?: string;
   solicitudRecursos?: string;
+  patientEmail?: string;
+  patientPhone?: string;
 }
 
 export interface FetchReservationsFilters {
@@ -101,6 +108,11 @@ export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
     order: api.orderIndex,
     solicitudRecursos: api.solicitudRecursos as PatientInBlock["solicitudRecursos"],
     scheduleStatus: "SCHEDULED",
+    patientEmail: api.patientEmail,
+    patientPhone: api.patientPhone,
+    workflowStatus: api.workflowStatus,
+    preanesthesiaStatus: api.preanesthesiaStatus,
+    financingStatus: api.financingStatus,
   };
 }
 
@@ -134,6 +146,8 @@ export function mapPatientToApi(p: Omit<PatientInBlock, "id" | "order"> & { orde
     orderIndex: p.order ?? 0,
     notes: p.notes ?? "",
     solicitudRecursos: p.solicitudRecursos,
+    patientEmail: p.patientEmail?.trim() || undefined,
+    patientPhone: p.patientPhone?.trim() || undefined,
   };
 }
 

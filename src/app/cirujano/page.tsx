@@ -262,6 +262,8 @@ export default function CirujanoPage() {
     entidadFinanciadora: string;
     admissionType: "ingreso" | "ambulatorio";
     notes: string;
+    patientEmail: string;
+    patientPhone: string;
   } | null>(null);
   const [savingEditedPatient, setSavingEditedPatient] = useState(false);
   const [gestorSurgeonSoloId, setGestorSurgeonSoloId] = useState("");
@@ -584,6 +586,8 @@ export default function CirujanoPage() {
         entidadFinanciadora: editingPatient.entidadFinanciadora.trim(),
         admissionType: editingPatient.admissionType,
         notes: editingPatient.notes,
+        patientEmail: editingPatient.patientEmail.trim() || undefined,
+        patientPhone: editingPatient.patientPhone.trim() || undefined,
       });
       setEditingPatient(null);
       await refreshReservations();
@@ -1068,6 +1072,8 @@ export default function CirujanoPage() {
                                     entidadFinanciadora: patient.entidadFinanciadora ?? "",
                                     admissionType: patient.admissionType ?? "ambulatorio",
                                     notes: patient.notes ?? "",
+                                    patientEmail: patient.patientEmail ?? "",
+                                    patientPhone: patient.patientPhone ?? "",
                                   })
                                 }
                                 className="min-h-10 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-100"
@@ -1357,6 +1363,26 @@ export default function CirujanoPage() {
               <label className="sm:col-span-2">
                 <span className="block text-sm font-medium text-gray-700">Notas</span>
                 <input className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={editingPatient.notes} onChange={(e) => setEditingPatient((prev) => prev ? { ...prev, notes: e.target.value } : prev)} />
+              </label>
+              <label>
+                <span className="block text-sm font-medium text-gray-700">Email del paciente (opcional)</span>
+                <input
+                  type="email"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  value={editingPatient.patientEmail}
+                  onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, patientEmail: e.target.value } : prev))}
+                />
+              </label>
+              <label>
+                <span className="block text-sm font-medium text-gray-700">Teléfono (opcional)</span>
+                <input
+                  type="tel"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  value={editingPatient.patientPhone}
+                  onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, patientPhone: e.target.value } : prev))}
+                />
               </label>
             </div>
             <div className="mt-5 flex justify-end gap-2">

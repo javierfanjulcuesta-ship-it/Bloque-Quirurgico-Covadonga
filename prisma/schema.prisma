@@ -93,6 +93,13 @@ enum ReservationEventType {
   RESERVATION_PATIENT_UPDATED
   RESERVATION_PATIENT_REPLACED
   RESERVATION_PATIENT_CANCELLED
+  /** Circuito quirúrgico (fase 1): trazabilidad dry-run, sin envío real */
+  PATIENT_WORKFLOW_STARTED
+  PREANESTHESIA_PENDING
+  PATIENT_NOTIFICATION_DRY_RUN_CREATED
+  ADMIN_NOTIFICATION_DRY_RUN_CREATED
+  ADMIN_NOTIFICATION_SKIPPED_NO_EMAIL
+  PATIENT_SURGICAL_CIRCUIT_SUSPENDED
 }
 
 model ReservationEvent {
@@ -146,6 +153,13 @@ model PatientInBlock {
   orderIndex               Int
   notes                    String?
   solicitudRecursos        String?
+  /** Contacto del paciente (circuito preanestesia / notificaciones futuras) */
+  patientEmail             String?
+  patientPhone             String?
+  /** Estado del circuito clínico-administrativo (fase 1: valores iniciales, sin motor) */
+  workflowStatus           String      @default("ACTIVE")
+  preanesthesiaStatus      String      @default("PENDING")
+  financingStatus          String      @default("PENDING")
 
   reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 }

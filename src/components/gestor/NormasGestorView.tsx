@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
+import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
 
 interface ProgrammingRuleFull {
   id: string;
@@ -50,7 +51,20 @@ export function NormasGestorView() {
 
   const startEdit = (rule: ProgrammingRuleFull) => {
     setEditingId(rule.id);
-    setEditValue(rule.valueJson ?? "");
+    if (rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY) {
+      const raw = rule.valueJson?.trim();
+      if (!raw) setEditValue("");
+      else {
+        try {
+          const v = JSON.parse(raw) as unknown;
+          setEditValue(typeof v === "string" ? v : "");
+        } catch {
+          setEditValue(raw.replace(/^"|"$/g, ""));
+        }
+      }
+    } else {
+      setEditValue(rule.valueJson ?? "");
+    }
     setSaveError(null);
   };
 
@@ -63,8 +77,19 @@ export function NormasGestorView() {
   const saveEdit = async () => {
     if (!editingId) return;
     const rule = rules.find((r) => r.id === editingId);
+    if (!rule) return;
     let valueToSend = editValue;
-    if (rule && ["scheduling_deadline_day", "scheduling_deadline_hour", "scheduling_deadline_minute", "transition_minutes", "max_weeks_ahead"].includes(rule.key)) {
+    if (rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY) {
+      const t = editValue.trim();
+      if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
+        setSaveError("Introduzca un email válido o déjelo vacío");
+        return;
+      }
+      valueToSend = JSON.stringify(t);
+    } else if (
+      rule &&
+      ["scheduling_deadline_day", "scheduling_deadline_hour", "scheduling_deadline_minute", "transition_minutes", "max_weeks_ahead"].includes(rule.key)
+    ) {
       const n = Number(editValue);
       if (Number.isNaN(n)) {
         setSaveError("Debe ser un número");
@@ -140,7 +165,21 @@ export function NormasGestorView() {
 
             {editingId === rule.id ? (
               <div className="space-y-2">
-                {rule.key === "normas_texto_completo" ? (
+                {rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY ? (
+                  <div className="space-y-1">
+                    <input
+                      type="email"
+                      autoComplete="off"
+                      placeholder="ej. coordinacion@centro.es (opcional)"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      className="w-full rounded border border-gray-300 p-2 text-sm"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Solo notificaciones; no crea acceso a la aplicación. Si está vacío, el circuito registra que se omitió el aviso al administrativo.
+                    </p>
+                  </div>
+                ) : rule.key === "normas_texto_completo" ? (
                   <textarea
                     value={editValue.startsWith("{") ? (() => {
                       try {
@@ -189,7 +228,18 @@ export function NormasGestorView() {
             ) : (
               <div className="flex items-center justify-between gap-2">
                 <pre className="max-h-24 overflow-auto rounded bg-white p-2 text-xs text-gray-700">
-                  {rule.key === "normas_texto_completo"
+                  {rule.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY
+                    ? (() => {
+                        const raw = rule.valueJson?.trim();
+                        if (!raw) return "(vacío)";
+                        try {
+                          const v = JSON.parse(raw) as unknown;
+                          return typeof v === "string" && v ? v : "(vacío)";
+                        } catch {
+                          return raw;
+                        }
+                      })()
+                    : rule.key === "normas_texto_completo"
                     ? (() => {
                         try {
                           const o = rule.valueJson ? JSON.parse(rule.valueJson) : null;
