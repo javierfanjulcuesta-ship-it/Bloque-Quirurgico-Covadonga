@@ -36,6 +36,9 @@ export interface ApiPatient {
   workflowStatus?: string;
   preanesthesiaStatus?: string;
   financingStatus?: string;
+  preanesthesiaAppointmentAt?: string;
+  isDeferredUrgency?: boolean;
+  specialCircuitReason?: string;
 }
 
 export interface CreateReservationPayload {
@@ -61,6 +64,8 @@ export interface ApiPatientInput {
   solicitudRecursos?: string;
   patientEmail?: string;
   patientPhone?: string;
+  isDeferredUrgency?: boolean;
+  specialCircuitReason?: string;
 }
 
 export interface FetchReservationsFilters {
@@ -113,6 +118,9 @@ export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
     workflowStatus: api.workflowStatus,
     preanesthesiaStatus: api.preanesthesiaStatus,
     financingStatus: api.financingStatus,
+    preanesthesiaAppointmentAt: api.preanesthesiaAppointmentAt,
+    isDeferredUrgency: api.isDeferredUrgency,
+    specialCircuitReason: api.specialCircuitReason,
   };
 }
 
@@ -148,6 +156,10 @@ export function mapPatientToApi(p: Omit<PatientInBlock, "id" | "order"> & { orde
     solicitudRecursos: p.solicitudRecursos,
     patientEmail: p.patientEmail?.trim() || undefined,
     patientPhone: p.patientPhone?.trim() || undefined,
+    isDeferredUrgency: p.isDeferredUrgency === true ? true : undefined,
+    specialCircuitReason: p.isDeferredUrgency && p.specialCircuitReason?.trim()
+      ? p.specialCircuitReason.trim()
+      : undefined,
   };
 }
 

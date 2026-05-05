@@ -32,6 +32,9 @@ export interface ReservationWithPatients {
     workflowStatus: string;
     preanesthesiaStatus: string;
     financingStatus: string;
+    preanesthesiaAppointmentAt: Date | null;
+    isDeferredUrgency: boolean;
+    specialCircuitReason: string | null;
   }>;
 }
 
@@ -64,6 +67,11 @@ export function toApiReservation(r: ReservationWithPatients) {
       workflowStatus: p.workflowStatus,
       preanesthesiaStatus: p.preanesthesiaStatus,
       financingStatus: p.financingStatus,
+      preanesthesiaAppointmentAt: p.preanesthesiaAppointmentAt
+        ? p.preanesthesiaAppointmentAt.toISOString()
+        : undefined,
+      isDeferredUrgency: p.isDeferredUrgency,
+      specialCircuitReason: p.specialCircuitReason ?? undefined,
     })),
   };
 }
@@ -97,6 +105,9 @@ const RESERVATION_SELECT = {
       workflowStatus: true,
       preanesthesiaStatus: true,
       financingStatus: true,
+      preanesthesiaAppointmentAt: true,
+      isDeferredUrgency: true,
+      specialCircuitReason: true,
     },
   },
 } as const;

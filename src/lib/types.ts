@@ -135,6 +135,10 @@ export interface PatientInBlock {
   workflowStatus?: string;
   preanesthesiaStatus?: string;
   financingStatus?: string;
+  /** Cita preanestesia autocitada (ISO); ausente si pendiente o urgencia diferida */
+  preanesthesiaAppointmentAt?: string;
+  isDeferredUrgency?: boolean;
+  specialCircuitReason?: string;
 }
 
 /** Perfil extendido del usuario (foto, apellidos, teléfono, especialidad). Rellenado en primer acceso. */

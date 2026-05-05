@@ -1,6 +1,7 @@
 /**
- * Circuito quirúrgico del paciente (fase 1): estados por defecto, email de notificación
- * para administración externa (no es usuario ni rol de la app) y trazabilidad dry-run.
+ * Circuito quirúrgico del paciente: estados por defecto, email de notificación externa
+ * (no es usuario ni rol de la app) y trazabilidad dry-run. La fase 2 (preanestesia / urgencia diferida)
+ * vive en `patientCircuitPhase2.ts`.
  */
 
 import { prisma } from "@/lib/db/prisma";
@@ -17,6 +18,8 @@ export function defaultPatientCircuitColumns() {
     workflowStatus: DEFAULT_WORKFLOW_STATUS,
     preanesthesiaStatus: DEFAULT_PREANESTHESIA_STATUS,
     financingStatus: DEFAULT_FINANCING_STATUS,
+    isDeferredUrgency: false,
+    specialCircuitReason: null as string | null,
   };
 }
 
@@ -40,61 +43,6 @@ export async function getAdminNotificationEmail(): Promise<string | null> {
   }
   const plain = raw.replace(/^"|"$/g, "").trim();
   return plain.length > 0 && plain.includes("@") ? plain.toLowerCase() : null;
-}
-
-export interface LogNewPatientCircuitDryRunParams {
-  reservationId: string;
-  patientId: string;
-  actorUserId?: string | null;
-  origin?: ReservationEventOrigin | null;
-  patientEmail: string | null | undefined;
-  patientPhone: string | null | undefined;
-}
-
-/** Eventos de arranque de circuito (sin envío real). */
-export async function logNewPatientCircuitDryRunEvents(params: LogNewPatientCircuitDryRunParams): Promise<void> {
-  const { reservationId, patientId, actorUserId, origin, patientEmail, patientPhone } = params;
-  const adminEmail = await getAdminNotificationEmail();
-  const base = { dryRun: true, patientId, patientEmail: patientEmail ?? null, patientPhone: patientPhone ?? null };
-
-  await logReservationEvent({
-    eventType: "PATIENT_WORKFLOW_STARTED",
-    reservationId,
-    actorUserId,
-    origin: origin ?? "app",
-    detailsJson: { ...base, workflowStatus: DEFAULT_WORKFLOW_STATUS },
-  });
-  await logReservationEvent({
-    eventType: "PREANESTHESIA_PENDING",
-    reservationId,
-    actorUserId,
-    origin: origin ?? "app",
-    detailsJson: { ...base, preanesthesiaStatus: DEFAULT_PREANESTHESIA_STATUS },
-  });
-  await logReservationEvent({
-    eventType: "PATIENT_NOTIFICATION_DRY_RUN_CREATED",
-    reservationId,
-    actorUserId,
-    origin: origin ?? "app",
-    detailsJson: { ...base, channel: "email", wouldSendTo: patientEmail?.trim() || null },
-  });
-  if (adminEmail) {
-    await logReservationEvent({
-      eventType: "ADMIN_NOTIFICATION_DRY_RUN_CREATED",
-      reservationId,
-      actorUserId,
-      origin: origin ?? "app",
-      detailsJson: { ...base, channel: "email", wouldSendTo: adminEmail, purpose: "financing_authorization" },
-    });
-  } else {
-    await logReservationEvent({
-      eventType: "ADMIN_NOTIFICATION_SKIPPED_NO_EMAIL",
-      reservationId,
-      actorUserId,
-      origin: origin ?? "app",
-      detailsJson: { ...base, ruleKey: ADMIN_NOTIFICATION_EMAIL_RULE_KEY },
-    });
-  }
 }
 
 export interface LogPatientContactDryRunParams {

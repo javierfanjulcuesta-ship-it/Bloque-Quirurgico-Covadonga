@@ -45,9 +45,9 @@ export const AFTERNOON_SLOTS: TimeSlot[] = [
 /** Días laborables */
 export const WEEKDAYS = ["lunes", "martes", "miércoles", "jueves", "viernes"] as const;
 
-/** Consulta de preanestesia: lunes y jueves mañana, máx 12 pacientes */
+/** Consulta de preanestesia: lunes y jueves mañana, máx 16 pacientes por día (autocita fase 2) */
 export const PREANESTHESIA_DAYS: ("monday" | "thursday")[] = ["monday", "thursday"];
-export const PREANESTHESIA_MAX_PATIENTS = 12;
+export const PREANESTHESIA_MAX_PATIENTS = 16;
 
 /** Cierre reserva: jueves 00:00 cierra la semana siguiente; máximo 4 semanas por delante */
 export const SCHEDULING_DEADLINE_DAY = 4;

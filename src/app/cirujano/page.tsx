@@ -796,11 +796,12 @@ export default function CirujanoPage() {
     setErrorNotification(null);
     try {
       const surgeonIdTarget = surgeonIdTargetForResolve;
+      let anyDeferredUrgency = false;
       for (let idx = 0; idx < selectedSlots.length; idx++) {
         const slot = selectedSlots[idx]!;
         const resolvedId = result.resolved.get(`${slot.date}-${slot.shift}-${slot.slotIndex}`) ?? (slot.resourceId as ResourceId);
         const slotPatients = idx === 0 ? patientsWithOrder : [];
-        await createReservationEntry({
+        const created = await createReservationEntry({
           date: slot.date,
           resourceId: resolvedId,
           shift: slot.shift,
@@ -808,13 +809,24 @@ export default function CirujanoPage() {
           surgeonId: surgeonIdTarget,
           patients: slotPatients,
         });
+        if (
+          created.patients.some(
+            (p) => p.isDeferredUrgency || p.workflowStatus === "MANUAL_REVIEW_REQUIRED",
+          )
+        ) {
+          anyDeferredUrgency = true;
+        }
       }
       setSelectedKeys(new Set());
       setGestorSurgeonSoloId("");
       setShowProgramarModal(false);
       await refreshReservations();
-      setNotification("Pacientes programados correctamente.");
-      setTimeout(() => setNotification(null), 4000);
+      setNotification(
+        anyDeferredUrgency
+          ? "Pacientes guardados. Este paciente no será citado automáticamente en preanestesia. Contacte con el equipo de gestión del bloque quirúrgico."
+          : "Pacientes programados correctamente.",
+      );
+      setTimeout(() => setNotification(null), 6000);
     } catch (err) {
       const msg = err instanceof ReservationsApiError ? err.message : "Error al programar pacientes";
       setErrorNotification(msg);

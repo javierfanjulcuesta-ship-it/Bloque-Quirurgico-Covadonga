@@ -28,6 +28,11 @@ const optionalPatientPhone = z.preprocess(
   z.string().max(40, "Teléfono demasiado largo").optional()
 );
 
+const optionalSpecialReason = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().max(4000, "Motivo demasiado largo").optional()
+);
+
 const patientSchema = z.object({
   historyNumber: z.string().min(1, "Nº historia obligatorio"),
   fullName: z.string().optional(),
@@ -41,6 +46,8 @@ const patientSchema = z.object({
   solicitudRecursos: z.string().optional(),
   patientEmail: optionalPatientEmail,
   patientPhone: optionalPatientPhone,
+  isDeferredUrgency: z.boolean().optional().default(false),
+  specialCircuitReason: optionalSpecialReason,
 });
 
 export const createReservationSchema = z.object({

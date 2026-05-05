@@ -10,7 +10,8 @@ import { canAccessBooking } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { updateReservationSchema } from "@/lib/validations/reservation";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
-import { defaultPatientCircuitColumns, logNewPatientCircuitDryRunEvents } from "@/lib/reservations/surgicalPatientCircuit";
+import { patientFieldsForCreate } from "@/lib/reservations/createReservationInDb";
+import { applyAndLogPatientCircuitPhase2 } from "@/lib/reservations/patientCircuitPhase2";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
 import {
@@ -143,33 +144,23 @@ export async function PATCH(
       );
     }
 
-    const addedMeta: { id: string; patientEmail?: string | null; patientPhone?: string | null }[] = [];
+    const addedMeta: { id: string; orderIndex: number }[] = [];
     await prisma.$transaction(async (tx) => {
       for (let i = 0; i < patients.length; i++) {
         const p = patients[i]!;
         const row = await tx.patientInBlock.create({
           data: {
             reservationId: id,
-            historyNumber: p.historyNumber,
-            fullName: p.fullName ?? null,
-            procedure: p.procedure,
-            estimatedDurationMinutes: p.estimatedDurationMinutes,
-            anesthesiaType: p.anesthesiaType,
-            insuranceType: p.insuranceType,
-            admissionType: p.admissionType ?? null,
-            orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
-            notes: p.notes ?? null,
-            solicitudRecursos: p.solicitudRecursos ?? null,
-            patientEmail: p.patientEmail ?? null,
-            patientPhone: p.patientPhone ?? null,
-            ...defaultPatientCircuitColumns(),
+            ...patientFieldsForCreate(
+              {
+                ...p,
+                orderIndex: (p as { orderIndex?: number }).orderIndex ?? i,
+              } as Parameters<typeof patientFieldsForCreate>[0],
+              i,
+            ),
           },
         });
-        addedMeta.push({
-          id: row.id,
-          patientEmail: p.patientEmail ?? null,
-          patientPhone: p.patientPhone ?? null,
-        });
+        addedMeta.push({ id: row.id, orderIndex: row.orderIndex });
       }
 
       await tx.reservation.update({
@@ -181,16 +172,28 @@ export async function PATCH(
       });
     });
 
-    for (const c of addedMeta) {
-      await logNewPatientCircuitDryRunEvents({
-        reservationId: id,
-        patientId: c.id,
-        actorUserId: session!.userId,
-        origin: "app",
-        patientEmail: c.patientEmail,
-        patientPhone: c.patientPhone,
-      });
-    }
+    const surgeryYmd =
+      reservation.date instanceof Date
+        ? reservation.date.toISOString().slice(0, 10)
+        : String(reservation.date).slice(0, 10);
+    const pSorted = [...patients].sort((a, b) => ((a as { orderIndex?: number }).orderIndex ?? 0) - ((b as { orderIndex?: number }).orderIndex ?? 0));
+    const cSorted = [...addedMeta].sort((a, b) => a.orderIndex - b.orderIndex);
+    await applyAndLogPatientCircuitPhase2(prisma, {
+      reservationId: id,
+      surgeryYmd,
+      actorUserId: session!.userId,
+      origin: "app",
+      patients: cSorted.map((row, i) => {
+        const src = pSorted[i]!;
+        return {
+          patientId: row.id,
+          isDeferredUrgency: !!src.isDeferredUrgency,
+          specialCircuitReason: src.isDeferredUrgency ? (src.specialCircuitReason?.trim() || null) : null,
+          patientEmail: src.patientEmail,
+          patientPhone: src.patientPhone,
+        };
+      }),
+    });
 
     await logReservationEvent({
       eventType: "RESERVATION_UPDATED",

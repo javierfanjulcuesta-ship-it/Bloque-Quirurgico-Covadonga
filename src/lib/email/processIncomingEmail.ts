@@ -37,6 +37,7 @@ function toCreateReservationInput(parsed: ParsedReservationEmail) {
     admissionType: (p.admissionType === "ingreso" ? "ingreso" : "ambulatorio") as "ingreso" | "ambulatorio",
     orderIndex: i,
     notes: p.notes ?? undefined,
+    isDeferredUrgency: false,
   }));
   const validResources = ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"] as const;
   const resourceId = validResources.includes(parsed.resourceId as (typeof validResources)[number])

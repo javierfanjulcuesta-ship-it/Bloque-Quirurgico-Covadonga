@@ -444,7 +444,7 @@ export function ProgramarPacientesModal({
 
   const addPatient = () => setPatients((prev) => [...prev, {}]);
   const removePatient = (index: number) => setPatients((prev) => prev.filter((_, i) => i !== index));
-  const updatePatient = (index: number, field: keyof PatientInBlock, value: string | number) => {
+  const updatePatient = (index: number, field: keyof PatientInBlock, value: string | number | boolean) => {
     setPatients((prev) => prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
   };
   const updateSolicitudRecursos = (index: number, value: SolicitudRecursosId | "") => {
@@ -561,6 +561,8 @@ export function ProgramarPacientesModal({
         order: i,
         patientEmail: p.patientEmail?.trim() || undefined,
         patientPhone: p.patientPhone?.trim() || undefined,
+        isDeferredUrgency: !!p.isDeferredUrgency,
+        specialCircuitReason: p.isDeferredUrgency ? (p.specialCircuitReason?.trim() || undefined) : undefined,
       };
     });
 
@@ -822,6 +824,41 @@ export function ProgramarPacientesModal({
                     placeholder="Ej. 600 000 000"
                   />
                 </label>
+                <div className="sm:col-span-2 rounded-lg border border-amber-100 bg-amber-50/60 p-3">
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!!p.isDeferredUrgency}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setPatients((prev) =>
+                          prev.map((row, i) =>
+                            i === index
+                              ? { ...row, isDeferredUrgency: checked, specialCircuitReason: checked ? row.specialCircuitReason : "" }
+                              : row,
+                          ),
+                        );
+                      }}
+                      className="mt-0.5 h-4 w-4 rounded border-amber-300 text-[var(--ribera-red)] focus:ring-[var(--ribera-red)]"
+                    />
+                    <span className="text-sm font-medium text-slate-800">Urgencia diferida / caso especial</span>
+                  </label>
+                  <p className="mt-1 pl-6 text-xs text-slate-600">
+                    Si lo marca, no se autocitará preanestesia; el equipo de gestión revisará el caso.
+                  </p>
+                  {p.isDeferredUrgency ? (
+                    <label className="mt-2 block pl-6">
+                      <span className="block text-sm font-medium text-gray-700">Motivo / comentario (opcional)</span>
+                      <textarea
+                        value={p.specialCircuitReason ?? ""}
+                        onChange={(e) => updatePatient(index, "specialCircuitReason", e.target.value)}
+                        rows={2}
+                        className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                        placeholder="Ej. Coordinación con otra unidad, documentación pendiente…"
+                      />
+                    </label>
+                  ) : null}
+                </div>
                 <label>
                   <span className="block text-sm font-medium text-gray-700">Entidad gestora *</span>
                   <input
