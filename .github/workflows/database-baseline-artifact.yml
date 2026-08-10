@@ -6,6 +6,7 @@ on:
       - hardening/p0-database-baseline
   pull_request:
     branches:
+      - hardening/integration
       - restore-checkpoint-c905836
       - main
 
@@ -29,6 +30,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
       DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +76,23 @@ jobs:
 
       - name: Generate Prisma client
         run: npx prisma generate
+
+      - name: Verify guarded db push is blocked in CI
+        run: |
+          if npm run db:push; then
+            echo "db:push unexpectedly succeeded in CI"
+            exit 1
+          fi
+          echo "db:push correctly blocked"
+
+      - name: P0 regression tests
+        run: npm test
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
 
       - name: Upload generated baseline for review
         uses: actions/upload-artifact@v4
