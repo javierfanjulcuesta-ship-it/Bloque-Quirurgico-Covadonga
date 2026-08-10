@@ -1,0 +1,37 @@
+name: Seed security CI
+
+on:
+  push:
+    branches:
+      - hardening/p0-seed-security
+  pull_request:
+    branches:
+      - hardening/integration
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Reject known hardcoded seed credentials in executable scripts
+        run: |
+          if grep -R -n --include='*.ts' -E 'Piloto2024!|password:[[:space:]]*"123"|hash\("123"' prisma scripts; then
+            echo "Known hardcoded seed credential pattern found"
+            exit 1
+          fi
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+      - run: npm run lint
