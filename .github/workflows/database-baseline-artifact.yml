@@ -30,7 +30,7 @@ jobs:
       - name: Generate baseline SQL from empty schema
         run: |
           mkdir -p baseline-artifact
-          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output baseline-artifact/migration.sql
+          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output baseline-artifact/migration.sql
 
       - name: Verify baseline is non-empty and contains core tables
         run: |
