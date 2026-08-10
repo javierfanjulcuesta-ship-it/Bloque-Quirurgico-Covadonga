@@ -1,5 +1,8 @@
 /**
  * Mapeo entre roles de Prisma (enum) y formato del frontend (string).
+ *
+ * Seguridad: el mapeo es fail-closed. Un rol desconocido nunca puede
+ * convertirse por defecto en un perfil privilegiado.
  */
 
 import type { UserRole } from "@prisma/client";
@@ -25,7 +28,7 @@ const TO_PRISMA: Record<string, UserRole> = {
 export function roleToFrontend(role: UserRole | string): FrontendRole {
   if (role in TO_FRONTEND) return TO_FRONTEND[role as UserRole];
   if (role in TO_PRISMA) return role as FrontendRole;
-  return "gestor";
+  throw new Error("Rol de usuario no reconocido");
 }
 
 export function roleToPrisma(role: string): UserRole | null {

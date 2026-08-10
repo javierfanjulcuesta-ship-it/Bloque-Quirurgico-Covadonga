@@ -1,11 +1,18 @@
 /**
  * Sesiones JWT para autenticación real.
  * Cookie httpOnly con token firmado.
+ *
+ * Importante: una firma JWT válida no basta para autorizar. Cada lectura de
+ * sesión revalida que la cuenta siga existiendo, aprobada y no eliminada, y
+ * usa los datos/rol actuales de la base de datos.
  */
 
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db/prisma";
+import { roleToFrontend } from "@/lib/roleMapping";
+import { isActiveUserRecord } from "./activeUser";
 
 export const COOKIE_NAME = "bloque_session";
 const MAX_AGE = 60 * 60 * 24 * 3; // 3 días (piloto: sesiones más cortas)
@@ -39,6 +46,15 @@ export async function createSession(payload: Omit<SessionPayload, "exp">): Promi
 export async function verifySession(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecret());
+    if (
+      typeof payload.userId !== "string" ||
+      typeof payload.email !== "string" ||
+      typeof payload.name !== "string" ||
+      typeof payload.role !== "string" ||
+      typeof payload.exp !== "number"
+    ) {
+      return null;
+    }
     return payload as unknown as SessionPayload;
   } catch {
     return null;
@@ -75,12 +91,43 @@ export async function setSessionCookie(token: string): Promise<void> {
   cookieStore.set(COOKIE_NAME, token, getCookieOptions());
 }
 
+/**
+ * Obtiene una sesión efectiva y revalida la cuenta en BD.
+ *
+ * Esto invalida inmediatamente (en la siguiente petición) un JWT previamente
+ * emitido si el usuario fue desactivado, eliminado o ya no existe. También
+ * evita conservar privilegios antiguos tras un cambio de rol.
+ */
 export async function getSessionFromCookie(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
-  const cookie = cookieStore.get(COOKIE_NAME);
-  const token = cookie?.value;
+  const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
-  return verifySession(token);
+
+  const verified = await verifySession(token);
+  if (!verified) return null;
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: verified.userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      approved: true,
+      deletedAt: true,
+    },
+  });
+
+  if (!isActiveUserRecord(dbUser)) return null;
+
+  return {
+    userId: dbUser.id,
+    email: dbUser.email,
+    name: dbUser.name,
+    role: roleToFrontend(dbUser.role),
+    approved: true,
+    exp: verified.exp,
+  };
 }
 
 export async function removeSessionCookie(): Promise<void> {
