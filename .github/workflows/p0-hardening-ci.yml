@@ -1,0 +1,47 @@
+name: P0 hardening CI
+
+on:
+  push:
+    branches:
+      - hardening/p0-auth-security
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: P0 regression tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint (informational while pre-existing debt is resolved)
+        continue-on-error: true
+        run: npm run lint

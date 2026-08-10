@@ -13,6 +13,7 @@ import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { patientFieldsForCreate } from "@/lib/reservations/createReservationInDb";
 import { applyAndLogPatientCircuitPhase2 } from "@/lib/reservations/patientCircuitPhase2";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
+import { getReservationDetailAccess } from "@/lib/reservations/reservationAccessPolicy";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
 import {
   findOverflowConflictAgainstOccupiedSlots,
@@ -21,11 +22,6 @@ import {
 } from "@/lib/reservations/overflowConflicts";
 
 export const dynamic = "force-dynamic";
-
-function hasFullReservationView(role: string): boolean {
-  const r = role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
-  return r === "gestor" || r === "gestor-anestesista" || r === "anestesista";
-}
 
 export async function GET(
   _request: Request,
@@ -45,15 +41,25 @@ export async function GET(
     const reservation = await fetchReservationForAccess(id);
     if (!reservation) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
 
-    const canView = hasFullReservationView(session!.role) || canAccessBooking(session, toBookingLike(reservation), "booking:view:own");
-    if (!canView) {
+    const access = getReservationDetailAccess(session, reservation);
+    if (access === "denied") {
       return NextResponse.json({ error: "No tiene permiso para ver esta reserva" }, { status: 403 });
     }
 
     const apiReservation = toApiReservation(reservation as Parameters<typeof toApiReservation>[0]);
+    if (access === "schedule-only") {
+      return NextResponse.json({
+        reservation: {
+          ...apiReservation,
+          surgeonId: "[otro]",
+          patients: [],
+        },
+      });
+    }
+
     return NextResponse.json({ reservation: apiReservation });
   } catch (err) {
-    console.error("[reservations GET id]", err);
+    console.error("[reservations GET id]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error al cargar reserva" }, { status: 500 });
   }
 }
@@ -210,7 +216,7 @@ export async function PATCH(
     return NextResponse.json({ reservation: apiReservation });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error al actualizar";
-    console.error("[reservations PATCH id]", err);
+    console.error("[reservations PATCH id]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 }
