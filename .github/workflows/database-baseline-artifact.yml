@@ -1,0 +1,48 @@
+name: Database baseline artifact
+
+on:
+  push:
+    branches:
+      - hardening/p0-database-baseline
+
+jobs:
+  generate-baseline:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate baseline SQL from empty schema
+        run: |
+          mkdir -p baseline-artifact
+          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output baseline-artifact/migration.sql
+
+      - name: Verify baseline is non-empty and contains core tables
+        run: |
+          test -s baseline-artifact/migration.sql
+          grep -q 'CREATE TABLE "User"' baseline-artifact/migration.sql
+          grep -q 'CREATE TABLE "Reservation"' baseline-artifact/migration.sql
+          grep -q 'CREATE TABLE "PatientInBlock"' baseline-artifact/migration.sql
+          grep -q 'CREATE TABLE "UserAuditEvent"' baseline-artifact/migration.sql
+
+      - name: Upload baseline for review only
+        uses: actions/upload-artifact@v4
+        with:
+          name: prisma-baseline-review
+          path: baseline-artifact/migration.sql
+          if-no-files-found: error
