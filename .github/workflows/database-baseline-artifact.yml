@@ -1,16 +1,34 @@
-name: Database baseline artifact
+name: Database baseline verification
 
 on:
   push:
     branches:
       - hardening/p0-database-baseline
+  pull_request:
+    branches:
+      - restore-checkpoint-c905836
+      - main
 
 jobs:
-  generate-baseline:
+  verify-baseline:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: qxflow_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qxflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,22 +45,37 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: Generate baseline SQL from empty schema
+      - name: Generate current-schema baseline artifact
         run: |
           mkdir -p baseline-artifact
-          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output baseline-artifact/migration.sql
+          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output baseline-artifact/generated-from-schema.sql
+          test -s baseline-artifact/generated-from-schema.sql
+          grep -q 'CREATE TABLE "User"' baseline-artifact/generated-from-schema.sql
+          grep -q 'CREATE TABLE "Reservation"' baseline-artifact/generated-from-schema.sql
+          grep -q 'CREATE TABLE "PatientInBlock"' baseline-artifact/generated-from-schema.sql
+          grep -q 'CREATE TABLE "UserAuditEvent"' baseline-artifact/generated-from-schema.sql
 
-      - name: Verify baseline is non-empty and contains core tables
+      - name: Verify active migration chain contains only baseline
         run: |
-          test -s baseline-artifact/migration.sql
-          grep -q 'CREATE TABLE "User"' baseline-artifact/migration.sql
-          grep -q 'CREATE TABLE "Reservation"' baseline-artifact/migration.sql
-          grep -q 'CREATE TABLE "PatientInBlock"' baseline-artifact/migration.sql
-          grep -q 'CREATE TABLE "UserAuditEvent"' baseline-artifact/migration.sql
+          test -f prisma/migrations/0_baseline_current/migration.sql
+          count=$(find prisma/migrations -mindepth 2 -maxdepth 2 -name migration.sql | wc -l)
+          test "$count" -eq 1
 
-      - name: Upload baseline for review only
+      - name: Apply migration chain to fresh PostgreSQL
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        run: npx prisma migrate status
+
+      - name: Verify database matches Prisma schema after deploy
+        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Upload generated baseline for review
         uses: actions/upload-artifact@v4
         with:
           name: prisma-baseline-review
-          path: baseline-artifact/migration.sql
+          path: baseline-artifact/generated-from-schema.sql
           if-no-files-found: error
