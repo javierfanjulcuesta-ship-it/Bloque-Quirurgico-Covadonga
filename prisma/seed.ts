@@ -1,37 +1,43 @@
 /**
- * Seed de usuarios de prueba para piloto.
- * Ejecutar: npx prisma db seed
+ * Seed de usuarios ficticios para desarrollo/piloto controlado.
  *
- * Usuarios creados (contraseña común: Piloto2024!):
- * - gestor@hospital.es     → Gestor (GESTOR)
- * - anestesista1@hospital.es → Anestesista 1
- * - anestesista2@hospital.es → Anestesista 2
- * - cirujano@hospital.es  → Cirujano piloto
+ * Seguridad:
+ * - no contiene contraseñas en el repositorio;
+ * - no imprime contraseñas;
+ * - está bloqueado en producción/Vercel;
+ * - requiere confirmación y password por variables de entorno.
+ *
+ * Ejemplo PowerShell (solo entorno no productivo):
+ *   $env:ALLOW_PILOT_SEED="I_UNDERSTAND_PILOT_SEED"
+ *   $env:PILOT_SEED_PASSWORD="una-contraseña-larga-y-unica"
+ *   npx prisma db seed
  */
 
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { assertSeedAllowed, requireSeedConfirmation, requireSecretEnv } from "../scripts/lib/seedSafety";
 
 const prisma = new PrismaClient();
-
-const PASSWORD = "Piloto2024!";
 
 const USERS = [
   { email: "gestor@hospital.es", name: "Gestor Piloto", role: "GESTOR" as const },
   { email: "anestesista1@hospital.es", name: "Anestesista 1", role: "ANESTESISTA" as const },
   { email: "anestesista2@hospital.es", name: "Anestesista 2", role: "ANESTESISTA" as const },
-  { email: "cirujano@hospital.es", name: "Cirujano Piloto", role: "CIRUJANO" as const },
+  { email: "cirujano@hospital.es", name: "Cirujano piloto", role: "CIRUJANO" as const },
 ];
 
 async function main() {
+  assertSeedAllowed("prisma seed de usuarios piloto");
+  requireSeedConfirmation("ALLOW_PILOT_SEED", "I_UNDERSTAND_PILOT_SEED");
+  const password = requireSecretEnv("PILOT_SEED_PASSWORD", 12);
+
   const count = await prisma.user.count();
   if (count > 0) {
-    console.log("Ya hay usuarios en la BD. No se ejecuta seed.");
-    console.log("Credenciales piloto (si se ejecutó antes): gestor@hospital.es / Piloto2024!");
+    console.log("Ya hay usuarios en la BD. No se ejecuta seed de usuarios piloto.");
     return;
   }
 
-  const passwordHash = await hash(PASSWORD, 12);
+  const passwordHash = await hash(password, 12);
 
   for (const u of USERS) {
     await prisma.user.create({
@@ -43,20 +49,15 @@ async function main() {
         approved: true,
       },
     });
-    console.log(`Creado: ${u.email} (${u.role})`);
+    console.log(`Creado usuario ficticio: ${u.email} (${u.role})`);
   }
 
-  console.log("\n--- Usuarios piloto creados ---");
-  console.log("Contraseña para todos: Piloto2024!");
-  console.log("- gestor@hospital.es");
-  console.log("- anestesista1@hospital.es");
-  console.log("- anestesista2@hospital.es");
-  console.log("- cirujano@hospital.es");
+  console.log(`Seed completado: ${USERS.length} usuarios ficticios creados. La contraseña no se muestra en logs.`);
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
