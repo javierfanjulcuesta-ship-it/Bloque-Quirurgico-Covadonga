@@ -67,26 +67,67 @@ export function madridSlotKeyFromUtc(d: Date): string {
   return `${ymd}|${hh}:${mm}`;
 }
 
-/** UTC instant cuyo reloj en Madrid coincide con ymd + hora local. */
+function madridParts(d: Date): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number.parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10);
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+  };
+}
+
+/**
+ * UTC instant cuyo reloj en Madrid coincide con ymd + hora local.
+ *
+ * La versión anterior recorría minuto a minuto hasta 72 horas con Intl, lo que
+ * mantenía innecesariamente el lock de autocita durante mucho tiempo. Esta
+ * versión converge corrigiendo el desfase de pared en como máximo tres pasos.
+ * Los slots reales (10:00–12:30) nunca caen en la hora ambigua del cambio DST.
+ */
 export function utcDateForMadridWallClock(ymd: string, hour: number, minute: number): Date {
   const [Y, M, D] = ymd.split("-").map(Number);
-  const lo = Date.UTC(Y, M - 1, D - 1, 0, 0, 0);
-  const hi = Date.UTC(Y, M - 1, D + 2, 0, 0, 0);
-  for (let t = lo; t < hi; t += 60_000) {
-    const dt = new Date(t);
-    const ymdOk = new Intl.DateTimeFormat("sv-SE", { timeZone: TZ }).format(dt);
-    if (ymdOk !== ymd) continue;
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: TZ,
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(dt);
-    const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "-1", 10);
-    const mi = parseInt(parts.find((p) => p.type === "minute")?.value ?? "-1", 10);
-    if (h === hour && mi === minute) return dt;
+  const desiredAsUtc = Date.UTC(Y, M - 1, D, hour, minute, 0, 0);
+  let candidate = new Date(desiredAsUtc);
+
+  for (let i = 0; i < 3; i++) {
+    const actual = madridParts(candidate);
+    const actualAsUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      0,
+      0,
+    );
+    const delta = desiredAsUtc - actualAsUtc;
+    if (delta === 0) return candidate;
+    candidate = new Date(candidate.getTime() + delta);
   }
-  return new Date(Date.UTC(Y, M - 1, D, Math.max(0, hour - 2), minute, 0));
+
+  // Defensa: validar que la convergencia realmente produjo el reloj solicitado.
+  const final = madridParts(candidate);
+  if (
+    final.year !== Y ||
+    final.month !== M ||
+    final.day !== D ||
+    final.hour !== hour ||
+    final.minute !== minute
+  ) {
+    throw new Error(`No se pudo resolver hora Europe/Madrid para ${ymd} ${pad2(hour)}:${pad2(minute)}`);
+  }
+  return candidate;
 }
 
 export async function loadPreanesthesiaOccupiedKeys(
