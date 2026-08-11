@@ -1,178 +1,147 @@
 # DATABASE_BASELINE_PLAN.md
 
-**Objetivo:** reconciliar Git ↔ `schema.prisma` ↔ `prisma/migrations` ↔ BD producción (Supabase/Neon) **sin pérdida de datos**.  
-**Estado:** PROPUESTA — **NO EJECUTAR** hasta autorización explícita.  
-**Prohibido:** `migrate reset`, `db push` a prod, DROP, force push, borrar ramas.
+**Objetivo:** reconciliar Git ↔ `schema.prisma` ↔ migraciones ↔ Supabase producción sin pérdida de datos.
 
----
+**Estado:** cadena preparada y ensayada en CI; **NO aplicada a producción**.
 
-## Principios
+**Prohibido:** `prisma db push` en producción, `prisma migrate reset`, `DROP` improvisados, force push de release.
 
-1. Primero **observar** (solo lectura).  
-2. Diff en **clon/staging**, nunca improvisar en prod.  
-3. Preferir `prisma migrate resolve` + SQL revisado frente a push.  
-4. Toda acción sobre prod exige **backup/snapshot** previo.  
-5. Después del baseline: **solo** `migrate deploy` (adiós `db push` en prod).
+## 1. Evidencia confirmada
 
----
+Snapshot read-only de Supabase obtenido el 2026-08-11:
 
-## Fase 0 — Preparación (sin tocar datos)
+- PostgreSQL 17.6.
+- `public._prisma_migrations` no existe: la base fue evolucionada fuera de Prisma Migrate / mediante `db push` o cambios equivalentes.
+- Las 12 tablas actualmente modeladas por Prisma existen.
+- Existen cinco tablas legacy no modeladas por Prisma: `added_users`, `assignments`, `festivos`, `passwords`, `reservations`.
+- Existe `Reservation.externalSurgeonName`, columna legacy no modelada por Prisma.
+- `PatientInBlock` carece de `preanesthesiaAppointmentAt`, `isDeferredUrgency` y `specialCircuitReason`.
+- Falta el índice `PatientInBlock_preanesthesiaAppointmentAt_idx`.
+- `ReservationEventType` tiene 11 valores en producción y 19 en `schema.prisma`.
 
-- [ ] Confirmar proyecto Vercel oficial: `bloque-quirurgico-covadonga`.  
-- [ ] Confirmar URL BD Production (pooled vs direct).  
-- [ ] Snapshot / PITR de Supabase o Neon.  
-- [ ] Crear **rama de trabajo** tipo `chore/db-baseline` desde checkpoint acordado.  
-- [ ] Crear **BD clon** (branch Neon / dump restore a staging).  
-- [ ] Documentar quién ejecuta y ventana de mantenimiento (puede ser 0 downtime si solo `resolve`).
+Detalle reproducible: `docs/audit/16_PRODUCTION_SCHEMA_RECONCILIATION.md`.
 
----
+## 2. Decisión de baseline
 
-## Fase 1 — Inventario solo lectura (prod + clon)
+No se debe marcar como aplicado un baseline generado directamente desde el `schema.prisma` objetivo, porque producción todavía no coincide con ese objetivo.
 
-En **clon** (preferible) o prod con usuario read-only:
+La cadena correcta es:
+
+### `0_baseline_production_20260811`
+
+Representa únicamente el estado **Prisma-managed** ya existente en producción según el snapshot.
+
+En producción:
+
+- **NO se ejecuta**;
+- se marca como aplicado con `prisma migrate resolve` tras backup y verificación.
+
+No modela ni elimina los objetos legacy.
+
+### `20260811071500_reconcile_preanesthesia_phase2`
+
+Delta aditivo que lleva el baseline al `schema.prisma` actual:
+
+- añade 8 valores a `ReservationEventType`;
+- añade 3 columnas a `PatientInBlock`;
+- añade el índice de cita preanestesia.
+
+No contiene `DROP`, renames ni transformación destructiva de datos.
+
+## 3. Ensayo obligatorio
+
+GitHub Actions ejecuta PostgreSQL limpio y verifica:
+
+1. el baseline aislado reproduce los gaps observados;
+2. la cadena completa se aplica con `prisma migrate deploy`;
+3. `prisma migrate status` queda limpio;
+4. el schema final coincide con `schema.prisma`;
+5. existen las columnas/enum esperados;
+6. tests P0, typecheck y build siguen pasando;
+7. `db:push` permanece bloqueado en CI.
+
+Ninguna acción del CI conecta con Supabase producción.
+
+## 4. Precondiciones para producción
+
+Antes de cualquier escritura:
+
+- [ ] CI verde en el commit exacto a liberar.
+- [ ] Backup/snapshot de Supabase creado inmediatamente antes.
+- [ ] Capacidad de restauración confirmada.
+- [ ] `DATABASE_URL`/`DIRECT_URL` verificadas contra el proyecto correcto sin compartir secretos.
+- [ ] Ventana sin otros cambios de esquema.
+- [ ] Snapshot read-only repetido si ha pasado tiempo o ha habido cambios desde 2026-08-11.
+- [ ] Revisión final del SQL de ambas migraciones.
+
+## 5. Secuencia prevista de producción
+
+Ejecutar desde el release aprobado y con `DIRECT_URL` de producción:
 
 ```bash
-# A) Schema real → archivo scratch (NO sobrescribir schema.prisma del repo)
-npx prisma db pull --schema prisma/schema.prod-introspected.prisma
-
-# B) Estado de migraciones
+# Estado inicial: se espera P3005 / ausencia de historial en base no vacía
 npx prisma migrate status
+
+# Crear historial declarando que el baseline ya existe físicamente
+npx prisma migrate resolve --applied 0_baseline_production_20260811
+
+# Debe quedar pendiente únicamente el delta de reconciliación
+npx prisma migrate status
+
+# Aplicar el delta
+npx prisma migrate deploy
+
+# Verificación final
+npx prisma migrate status
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --exit-code
 ```
 
-También anotar:
+Si el estado observado difiere de lo esperado, **detenerse**. No improvisar `resolve`, `db push` ni SQL manual adicional.
 
-```sql
-SELECT migration_name, finished_at, applied_steps_count
-FROM "_prisma_migrations"
-ORDER BY finished_at;
-```
+## 6. Smoke tests tras migración
 
-Si la tabla no existe → confirma historia `db push` → causa clásica de **P3005**.
+Usar datos ficticios, nunca pacientes reales de prueba:
 
-Checklist de columnas críticas:
+- login usuario activo;
+- usuario desactivado no conserva sesión;
+- listar reservas;
+- crear/editar un paciente ficticio;
+- persistir cita `preanesthesiaAppointmentAt`;
+- flujo urgencia diferida (`isDeferredUrgency`, `specialCircuitReason`);
+- registrar los nuevos tipos de `ReservationEventType`;
+- confirmar que tablas legacy y `Reservation.externalSurgeonName` siguen presentes.
 
-```sql
-SELECT column_name, data_type, is_nullable, column_default
-FROM information_schema.columns
-WHERE table_name = 'PatientInBlock'
-ORDER BY ordinal_position;
-```
+## 7. Rollback
 
-Verificar especialmente: `patientEmail`, `patientPhone`, statuses, `preanesthesiaAppointmentAt`, `isDeferredUrgency`, `specialCircuitReason`.
+El delta es aditivo. Si la aplicación presenta un problema después:
 
-Verificar tablas: `User`, `Reservation`, `BlockOpeningPlan`, `ProgrammingRule`, `UserAuditEvent`, `ReleaseNotificationLog`.
+- revertir el release de aplicación;
+- no intentar quitar enum values automáticamente;
+- mantener las columnas nuevas si no hay corrupción: son compatibles hacia atrás;
+- restaurar snapshot solo ante incidente que lo justifique.
 
-Verificar enum `ReservationEventType` values.
+Nunca ejecutar `migrate reset` en producción.
 
-**Salida de esta fase:** informe DIFF (prod vs `schema.prisma` actual).
+## 8. Gobernanza futura
 
----
+| Entorno | Regla |
+|---|---|
+| Desarrollo | `prisma migrate dev` para nuevos cambios de schema |
+| CI/staging | `prisma migrate deploy` sobre PostgreSQL aislado |
+| Producción | `prisma migrate deploy` sobre migraciones revisadas |
+| Prohibido | `db push` en prod, ALTER manual improvisado, reset |
 
-## Fase 2 — Clasificar el DIFF
+Toda migración nueva debe pasar por CI y revisión antes de release.
 
-| Caso | Acción segura |
-|------|----------------|
-| Columna en schema y en BD | OK |
-| Columna en schema, falta en BD | SQL `ADD COLUMN` revisado (idempotente) en clon → test app → luego prod |
-| Columna en BD, no en schema | Decidir: añadir a schema o ignorar documentado |
-| Tabla en schema, falta en BD | Crear vía migración nueva (no push ciego) |
-| Tabla en BD, no en schema | No borrar; documentar o mapear |
-| Enum value falta | `ALTER TYPE … ADD VALUE` (no transaccional en PG antiguo — planificar) |
-| Migración en Git, ya aplicada manualmente | `prisma migrate resolve --applied "<name>"` |
-| Migración en Git, no aplicada, columnas ya existen | `resolve --applied` (no re-ejecutar phase2) |
-| Migración en Git, no aplicada, columnas faltan | `migrate deploy` **solo** tras backup y en orden |
+## 9. Criterio de cierre P0
 
----
-
-## Fase 3 — Baseline en clon (ensayo completo)
-
-### Opción recomendada (BD existente con push)
-
-1. Alinear clon al schema deseado con **SQL explícito** o una migración “delta” revisada.  
-2. Generar **migración baseline squash** que represente el schema completo actual (solo para historial futuro), **sin ejecutar CREATE** destructivo sobre tablas existentes.  
-3. Marcar baseline + phase1/phase2 como aplicadas:
-
-```bash
-npx prisma migrate resolve --applied "20260502143000_surgical_patient_circuit_phase1"
-npx prisma migrate resolve --applied "20260502160000_preanesthesia_phase2"
-# + resolve del baseline squash si se crea
-```
-
-4. Verificar:
-
-```bash
-npx prisma migrate status   # sin pendientes inesperados
-npx prisma generate
-# smoke tests app contra clon
-```
-
-5. Probar flujo que antes rompió: `GET/POST /api/reservations` con pacientes + `patientEmail`.
-
-### Opción B (solo piloto, no preferida a largo plazo)
-
-Seguir con `db push` documentado y tratar las 2 migraciones como docs. **Rechazada** como estrategia de hospital real.
-
----
-
-## Fase 4 — Aplicar a producción (solo tras OK en clon)
-
-1. Backup/snapshot.  
-2. Congelar deploys (opcional pero recomendable).  
-3. Aplicar **exactamente** el mismo SQL/delta validado en clon.  
-4. `migrate resolve` / `migrate deploy` según el plan del ensayo (no improvisar).  
-5. Smoke producción: login, listar reservas, crear/editar paciente con email, cancel, cron dry-run si aplica.  
-6. Actualizar docs: prohibir `db push` en prod; añadir scripts `db:migrate:status`, `db:migrate:deploy`.
-
----
-
-## Fase 5 — Gobernanza futura
-
-| Regla | Detalle |
-|-------|---------|
-| Dev | `prisma migrate dev` para cambios de schema |
-| CI/Preview | `migrate deploy` contra BD preview |
-| Prod | Solo `migrate deploy` en release |
-| Prohibido | ALTER manual en dashboard; `db push` prod; reset |
-| Drift check | Job semanal `migrate status` + diff introspect |
-
-Actualizar: `docs/PILOTO.md`, `docs/DEPLOY-VERCEL.md`, `docs/SETUP_BACKEND.md`, `package.json` scripts.
-
----
-
-## Por qué apareció P3005 / P2022 (recordatorio)
-
-| Error | Causa | Mitigación |
-|-------|-------|------------|
-| P3005 | `migrate deploy` sobre BD no vacía sin historial | Baseline + `resolve` |
-| P2022 | Client espera columna inexistente | Alinear BD↔schema con migración/SQL; no parches sueltos indefinidos |
-
----
-
-## Rollback
-
-| Paso | Rollback |
-|------|----------|
-| Solo `migrate resolve` (marcas) | Revertir filas en `_prisma_migrations` con SQL cuidadoso + backup |
-| `ADD COLUMN` nullable | Dejar columna (seguro) o drop solo si vacío y autorizado |
-| `ADD COLUMN` NOT NULL + default | Reversible con cuidado; preferir nullable primero |
-| Enum ADD VALUE | En PostgreSQL **no se puede quitar** fácilmente un enum value → planir irreversible |
-
----
-
-## Criterios de aceptación del baseline
-
-- [ ] `migrate status` limpio en clon y prod.  
-- [ ] App smoke OK incluyendo `patientEmail`.  
-- [ ] Cero ALTER manuales posteriores.  
-- [ ] Docs y scripts alineados.  
-- [ ] Proyecto Vercel oficial documentado.  
-- [ ] Backup verificado restaurable (al menos un drill en staging).
-
----
-
-## Qué NO hacer en esta auditoría
-
-- Ejecutar cualquiera de los comandos anteriores contra producción.  
-- `prisma migrate reset`.  
-- `prisma db push` a prod.  
-- Borrar el proyecto Vercel duplicado.
+- [ ] baseline marcado como aplicado en producción;
+- [ ] delta aplicado;
+- [ ] `migrate status` limpio;
+- [ ] diff final limpio para objetos Prisma;
+- [ ] smoke tests OK;
+- [ ] objetos legacy intactos;
+- [ ] documentación de deploy ya no recomienda `db push`.
