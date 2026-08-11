@@ -9,20 +9,11 @@ import { toAuthSession, requireAuth, requirePermission, hasPermission, hasAnyPer
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
+import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
-import type { User, UserRole } from "@/lib/types";
+import type { UserRole } from "@/lib/types";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
-const TEMP_PASSWORD_LENGTH = 10;
-const CHARS = "abcdefghjkmnpqrstuvwxyz23456789";
-
-function generateTempPassword(): string {
-  let result = "";
-  for (let i = 0; i < TEMP_PASSWORD_LENGTH; i++) {
-    result += CHARS[Math.floor(Math.random() * CHARS.length)];
-  }
-  return result;
-}
 
 function emailToDisplayName(email: string): string {
   const local = email.split("@")[0] ?? "Usuario";
@@ -30,6 +21,10 @@ function emailToDisplayName(email: string): string {
     .replace(/[._-]/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim() || "Usuario";
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
 }
 
 export async function POST(request: Request) {
@@ -41,19 +36,25 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+    }
+    const input = body as Record<string, unknown>;
 
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const roleInput = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
+    const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+    const roleInput = typeof input.role === "string" && VALID_ROLES.includes(input.role as UserRole) ? input.role : "";
     const role = roleToPrisma(roleInput);
-    const rawName = typeof body.name === "string" ? body.name.trim() : "";
-    const name = rawName || emailToDisplayName(email) || "Usuario";
+    const rawName = typeof input.name === "string" ? input.name.trim() : "";
+    const name = (rawName || emailToDisplayName(email) || "Usuario").slice(0, 200);
 
-    if (!email || !role) {
-      return NextResponse.json(
-        { error: "Email y rol son obligatorios" },
-        { status: 400 }
-      );
+    if (!isValidEmail(email) || !role) {
+      return NextResponse.json({ error: "Email válido y rol son obligatorios" }, { status: 400 });
     }
 
     const existing = await prisma.user.findUnique({
@@ -61,23 +62,19 @@ export async function POST(request: Request) {
       select: { id: true },
     });
     if (existing) {
-      return NextResponse.json(
-        { error: "Ya existe un usuario con ese email" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "Ya existe un usuario con ese email" }, { status: 409 });
     }
 
-    const tempPassword = generateTempPassword();
+    const tempPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(tempPassword);
-
-    const canSespa = typeof body.canSespa === "boolean" ? body.canSespa : false;
+    const canSespa = typeof input.canSespa === "boolean" ? input.canSespa : false;
 
     const dbUser = await prisma.user.create({
       data: {
         email,
         passwordHash,
         name,
-        role: role!,
+        role,
         approved: true,
         canSespa,
       },
@@ -156,7 +153,6 @@ export async function GET(request: Request) {
         }))
       : dbUsers.map((u) => ({
           id: u.id,
-          // Lista mínima para selectores no-gestión (sin datos internos).
           email: "",
           name: u.name,
           role: roleToFrontend(u.role),

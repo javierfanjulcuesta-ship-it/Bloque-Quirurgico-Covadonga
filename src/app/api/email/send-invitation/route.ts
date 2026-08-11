@@ -1,13 +1,16 @@
 /**
  * POST /api/email/send-invitation
- * Envía invitación de nuevo usuario desde jfanjul@riberacare.com.
- * Usa outlookService (mock o Microsoft Graph según configuración).
+ * Envía invitación de un usuario ya creado.
+ * Requiere user:create. El destinatario y rol deben coincidir con un usuario activo
+ * en la base de datos; la URL de acceso solo procede de configuración del servidor.
  */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import type { UserRole } from "@/lib/types";
+import { prisma } from "@/lib/db/prisma";
+import { roleToFrontend } from "@/lib/roleMapping";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { getAppUrl } from "@/lib/appUrl";
@@ -24,43 +27,55 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
-    const invitedByName = sessionPayload?.name?.trim() || undefined;
-    const body = await request.json();
-    const toEmail = typeof body.toEmail === "string" ? body.toEmail.trim().toLowerCase() : "";
-    const role = typeof body.role === "string" && VALID_ROLES.includes(body.role as UserRole) ? body.role : "";
-    const recipientName = typeof body.recipientName === "string" ? body.recipientName.trim() : undefined;
-    const initialPassword = typeof body.initialPassword === "string" ? body.initialPassword : "";
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+    }
+    const input = body as Record<string, unknown>;
 
-    if (!toEmail || !role || !initialPassword) {
-      return NextResponse.json(
-        { error: "toEmail, role e initialPassword son obligatorios" },
-        { status: 400 }
-      );
+    const invitedByName = sessionPayload?.name?.trim() || undefined;
+    const toEmail = typeof input.toEmail === "string" ? input.toEmail.trim().toLowerCase() : "";
+    const requestedRole = typeof input.role === "string" && VALID_ROLES.includes(input.role as UserRole)
+      ? input.role as UserRole
+      : null;
+    const recipientName = typeof input.recipientName === "string" ? input.recipientName.trim().slice(0, 200) : undefined;
+    const initialPassword = typeof input.initialPassword === "string" ? input.initialPassword : "";
+
+    if (!toEmail || !requestedRole || initialPassword.length < 12 || initialPassword.length > 128) {
+      return NextResponse.json({ error: "Datos de invitación inválidos" }, { status: 400 });
     }
 
-    const bodyAccessLink = typeof body.accessLink === "string" ? body.accessLink.trim() : "";
+    const dbUser = await prisma.user.findUnique({
+      where: { email: toEmail },
+      select: { id: true, email: true, name: true, role: true, approved: true, deletedAt: true },
+    });
+    if (!dbUser || dbUser.deletedAt || !dbUser.approved) {
+      return NextResponse.json({ error: "Usuario destinatario no encontrado o inactivo" }, { status: 404 });
+    }
+    const role = roleToFrontend(dbUser.role);
+    if (role !== requestedRole) {
+      return NextResponse.json({ error: "El rol de invitación no coincide con el usuario" }, { status: 409 });
+    }
+
     let appUrl: string;
     try {
       appUrl = getAppUrl();
     } catch (e) {
-      console.error("[email send-invitation] URL no configurada:", e instanceof Error ? e.message : e);
-      if (bodyAccessLink && bodyAccessLink.startsWith("https://")) {
-        appUrl = bodyAccessLink.replace(/\/$/, "");
-      } else {
-        return NextResponse.json(
-          { error: "La URL de la aplicación no está configurada. Configure NEXT_PUBLIC_APP_URL o NEXTAUTH_URL en Vercel." },
-          { status: 503 }
-        );
-      }
+      console.error("[email send-invitation] URL no configurada", e instanceof Error ? e.message : "Unknown error");
+      return NextResponse.json({ error: "La URL de la aplicación no está configurada" }, { status: 503 });
     }
 
-    const normasTexto =
-      role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
+    const normasTexto = role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
 
     await sendNewUserInvitationEmail({
-      toEmail,
-      role: role as UserRole,
-      recipientName: recipientName || undefined,
+      toEmail: dbUser.email,
+      role,
+      recipientName: recipientName || dbUser.name || undefined,
       accessLink: appUrl,
       initialPassword,
       invitedByName,
@@ -69,10 +84,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[email send-invitation]", err);
-    return NextResponse.json(
-      { error: "Error al enviar invitación" },
-      { status: 500 }
-    );
+    console.error("[email send-invitation]", err instanceof Error ? err.message : "Unknown error");
+    return NextResponse.json({ error: "Error al enviar invitación" }, { status: 500 });
   }
 }

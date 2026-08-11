@@ -1,11 +1,8 @@
 /**
  * POST /api/email/webhook
- * Webhook para correo entrante. Requiere EMAIL_WEBHOOK_SECRET en header o query.
- *
- * Header: x-email-webhook-secret: <EMAIL_WEBHOOK_SECRET>
- * Query: ?webhookSecret=<EMAIL_WEBHOOK_SECRET>
- *
- * .env: EMAIL_WEBHOOK_SECRET=tu_token_secreto_minimo_16_caracteres
+ * Webhook para correo entrante.
+ * Requiere EMAIL_WEBHOOK_SECRET mediante el header x-email-webhook-secret.
+ * Nunca se aceptan secretos en query string.
  */
 
 import { NextResponse } from "next/server";
@@ -36,21 +33,27 @@ export async function POST(request: Request) {
     if (!validateWebhookSecret(request)) {
       return NextResponse.json(
         { error: "No autorizado. Incluya x-email-webhook-secret en el header." },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+    }
+
     if (!validatePayload(body)) {
       return NextResponse.json(
         { error: "Payload inválido. Requiere: id, fromEmail, subject, bodyPlain" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const message: InboxMessage = {
       id: body.id,
-      fromEmail: (body.fromEmail as string).trim().toLowerCase(),
+      fromEmail: body.fromEmail.trim().toLowerCase(),
       fromName: typeof body.fromName === "string" ? body.fromName : undefined,
       subject: body.subject,
       bodyPlain: body.bodyPlain,
@@ -69,10 +72,7 @@ export async function POST(request: Request) {
       error: result.error,
     });
   } catch (err) {
-    console.error("[email webhook]", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Error al procesar correo" },
-      { status: 500 }
-    );
+    console.error("[email webhook]", err instanceof Error ? err.message : "Unknown error");
+    return NextResponse.json({ error: "Error al procesar correo" }, { status: 500 });
   }
 }

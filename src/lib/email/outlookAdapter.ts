@@ -1,7 +1,7 @@
 /**
  * Adaptador para Microsoft Graph / Outlook.
- * En producción usa @microsoft/microsoft-graph-client.
- * En desarrollo usa mock que simula envío y lectura.
+ * El mock existe solo para desarrollo/test; en producción falla de forma explícita
+ * para evitar que la aplicación reporte correos como enviados cuando no salieron.
  */
 
 import type { InboxMessage } from "./types";
@@ -19,23 +19,29 @@ export interface OutlookAdapter {
   fetchInbox(limit?: number): Promise<InboxMessage[]>;
 }
 
-/** Mock para desarrollo local. No envía correos reales. Loguea el contenido completo en consola para pruebas. */
+function assertMockAllowed(): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Email real no configurado: el adaptador mock está deshabilitado en producción");
+  }
+}
+
+/** Mock local. No envía correos reales y nunca imprime el cuerpo del mensaje. */
 export function createMockOutlookAdapter(): OutlookAdapter {
   return {
     async send(params: SendEmailParams): Promise<void> {
+      assertMockAllowed();
       if (process.env.NODE_ENV !== "test") {
-        console.log("[Email] MOCK – Simulado (no enviado):", { to: params.to, subject: params.subject });
-        console.log("-------- [Email Mock] CUERPO TEXTO --------");
-        console.log(params.bodyPlain);
-        if (params.bodyHtml) {
-          console.log("-------- [Email Mock] CUERPO HTML (primeras 2000 chars) --------");
-          console.log(params.bodyHtml.slice(0, 2000) + (params.bodyHtml.length > 2000 ? "\n... [truncado]" : ""));
-        }
-        console.log("-------- [Email Mock] FIN --------");
+        console.warn("[Email] MOCK – correo no enviado", {
+          to: params.to,
+          subject: params.subject,
+          hasHtml: Boolean(params.bodyHtml),
+          reply: Boolean(params.replyToMessageId),
+        });
       }
     },
 
     async fetchInbox(_limit = 50): Promise<InboxMessage[]> {
+      assertMockAllowed();
       return [];
     },
   };
