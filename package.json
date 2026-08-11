@@ -12,6 +12,7 @@
     "test:preanesthesia-integration": "node --import tsx --test tests/preanesthesiaConcurrency.integration.test.ts",
     "test:cron-integration": "node --import tsx --test tests/cronReleaseConcurrency.integration.test.ts",
     "test:assignments-integration": "node --import tsx --test tests/anesthetistAssignmentConcurrency.integration.test.ts",
+    "test:shared-state-integration": "node --import tsx --test tests/sharedClinicalState.integration.test.ts",
     "db:generate": "prisma generate",
     "db:push": "npx tsx scripts/db/guarded-db-push.ts",
     "db:migrate:status": "prisma migrate status",
