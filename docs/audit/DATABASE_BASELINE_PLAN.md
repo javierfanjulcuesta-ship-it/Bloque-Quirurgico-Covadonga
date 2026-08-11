@@ -55,7 +55,7 @@ GitHub Actions ejecuta PostgreSQL limpio y verifica:
 1. el baseline aislado reproduce los gaps observados;
 2. la cadena completa se aplica con `prisma migrate deploy`;
 3. `prisma migrate status` queda limpio;
-4. el schema final coincide con `schema.prisma`;
+4. en una base limpia el schema final coincide con `schema.prisma`;
 5. existen las columnas/enum esperados;
 6. tests P0, typecheck y build siguen pasando;
 7. `db:push` permanece bloqueado en CI.
@@ -79,7 +79,7 @@ Antes de cualquier escritura:
 Ejecutar desde el release aprobado y con `DIRECT_URL` de producción:
 
 ```bash
-# Estado inicial: se espera P3005 / ausencia de historial en base no vacía
+# Estado inicial: se espera ausencia de historial en base no vacía
 npx prisma migrate status
 
 # Crear historial declarando que el baseline ya existe físicamente
@@ -91,13 +91,30 @@ npx prisma migrate status
 # Aplicar el delta
 npx prisma migrate deploy
 
-# Verificación final
+# Verificación del historial
 npx prisma migrate status
-npx prisma migrate diff \
-  --from-schema-datasource prisma/schema.prisma \
-  --to-schema-datamodel prisma/schema.prisma \
-  --exit-code
 ```
+
+**No exigir un `prisma migrate diff` global vacío en producción.** La base conserva objetos legacy no modelados deliberadamente; un diff global puede proponer eliminarlos.
+
+Verificar los objetos gestionados y la preservación del legacy ejecutando en Supabase SQL Editor:
+
+```text
+scripts/db/verify-production-managed-schema.sql
+```
+
+Resultado esperado:
+
+- `missing_managed_tables = 0`
+- `preanesthesia_appointment_exists = true`
+- `deferred_urgency_exists = true`
+- `special_circuit_reason_exists = true`
+- `preanesthesia_index_exists = true`
+- `missing_reservation_event_values = 0`
+- `reservation_event_value_count = 19`
+- `prisma_migration_history_exists = true`
+- `preserved_external_surgeon_name = true`
+- `preserved_legacy_tables = true`
 
 Si el estado observado difiere de lo esperado, **detenerse**. No improvisar `resolve`, `db push` ni SQL manual adicional.
 
@@ -141,7 +158,7 @@ Toda migración nueva debe pasar por CI y revisión antes de release.
 - [ ] baseline marcado como aplicado en producción;
 - [ ] delta aplicado;
 - [ ] `migrate status` limpio;
-- [ ] diff final limpio para objetos Prisma;
+- [ ] verificador de esquema gestionado OK;
 - [ ] smoke tests OK;
 - [ ] objetos legacy intactos;
 - [ ] documentación de deploy ya no recomienda `db push`.
