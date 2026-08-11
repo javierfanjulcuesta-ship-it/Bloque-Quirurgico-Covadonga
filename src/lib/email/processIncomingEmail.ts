@@ -5,14 +5,14 @@
 
 import { prisma } from "@/lib/db/prisma";
 import { isCirujanoOrEndoscopista } from "@/lib/roleMapping";
+import { evaluateBasicBookingPolicy } from "@/lib/reservations/bookingPolicy";
 import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { sendReplyToReservationEmail } from "./outlookService";
 import { getReservationReplyContent } from "./reservationReplyTemplates";
-import type { InboxMessage } from "./types";
-import type { ParsedReservationEmail } from "./types";
+import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
   reservation: "RESERVATION",
@@ -25,7 +25,6 @@ const STATUS_PROCESSED = "PROCESSED";
 const STATUS_FAILED = "FAILED";
 const STATUS_SKIPPED = "SKIPPED";
 
-/** Convierte ParsedReservationEmail a formato createReservationSchema */
 function toCreateReservationInput(parsed: ParsedReservationEmail) {
   const patients = (parsed.patients ?? []).map((p, i) => ({
     historyNumber: p.numeroHistoria,
@@ -39,14 +38,10 @@ function toCreateReservationInput(parsed: ParsedReservationEmail) {
     notes: p.notes ?? undefined,
     isDeferredUrgency: false,
   }));
-  const validResources = ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"] as const;
-  const resourceId = validResources.includes(parsed.resourceId as (typeof validResources)[number])
-    ? (parsed.resourceId as (typeof validResources)[number])
-    : "Q1";
 
   return {
     date: parsed.date,
-    resourceId,
+    resourceId: parsed.resourceId as "Q1" | "Q2" | "Q3" | "procedimientos-menores" | "tecnicas-dolor",
     shift: parsed.shift,
     slotIndex: parsed.slotIndex,
     patients,
@@ -61,26 +56,56 @@ export interface ProcessEmailResult {
   error?: string;
 }
 
+async function recordFailure(params: {
+  emailMessageId: string;
+  classification: string;
+  fromEmail: string;
+  error: string;
+  details?: Record<string, unknown>;
+  replyKind?: "format_not_recognized" | "sender_not_registered" | "role_not_authorized" | "slot_occupied";
+}): Promise<ProcessEmailResult> {
+  if (params.replyKind) {
+    const reply = getReservationReplyContent(params.replyKind, { errorDetail: params.error });
+    await sendReplyToReservationEmail({ toEmail: params.fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
+  }
+  await prisma.emailProcessingLog.create({
+    data: {
+      emailMessageId: params.emailMessageId,
+      action: "error",
+      errorMessage: params.error,
+      details: params.details ? JSON.stringify(params.details) : null,
+    },
+  });
+  await prisma.emailMessage.update({
+    where: { id: params.emailMessageId },
+    data: { processingStatus: STATUS_FAILED, resultMessage: params.error } as Record<string, unknown>,
+  });
+  return {
+    emailMessageId: params.emailMessageId,
+    classification: params.classification,
+    processingStatus: STATUS_FAILED,
+    error: params.error,
+  };
+}
+
 export async function processIncomingEmail(message: InboxMessage): Promise<ProcessEmailResult> {
   const externalId = message.id;
   const fromEmail = message.fromEmail?.trim().toLowerCase() ?? "";
   const receivedAt = message.receivedAt ? new Date(message.receivedAt) : new Date();
   const bodyPlain = message.bodyPlain ?? "";
 
-  // Evitar duplicados
   const existing = await prisma.emailMessage.findUnique({ where: { externalId } });
   if (existing) {
     return {
       emailMessageId: existing.id,
       classification: existing.classification,
-      processingStatus: "PROCESSED",
+      processingStatus: existing.processingStatus,
       reservationId: existing.reservationId ?? undefined,
     };
   }
 
   const classification = classifyIncomingEmail(message);
   const classificationPrisma = CLASSIFICATION_TO_PRISMA[classification];
-
   const emailMessage = await prisma.emailMessage.create({
     data: {
       externalId,
@@ -108,36 +133,19 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
       where: { id: emailMessage.id },
       data: { processingStatus: STATUS_SKIPPED },
     });
-    return {
-      emailMessageId: emailMessage.id,
-      classification,
-      processingStatus: STATUS_SKIPPED,
-    };
+    return { emailMessageId: emailMessage.id, classification, processingStatus: STATUS_SKIPPED };
   }
 
   const parseResult = parseReservationEmail({ subject: message.subject, bodyPlain });
   if (!parseResult.ok) {
-    const errorMsg = parseResult.error;
-    const reply = getReservationReplyContent("format_not_recognized", { errorDetail: errorMsg });
-    await sendReplyToReservationEmail({ toEmail: fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: emailMessage.id,
-        action: "error",
-        errorMessage: errorMsg,
-        details: JSON.stringify({ missingFields: parseResult.missingFields, rawText: bodyPlain.slice(0, 300) }),
-      },
-    });
-    await prisma.emailMessage.update({
-      where: { id: emailMessage.id },
-      data: { processingStatus: STATUS_FAILED, resultMessage: errorMsg } as Record<string, unknown>,
-    });
-    return {
+    return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
-      processingStatus: STATUS_FAILED,
-      error: errorMsg,
-    };
+      fromEmail,
+      error: parseResult.error,
+      details: { missingFields: parseResult.missingFields },
+      replyKind: "format_not_recognized",
+    });
   }
 
   const parsed = parseResult.data;
@@ -145,72 +153,69 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     data: {
       emailMessageId: emailMessage.id,
       action: "parsed",
-      details: JSON.stringify(parsed),
+      // No registrar rawText ni cuerpo completo en logs auxiliares.
+      details: JSON.stringify({
+        date: parsed.date,
+        resourceId: parsed.resourceId,
+        shift: parsed.shift,
+        slotIndex: parsed.slotIndex,
+        patientCount: parsed.patients?.length ?? 0,
+      }),
     },
   });
 
   const user = await prisma.user.findFirst({
-    where: { email: fromEmail, approved: true },
+    where: { email: fromEmail, approved: true, deletedAt: null },
   });
 
   if (!user) {
-    const reply = getReservationReplyContent("sender_not_registered");
-    await sendReplyToReservationEmail({ toEmail: fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: emailMessage.id,
-        action: "error",
-        errorMessage: "Remitente no registrado como usuario",
-        details: JSON.stringify({ fromEmail }),
-      },
-    });
-    await prisma.emailMessage.update({
-      where: { id: emailMessage.id },
-      data: { processingStatus: STATUS_FAILED, resultMessage: "Remitente no registrado como usuario" } as Record<string, unknown>,
-    });
-    return {
+    return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
-      processingStatus: STATUS_FAILED,
-      error: "Remitente no registrado como usuario",
-    };
+      fromEmail,
+      error: "Remitente no registrado como usuario activo",
+      replyKind: "sender_not_registered",
+    });
   }
 
   if (!isCirujanoOrEndoscopista(user.role)) {
-    const reply = getReservationReplyContent("role_not_authorized");
-    await sendReplyToReservationEmail({ toEmail: fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: emailMessage.id,
-        action: "error",
-        errorMessage: "Solo cirujanos y endoscopistas pueden crear reservas por correo",
-        details: JSON.stringify({ userId: user.id, role: user.role }),
-      },
-    });
-    await prisma.emailMessage.update({
-      where: { id: emailMessage.id },
-      data: {
-        senderUserId: user.id,
-        processingStatus: STATUS_FAILED,
-        resultMessage: "Solo cirujanos y endoscopistas pueden crear reservas por correo",
-      } as Record<string, unknown>,
-    });
-    return {
+    await prisma.emailMessage.update({ where: { id: emailMessage.id }, data: { senderUserId: user.id } });
+    return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
-      processingStatus: STATUS_FAILED,
+      fromEmail,
       error: "Solo cirujanos y endoscopistas pueden crear reservas por correo",
-    };
+      details: { userId: user.id, role: user.role },
+      replyKind: "role_not_authorized",
+    });
   }
 
   const input = toCreateReservationInput(parsed);
+  const policy = evaluateBasicBookingPolicy({
+    date: input.date,
+    resourceId: input.resourceId,
+    responsibleRole: user.role,
+    isCoordinator: false,
+  });
+  if (!policy.ok) {
+    await prisma.emailMessage.update({ where: { id: emailMessage.id }, data: { senderUserId: user.id } });
+    return recordFailure({
+      emailMessageId: emailMessage.id,
+      classification,
+      fromEmail,
+      error: policy.message,
+      details: { policyReason: policy.reason },
+      replyKind: "format_not_recognized",
+    });
+  }
+
   const result = await createReservationInDb(input, user.id, {
     origin: "EMAIL",
     actorUserId: user.id,
   });
 
   if (!result.ok) {
-    if (result.error === "slot_occupied") {
+    if (result.error === "slot_occupied" || result.error === "overflow_conflict") {
       await logReservationEvent({
         eventType: "RESERVATION_REJECTED_CONFLICT",
         actorUserId: user.id,
@@ -220,36 +225,19 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
           resourceId: parsed.resourceId,
           shift: parsed.shift,
           slotIndex: parsed.slotIndex,
+          reason: result.error,
         },
       });
     }
-    const reply = getReservationReplyContent("slot_occupied", {
-      date: parsed.date,
-      resourceId: parsed.resourceId,
-    });
-    await sendReplyToReservationEmail({ toEmail: fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: emailMessage.id,
-        action: "error",
-        errorMessage: result.message,
-        details: JSON.stringify({ error: result.error }),
-      },
-    });
-    await prisma.emailMessage.update({
-      where: { id: emailMessage.id },
-      data: {
-        senderUserId: user.id,
-        processingStatus: STATUS_FAILED,
-        resultMessage: result.message,
-      } as Record<string, unknown>,
-    });
-    return {
+    await prisma.emailMessage.update({ where: { id: emailMessage.id }, data: { senderUserId: user.id } });
+    return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
-      processingStatus: STATUS_FAILED,
+      fromEmail,
       error: result.message,
-    };
+      details: { error: result.error },
+      replyKind: result.error === "slot_occupied" || result.error === "overflow_conflict" ? "slot_occupied" : "format_not_recognized",
+    });
   }
 
   const reply = getReservationReplyContent("reservation_created", {
@@ -267,11 +255,12 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     },
   });
 
+  // Este evento sigue siendo best-effort hasta el bloque específico de hardening de email.
   await prisma.emailProcessingLog.create({
     data: {
       emailMessageId: emailMessage.id,
       action: "reply_sent",
-      details: "Respuesta automática enviada",
+      details: "Respuesta automática solicitada",
     },
   });
 
