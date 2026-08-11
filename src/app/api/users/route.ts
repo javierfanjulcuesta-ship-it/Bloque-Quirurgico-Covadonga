@@ -12,8 +12,10 @@ import { hashPassword } from "@/lib/auth/password";
 import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
 import type { UserRole } from "@/lib/types";
+import { createUserWithAudit } from "@/lib/users/userCreationService";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const SESPA_ROLES = new Set<UserRole>(["anestesista", "gestor-anestesista"]);
 
 function emailToDisplayName(email: string): string {
   const local = email.split("@")[0] ?? "Usuario";
@@ -48,38 +50,33 @@ export async function POST(request: Request) {
     const input = body as Record<string, unknown>;
 
     const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
-    const roleInput = typeof input.role === "string" && VALID_ROLES.includes(input.role as UserRole) ? input.role : "";
-    const role = roleToPrisma(roleInput);
+    const roleInput = typeof input.role === "string" && VALID_ROLES.includes(input.role as UserRole) ? input.role as UserRole : null;
+    const role = roleInput ? roleToPrisma(roleInput) : null;
     const rawName = typeof input.name === "string" ? input.name.trim() : "";
     const name = (rawName || emailToDisplayName(email) || "Usuario").slice(0, 200);
 
-    if (!isValidEmail(email) || !role) {
+    if (!isValidEmail(email) || !role || !roleInput) {
       return NextResponse.json({ error: "Email válido y rol son obligatorios" }, { status: 400 });
-    }
-
-    const existing = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-    if (existing) {
-      return NextResponse.json({ error: "Ya existe un usuario con ese email" }, { status: 409 });
     }
 
     const tempPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(tempPassword);
-    const canSespa = typeof input.canSespa === "boolean" ? input.canSespa : false;
+    const canSespa = SESPA_ROLES.has(roleInput) && input.canSespa === true;
 
-    const dbUser = await prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-        role,
-        approved: true,
-        canSespa,
-      },
+    const result = await createUserWithAudit(prisma, {
+      email,
+      passwordHash,
+      name,
+      role,
+      canSespa,
+      actorUserId: session!.userId,
     });
 
+    if (!result.ok) {
+      return NextResponse.json({ error: "Ya existe un usuario con ese email" }, { status: 409 });
+    }
+
+    const dbUser = result.user;
     return NextResponse.json({
       user: {
         id: dbUser.id,
