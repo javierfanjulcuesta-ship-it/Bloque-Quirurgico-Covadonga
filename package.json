@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "node --import tsx --test tests/roleMapping.test.ts tests/reservationAccessPolicy.test.ts tests/activeUser.test.ts tests/bookingPolicy.test.ts tests/parseReservationEmail.test.ts",
     "test:booking-integration": "node --import tsx --test tests/bookingConcurrency.integration.test.ts",
+    "test:preanesthesia-integration": "node --import tsx --test tests/preanesthesiaConcurrency.integration.test.ts",
     "db:generate": "prisma generate",
     "db:push": "npx tsx scripts/db/guarded-db-push.ts",
     "db:migrate:status": "prisma migrate status",
