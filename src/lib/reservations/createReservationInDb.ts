@@ -8,6 +8,7 @@
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { canReserveSlot } from "@/lib/blockOpeningPlan";
 import { createReservationSchema } from "@/lib/validations/reservation";
 import type { CreateReservationInput } from "@/lib/validations/reservation";
 import { logReservationEvent, type ReservationEventType } from "./logReservationEvent";
@@ -22,13 +23,19 @@ import { withSchedulingContextLock } from "./bookingContextLock";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
 
 export type ReservationOrigin = "APP" | "EMAIL" | "GESTOR";
+export type CreateReservationError =
+  | "slot_occupied"
+  | "overflow_conflict"
+  | "block_closed"
+  | "block_urgent_reserved"
+  | "invalid_data";
 
 export type CreateReservationResult =
   | { ok: true; reservationId: string }
   | {
       ok: false;
-      error: "slot_occupied" | "overflow_conflict" | "invalid_data";
-      code?: "slot_occupied" | "overflow_conflict" | "invalid_data";
+      error: CreateReservationError;
+      code?: CreateReservationError;
       message: string;
     };
 
@@ -152,6 +159,20 @@ export async function createReservationInDb(
   let locked: LockedOutcome;
   try {
     locked = await withSchedulingContextLock({ date, resourceId, shift }, async (tx) => {
+      // El plan de apertura se lee DESPUÉS del lock. Su PUT usa el mismo lock,
+      // por lo que cerrar el bloque y crear una reserva no pueden cruzarse por TOCTOU.
+      const opening = await canReserveSlot(date, resourceId, shift, origin === "GESTOR", tx);
+      if (!opening.ok) {
+        return {
+          result: {
+            ok: false,
+            error: opening.reason,
+            code: opening.reason,
+            message: opening.message,
+          },
+        };
+      }
+
       // Todas las lecturas que deciden ocupación ocurren DESPUÉS del lock.
       const contextReservations = await getActiveReservationsInContext(tx, { date, resourceId, shift });
       const invader = findOverflowInvaderForTargetSlot({
