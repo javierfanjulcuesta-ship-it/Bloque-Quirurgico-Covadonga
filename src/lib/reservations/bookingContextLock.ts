@@ -24,7 +24,13 @@ export async function acquireSchedulingContextLock(
   context: SchedulingContextKey,
 ): Promise<void> {
   const key = schedulingContextLockKey(context);
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  // pg_advisory_xact_lock devuelve PostgreSQL void, que Prisma no puede deserializar
+  // si se selecciona directamente. Al invocarlo en FROM y devolver solo un entero,
+  // conservamos el comportamiento bloqueante sin exponer el valor void al cliente.
+  await tx.$queryRaw<Array<{ acquired: number }>>`
+    SELECT 1::int AS acquired
+    FROM pg_advisory_xact_lock(hashtext(${key}))
+  `;
 }
 
 /**
