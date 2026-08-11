@@ -1,7 +1,7 @@
 /**
  * POST /api/auth/login
  * Autenticación real: email + contraseña.
- * Rate limit: 5 intentos / 15 min por IP.
+ * Rate limit best-effort: 5 fallos / 15 min por cuenta y 20 por IP.
  */
 
 import { NextResponse } from "next/server";
@@ -11,13 +11,28 @@ export const runtime = "nodejs";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";
-import { checkLoginRateLimit, resetLoginRateLimitOnSuccess } from "@/lib/auth/rateLimit";
+import {
+  checkLoginRateLimit,
+  recordLoginFailure,
+  resetLoginRateLimitOnSuccess,
+} from "@/lib/auth/rateLimit";
 import { roleToFrontend } from "@/lib/roleMapping";
 import type { User } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    const rateLimit = checkLoginRateLimit(request);
+    const body = await request.json();
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: "Email y contraseña son obligatorios" },
+        { status: 400 }
+      );
+    }
+
+    const rateLimit = checkLoginRateLimit(request, email);
     if (!rateLimit.ok) {
       return NextResponse.json(
         { error: "Demasiados intentos de acceso. Espere unos minutos e inténtelo de nuevo." },
@@ -27,17 +42,6 @@ export async function POST(request: Request) {
             ? { "Retry-After": String(rateLimit.retryAfterSec) }
             : undefined,
         }
-      );
-    }
-
-    const body = await request.json();
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password : "";
-
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email y contraseña son obligatorios" },
-        { status: 400 }
       );
     }
 
@@ -55,6 +59,7 @@ export async function POST(request: Request) {
     });
 
     if (!dbUser || !dbUser.approved || dbUser.deletedAt != null) {
+      recordLoginFailure(request, email);
       return NextResponse.json(
         { error: "Credenciales inválidas o usuario no aprobado" },
         { status: 401 }
@@ -63,6 +68,7 @@ export async function POST(request: Request) {
 
     const valid = await verifyPassword(password, dbUser.passwordHash);
     if (!valid) {
+      recordLoginFailure(request, email);
       return NextResponse.json(
         { error: "Credenciales inválidas" },
         { status: 401 }
@@ -86,7 +92,7 @@ export async function POST(request: Request) {
       approved: user.approved,
     });
 
-    resetLoginRateLimitOnSuccess(request);
+    resetLoginRateLimitOnSuccess(request, email);
     const res = NextResponse.json({ user });
     return addSessionCookieToResponse(res, token);
   } catch (err) {
