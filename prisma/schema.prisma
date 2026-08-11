@@ -33,20 +33,21 @@ enum ReservationStatus {
 }
 
 model User {
-  id                     String                    @id @default(cuid())
-  email                  String                    @unique
-  passwordHash           String
-  name                   String
-  role                   UserRole
-  approved               Boolean                   @default(false)
-  canSespa               Boolean                   @default(false)
-  deletedAt              DateTime?
-  deletedByUserId        String?
-  deletionReason         String?                   @db.Text
-  createdAt              DateTime                  @default(now())
-  updatedAt              DateTime                  @updatedAt
-  reservations           Reservation[]             @relation("SurgeonReservations")
-  anesthetistAssignments  AnesthetistAssignment[]
+  id                       String                      @id @default(cuid())
+  email                    String                      @unique
+  passwordHash             String
+  name                     String
+  role                     UserRole
+  approved                 Boolean                     @default(false)
+  canSespa                 Boolean                     @default(false)
+  deletedAt                DateTime?
+  deletedByUserId          String?
+  deletionReason           String?                     @db.Text
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+  reservations             Reservation[]               @relation("SurgeonReservations")
+  anesthetistAssignments   AnesthetistAssignment[]
+  anesthetistUnavailability AnesthetistUnavailability[]
   blockOpeningPlansApproved BlockOpeningPlan[]
 }
 
@@ -62,18 +63,18 @@ model Reservation {
   resourceId         String
   shift              Shift
   slotIndex          Int
-  surgeonId         String
-  status            ReservationStatus  @default(PENDING)
-  anesthetistId     String?
-  origin            ReservationOrigin   @default(APP)
-  createdByUserId   String?             // Quién creó (gestor puede crear en nombre de otro)
-  updatedByUserId   String?             // Quién modificó por última vez
-  releasedAt        DateTime?
-  cancelledAt       DateTime?
-  releaseReason     String?
+  surgeonId          String
+  status             ReservationStatus  @default(PENDING)
+  anesthetistId      String?
+  origin             ReservationOrigin   @default(APP)
+  createdByUserId    String?
+  updatedByUserId    String?
+  releasedAt         DateTime?
+  cancelledAt        DateTime?
+  releaseReason      String?
   cancellationReason String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   surgeon           User               @relation("SurgeonReservations", fields: [surgeonId], references: [id])
   patients          PatientInBlock[]
@@ -93,7 +94,6 @@ enum ReservationEventType {
   RESERVATION_PATIENT_UPDATED
   RESERVATION_PATIENT_REPLACED
   RESERVATION_PATIENT_CANCELLED
-  /** Circuito quirúrgico (fase 1): trazabilidad dry-run, sin envío real */
   PATIENT_WORKFLOW_STARTED
   PREANESTHESIA_PENDING
   PATIENT_NOTIFICATION_DRY_RUN_CREATED
@@ -110,8 +110,8 @@ model ReservationEvent {
   reservationId String?
   eventType     ReservationEventType
   actorUserId   String?
-  origin        String?             // "app" | "email" | "gestor" en el momento del evento
-  detailsJson   String?             // JSON con contexto (slot, motivo, etc.)
+  origin        String?
+  detailsJson   String?
   createdAt     DateTime            @default(now())
 
   reservation   Reservation?        @relation(fields: [reservationId], references: [id], onDelete: SetNull)
@@ -121,24 +121,39 @@ model ReservationEvent {
   @@index([createdAt])
 }
 
-/** Tipo de asignación: quirófano (OR) o consulta preanestesia */
 enum AssignmentType {
   OR
   PREANESTHESIA
 }
 
-/** Asignación de anestesista a un turno. Un turno = 1 (quirófano o preanestesia). */
 model AnesthetistAssignment {
   id              String         @id @default(cuid())
-  date            String         // YYYY-MM-DD
-  shift           Shift          // MORNING | AFTERNOON
-  assignmentType  AssignmentType @default(OR)  // OR = quirófano, PREANESTHESIA = consulta
-  resourceId      String         // Q1, Q2... o "__preanestesia__" / "__full_shift__"
+  date            String
+  shift           Shift
+  assignmentType  AssignmentType @default(OR)
+  resourceId      String
   anesthetistId   String
 
   anesthetist     User           @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
 
   @@unique([date, shift, assignmentType, resourceId])
+  @@index([anesthetistId])
+  @@index([date])
+}
+
+/** No disponibilidad compartida del anestesista. Sustituye localStorage en modo real. */
+model AnesthetistUnavailability {
+  id            String   @id @default(cuid())
+  anesthetistId String
+  date          String   // YYYY-MM-DD
+  shift         Shift
+  reason        String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  anesthetist   User     @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
+
+  @@unique([anesthetistId, date, shift])
   @@index([anesthetistId])
   @@index([date])
 }
@@ -156,14 +171,11 @@ model PatientInBlock {
   orderIndex               Int
   notes                    String?
   solicitudRecursos        String?
-  /** Contacto del paciente (circuito preanestesia / notificaciones futuras) */
   patientEmail             String?
   patientPhone             String?
-  /** Estado del circuito clínico-administrativo (fase 1: valores iniciales, sin motor) */
   workflowStatus           String      @default("ACTIVE")
   preanesthesiaStatus      String      @default("PENDING")
   financingStatus          String      @default("PENDING")
-  /** Cita autocitada preanestesia (Europe/Madrid al persistir); null si pendiente o urgencia diferida */
   preanesthesiaAppointmentAt DateTime?
   isDeferredUrgency        Boolean     @default(false)
   specialCircuitReason     String?     @db.Text
@@ -172,8 +184,6 @@ model PatientInBlock {
 
   @@index([preanesthesiaAppointmentAt])
 }
-
-// --- Integración Outlook / Microsoft 365 (buzón gestor jfanjul@riberacare.com) ---
 
 enum EmailClassification {
   RESERVATION
@@ -191,26 +201,25 @@ enum EmailProcessingStatus {
 
 model EmailMessage {
   id                String              @id @default(cuid())
-  externalId        String              @unique // ID del mensaje en Outlook (evitar duplicados)
+  externalId        String              @unique
   fromEmail         String
   fromName          String?
   subject           String
   bodyPlain         String?
-  bodySummary       String?             // Primeros ~500 caracteres para listados
+  bodySummary       String?
   bodyHtml          String?
   receivedAt        DateTime
   classification    EmailClassification @default(UNKNOWN)
   processingStatus  EmailProcessingStatus @default(PENDING)
-  resultMessage     String?             // Mensaje de resultado (para trazabilidad y respuesta)
-  senderUserId      String?             // Usuario de la app si el remitente está registrado
-  reservationId     String?             // Reserva creada desde este correo (si aplica)
+  resultMessage     String?
+  senderUserId      String?
+  reservationId     String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
   processingLogs    EmailProcessingLog[]
 }
 
-/** Mensajes de contacto desde pantalla de acceso (usuarios sin cuenta). Piloto real. */
 model ContactMessage {
   id        String   @id @default(cuid())
   fromName  String
@@ -222,49 +231,46 @@ model ContactMessage {
   @@index([createdAt])
 }
 
-/** Registro de notificación por liberación automática de huecos a bolsa común */
 model ReleaseNotificationLog {
-  id                    String   @id @default(cuid())
-  releasedCount         Int
-  slotDetailsJson       String   @db.Text
-  releasedReservationIds String  @db.Text
-  recipientCount        Int      @default(0)
-  emailStatus           String   // SENT | FAILED | SKIPPED
-  errorMessage          String?  @db.Text
-  createdAt             DateTime @default(now())
+  id                     String   @id @default(cuid())
+  releasedCount          Int
+  slotDetailsJson        String   @db.Text
+  releasedReservationIds String   @db.Text
+  recipientCount         Int      @default(0)
+  emailStatus            String
+  errorMessage           String?  @db.Text
+  createdAt              DateTime @default(now())
 
   @@index([createdAt])
 }
 
 model EmailProcessingLog {
-  id            String   @id @default(cuid())
+  id             String   @id @default(cuid())
   emailMessageId String
-  action        String   // "classified", "parsed", "reservation_created", "reply_sent", "error"
-  details       String?  // JSON o texto con detalles
-  errorMessage  String?
-  createdAt     DateTime @default(now())
+  action         String
+  details        String?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
 
-  emailMessage  EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  emailMessage   EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
 
   @@index([emailMessageId])
 }
 
-// --- Plan de apertura del bloque quirúrgico ---
-
 enum BlockOpeningStatus {
-  OPEN             // Abierto a reservas normales
-  CLOSED           // Cerrado: no se puede reservar
-  URGENT_RESERVED  // Reservado para urgencias: no reservas normales
+  OPEN
+  CLOSED
+  URGENT_RESERVED
 }
 
 model BlockOpeningPlan {
   id                    String              @id @default(cuid())
-  date                  DateTime            // YYYY-MM-DD
-  shift                 Shift               // MORNING | AFTERNOON
-  resourceId            String              // Q1, Q2, Q3, procedimientos-menores, tecnicas-dolor
+  date                  DateTime
+  shift                 Shift
+  resourceId            String
   status                BlockOpeningStatus  @default(OPEN)
-  minRequiredMinutes    Int                 @default(0)   // Umbral mínimo para considerar apertura justificada
-  reservedUrgentMinutes Int                 @default(0)  // Minutos reservados para urgencias
+  minRequiredMinutes    Int                 @default(0)
+  reservedUrgentMinutes Int                 @default(0)
   notes                 String?             @db.Text
   approvedByUserId      String?
   createdAt             DateTime            @default(now())
@@ -277,14 +283,13 @@ model BlockOpeningPlan {
   @@index([resourceId])
 }
 
-/** Reglas de programación editables por gestor (normas_texto, deadline, etc.) */
 model ProgrammingRule {
   id              String    @id @default(cuid())
-  key             String    @unique // normas_texto_completo, scheduling_deadline_day, etc.
+  key             String    @unique
   name            String
   description     String?   @db.Text
-  category        String    @default("scheduling") // scheduling | informational
-  valueJson       String?   @db.Text // JSON: string, number, etc.
+  category        String    @default("scheduling")
+  valueJson       String?   @db.Text
   isActive        Boolean   @default(true)
   updatedAt       DateTime  @updatedAt
   updatedByUserId String?
@@ -293,11 +298,10 @@ model ProgrammingRule {
   @@index([isActive])
 }
 
-/** Auditoría de acciones sobre usuarios (desactivar, reactivar, etc.) */
 model UserAuditEvent {
   id          String   @id @default(cuid())
   userId      String
-  eventType   String   // USER_DEACTIVATED | USER_REACTIVATED | USER_DELETED
+  eventType   String
   actorUserId String?
   detailsJson String?  @db.Text
   createdAt   DateTime @default(now())
