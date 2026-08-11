@@ -8,17 +8,17 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
-import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { isReservationRetentionStillAllowed } from "@/lib/schedulingDeadline";
 import { cancelPatientSchema } from "@/lib/validations/reservation";
+import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
 
 export const dynamic = "force-dynamic";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = toAuthSession(await getSessionFromCookie());
@@ -34,8 +34,7 @@ export async function PATCH(
     const reservation = await fetchReservationForAccess(id);
     if (!reservation) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
 
-    const booking = toBookingLike(reservation);
-    if (!canModifyPatientInBooking(session, booking, "patient:cancel")) {
+    if (!canModifyPatientInBooking(session!, toBookingLike(reservation), "patient:cancel")) {
       return NextResponse.json({ error: "No tiene permiso para cancelar pacientes en esta reserva" }, { status: 403 });
     }
 
@@ -54,61 +53,88 @@ export async function PATCH(
 
     const { patientId, reason } = parsed.data;
     const reasonTrimmed = reason?.trim() || undefined;
-
-    const patient = await prisma.patientInBlock.findFirst({
-      where: { id: patientId, reservationId: id },
-    });
-    if (!patient) return NextResponse.json({ error: "Paciente no encontrado en esta reserva" }, { status: 404 });
-
-    const patientsBefore = await prisma.patientInBlock.count({ where: { reservationId: id } });
-    if (patientsBefore <= 0) return NextResponse.json({ error: "No hay pacientes en esta reserva" }, { status: 400 });
-
-    const dateStr =
-      reservation.date instanceof Date ? reservation.date.toISOString().slice(0, 10) : String(reservation.date).slice(0, 10);
+    const dateStr = reservation.date instanceof Date
+      ? reservation.date.toISOString().slice(0, 10)
+      : String(reservation.date).slice(0, 10);
     const shiftLabel = reservation.shift === "MORNING" ? "morning" : "afternoon";
 
-    let slotOutcome: "retained" | "released" | null = null;
+    const lockedResult = await withSchedulingContextLock(
+      { date: dateStr, resourceId: reservation.resourceId, shift: shiftLabel },
+      async (tx) => {
+        const live = await tx.reservation.findUnique({ where: { id }, include: { patients: true } });
+        if (!live) return { kind: "not_found" as const };
+        if (!canModifyPatientInBooking(session!, toBookingLike(live), "patient:cancel")) {
+          return { kind: "forbidden" as const };
+        }
+        if (live.status !== "PENDING" && live.status !== "CONFIRMED") {
+          return { kind: "inactive" as const };
+        }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.patientInBlock.delete({ where: { id: patientId } });
+        const patient = live.patients.find((p) => p.id === patientId);
+        if (!patient) return { kind: "patient_not_found" as const };
 
-      const remainingCount = await tx.patientInBlock.count({ where: { reservationId: id } });
+        await tx.patientInBlock.delete({ where: { id: patientId } });
+        const remainingCount = live.patients.length - 1;
+        let slotOutcome: "retained" | "released" | null = null;
 
-      if (remainingCount === 0) {
-        const retentionAllowed = isReservationRetentionStillAllowed(dateStr);
-
-        if (retentionAllowed) {
-          await tx.reservation.update({
-            where: { id },
-            data: { status: "PENDING", updatedByUserId: session!.userId },
-          });
-          slotOutcome = "retained";
+        if (remainingCount === 0) {
+          const retentionAllowed = isReservationRetentionStillAllowed(dateStr);
+          if (retentionAllowed) {
+            await tx.reservation.update({
+              where: { id },
+              data: { status: "PENDING", updatedByUserId: session!.userId },
+            });
+            slotOutcome = "retained";
+          } else {
+            await tx.reservation.update({
+              where: { id },
+              data: {
+                status: "RELEASED",
+                releasedAt: new Date(),
+                releaseReason: "ultimo_paciente_cancelado_post_cierre",
+                updatedByUserId: session!.userId,
+              },
+            });
+            slotOutcome = "released";
+          }
         } else {
           await tx.reservation.update({
             where: { id },
-            data: {
-              status: "RELEASED",
-              releasedAt: new Date(),
-              releaseReason: "ultimo_paciente_cancelado_post_cierre",
-              updatedByUserId: session!.userId,
-            },
+            data: { updatedByUserId: session!.userId },
           });
-          slotOutcome = "released";
         }
-      } else {
-        await tx.reservation.update({
-          where: { id },
-          data: { updatedByUserId: session!.userId },
-        });
-      }
-    });
 
-    const message =
-      slotOutcome === "retained"
-        ? "Paciente eliminado. El hueco de este tramo sigue reservado (sin pacientes) para poder programar otro caso."
-        : slotOutcome === "released"
-          ? "Paciente eliminado. Era el último del tramo y, tras el cierre de programación, el hueco ha pasado a bolsa común (liberado)."
-          : "Paciente eliminado correctamente. Siguen otros pacientes en este mismo tramo.";
+        return {
+          kind: "cancelled" as const,
+          slotOutcome,
+          historyNumber: patient.historyNumber,
+          procedure: patient.procedure,
+        };
+      },
+    );
+
+    if (lockedResult.kind === "not_found") {
+      return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
+    }
+    if (lockedResult.kind === "forbidden") {
+      return NextResponse.json({ error: "No tiene permiso para cancelar pacientes en esta reserva" }, { status: 403 });
+    }
+    if (lockedResult.kind === "inactive") {
+      return NextResponse.json(
+        { error: "No se pueden cancelar pacientes de una reserva cancelada o liberada", code: "reservation_not_active" },
+        { status: 409 },
+      );
+    }
+    if (lockedResult.kind === "patient_not_found") {
+      return NextResponse.json({ error: "Paciente no encontrado en esta reserva" }, { status: 404 });
+    }
+
+    const slotOutcome = lockedResult.slotOutcome;
+    const message = slotOutcome === "retained"
+      ? "Paciente eliminado. El hueco de este tramo sigue reservado (sin pacientes) para poder programar otro caso."
+      : slotOutcome === "released"
+        ? "Paciente eliminado. Era el último del tramo y, tras el cierre de programación, el hueco ha pasado a bolsa común (liberado)."
+        : "Paciente eliminado correctamente. Siguen otros pacientes en este mismo tramo.";
 
     await logReservationEvent({
       eventType: "RESERVATION_PATIENT_CANCELLED",
@@ -117,8 +143,8 @@ export async function PATCH(
       origin: "app",
       detailsJson: {
         patientId,
-        historyNumber: patient.historyNumber,
-        procedure: patient.procedure,
+        historyNumber: lockedResult.historyNumber,
+        procedure: lockedResult.procedure,
         reason: reasonTrimmed,
         slotOutcome,
         slot: {
@@ -137,7 +163,7 @@ export async function PATCH(
       origin: "app",
       detailsJson: {
         patientId,
-        historyNumber: patient.historyNumber,
+        historyNumber: lockedResult.historyNumber,
         dryRun: true,
         reason: reasonTrimmed ?? null,
       },
@@ -146,8 +172,11 @@ export async function PATCH(
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
-    const apiReservation = toApiReservation(updated as Parameters<typeof toApiReservation>[0]);
-    return NextResponse.json({ reservation: apiReservation, slotOutcome, message });
+    return NextResponse.json({
+      reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]),
+      slotOutcome,
+      message,
+    });
   } catch (err) {
     console.error("[reservations patient/cancel]", err);
     return NextResponse.json({ error: "Error al cancelar paciente" }, { status: 500 });
