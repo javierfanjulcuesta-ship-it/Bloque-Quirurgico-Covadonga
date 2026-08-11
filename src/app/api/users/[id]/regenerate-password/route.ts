@@ -1,25 +1,11 @@
-/**
- * POST /api/users/[id]/regenerate-password
- * Genera nueva contraseña temporal para el usuario (usuarios de prueba).
- * No envía email. Requiere user:create.
- */
+/** POST /api/users/[id]/regenerate-password */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
-
-const TEMP_PASSWORD_LENGTH = 10;
-const CHARS = "abcdefghjkmnpqrstuvwxyz23456789";
-
-function generateTempPassword(): string {
-  let result = "";
-  for (let i = 0; i < TEMP_PASSWORD_LENGTH; i++) {
-    result += CHARS[Math.floor(Math.random() * CHARS.length)];
-  }
-  return result;
-}
+import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
 
 export async function POST(
   _req: Request,
@@ -45,20 +31,24 @@ export async function POST(
       return NextResponse.json({ error: "El usuario está eliminado del directorio" }, { status: 400 });
     }
 
-    const tempPassword = generateTempPassword();
+    const tempPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(tempPassword);
 
-    await prisma.user.update({
-      where: { id },
-      data: { passwordHash },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id }, data: { passwordHash } });
+      await tx.userAuditEvent.create({
+        data: {
+          userId: id,
+          eventType: "USER_PASSWORD_REGENERATED",
+          actorUserId: session!.userId,
+          detailsJson: JSON.stringify({ temporaryCredentialIssued: true }),
+        },
+      });
     });
 
     return NextResponse.json({ ok: true, tempPassword });
   } catch (err) {
     console.error("[regenerate-password]", err);
-    return NextResponse.json(
-      { error: "Error al regenerar contraseña" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error al regenerar contraseña" }, { status: 500 });
   }
 }
