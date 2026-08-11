@@ -1,9 +1,10 @@
 /**
  * GET - Listar asignaciones (schedule:view:own | anesthetist:assign). Sin assign → solo propias.
- * PUT - Guardar asignaciones (anesthetist:assign, solo gestores)
+ * PUT - Reemplazar el snapshot completo con control de revisión optimista (solo gestores).
  */
 
 import { NextResponse } from "next/server";
+import { UserRole } from "@prisma/client";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import {
   toAuthSession,
@@ -13,6 +14,12 @@ import {
   hasPermission,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { isRealDateOnly } from "@/lib/reservations/bookingPolicy";
+import {
+  assignmentSnapshotRevision,
+  replaceAssignmentSnapshot,
+  type AssignmentSnapshotRow,
+} from "@/lib/reservations/anesthetistAssignmentSnapshot";
 
 const VALID_RESOURCES = new Set([
   "Q1",
@@ -24,25 +31,32 @@ const VALID_RESOURCES = new Set([
 const PREANESTHESIA = "__preanestesia__";
 const FULL_SHIFT = "__full_shift__";
 
-/** Convierte slotType legacy a assignmentType + resourceId */
+/** Convierte slotType legacy a assignmentType + resourceId. Nunca corrige silenciosamente un valor inválido. */
 function parseAssignment(
-  a: { date?: string; shift?: string; slotType?: string; assignmentType?: string; resourceId?: string; anesthetistId?: string }
-): { date: string; shift: "MORNING" | "AFTERNOON"; assignmentType: "OR" | "PREANESTHESIA"; resourceId: string; anesthetistId: string } | null {
-  const date = typeof a.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(a.date) ? a.date : null;
+  a: { date?: unknown; shift?: unknown; slotType?: unknown; assignmentType?: unknown; resourceId?: unknown; anesthetistId?: unknown },
+): AssignmentSnapshotRow | null {
+  const date = typeof a.date === "string" && isRealDateOnly(a.date) ? a.date : null;
   const shift = a.shift === "morning" ? "MORNING" : a.shift === "afternoon" ? "AFTERNOON" : null;
-  const anesthetistId = typeof a.anesthetistId === "string" && a.anesthetistId ? a.anesthetistId : null;
+  const anesthetistId = typeof a.anesthetistId === "string" && a.anesthetistId.trim() ? a.anesthetistId.trim() : null;
   if (!date || !shift || !anesthetistId) return null;
 
-  if (a.assignmentType && a.resourceId) {
-    const type = a.assignmentType === "PREANESTHESIA" ? "PREANESTHESIA" : "OR";
-    const rid = String(a.resourceId);
-    if (type === "PREANESTHESIA" && (rid === PREANESTHESIA || rid === "")) return { date, shift, assignmentType: "PREANESTHESIA", resourceId: PREANESTHESIA, anesthetistId };
-    if (type === "OR" && (VALID_RESOURCES.has(rid) || rid === FULL_SHIFT)) return { date, shift, assignmentType: "OR", resourceId: rid, anesthetistId };
+  if (typeof a.assignmentType === "string" && typeof a.resourceId === "string") {
+    if (a.assignmentType === "PREANESTHESIA" && a.resourceId === PREANESTHESIA) {
+      return { date, shift, assignmentType: "PREANESTHESIA", resourceId: PREANESTHESIA, anesthetistId };
+    }
+    if (a.assignmentType === "OR" && (VALID_RESOURCES.has(a.resourceId) || a.resourceId === FULL_SHIFT)) {
+      return { date, shift, assignmentType: "OR", resourceId: a.resourceId, anesthetistId };
+    }
+    return null;
   }
 
-  if (a.slotType) {
-    if (a.slotType === "consulta-preanestesia") return { date, shift, assignmentType: "PREANESTHESIA", resourceId: PREANESTHESIA, anesthetistId };
-    if (VALID_RESOURCES.has(a.slotType)) return { date, shift, assignmentType: "OR", resourceId: a.slotType, anesthetistId };
+  if (typeof a.slotType === "string") {
+    if (a.slotType === "consulta-preanestesia") {
+      return { date, shift, assignmentType: "PREANESTHESIA", resourceId: PREANESTHESIA, anesthetistId };
+    }
+    if (VALID_RESOURCES.has(a.slotType)) {
+      return { date, shift, assignmentType: "OR", resourceId: a.slotType, anesthetistId };
+    }
   }
   return null;
 }
@@ -59,6 +73,16 @@ function toFrontend(a: { id: string; date: string; shift: string; assignmentType
     anesthetistId: a.anesthetistId,
     slotType,
   };
+}
+
+function snapshotRows(list: Array<{ date: string; shift: string; assignmentType: string; resourceId: string; anesthetistId: string }>): AssignmentSnapshotRow[] {
+  return list.map((a) => ({
+    date: a.date,
+    shift: a.shift as "MORNING" | "AFTERNOON",
+    assignmentType: a.assignmentType as "OR" | "PREANESTHESIA",
+    resourceId: a.resourceId,
+    anesthetistId: a.anesthetistId,
+  }));
 }
 
 export async function GET(request: Request) {
@@ -80,24 +104,26 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "anesthetistId obligatorio para no gestores" }, { status: 400 });
     }
 
-    // Anestesistas solo pueden ver sus propias asignaciones
-    const filterAnesthetist = canAssign ? anesthetistId : session!.userId;
+    if (dateFrom && !isRealDateOnly(dateFrom)) {
+      return NextResponse.json({ error: "dateFrom inválido" }, { status: 400 });
+    }
+    if (dateTo && !isRealDateOnly(dateTo)) {
+      return NextResponse.json({ error: "dateTo inválido" }, { status: 400 });
+    }
+    if (dateFrom && dateTo) {
+      const diffDays = (new Date(`${dateTo}T00:00:00.000Z`).getTime() - new Date(`${dateFrom}T00:00:00.000Z`).getTime()) / 86_400_000;
+      if (diffDays < 0 || diffDays > 93) {
+        return NextResponse.json({ error: "Rango máximo 93 días" }, { status: 400 });
+      }
+    }
 
+    const filterAnesthetist = canAssign ? anesthetistId : session!.userId;
     const where: { anesthetistId?: string; date?: { gte?: string; lte?: string } } = {};
     if (filterAnesthetist) where.anesthetistId = filterAnesthetist;
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.gte = dateFrom;
       if (dateTo) where.date.lte = dateTo;
-      // Límite: max 93 días
-      if (dateFrom && dateTo) {
-        const from = new Date(dateFrom);
-        const to = new Date(dateTo);
-        const diffDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
-        if (diffDays < 0 || diffDays > 93) {
-          return NextResponse.json({ error: "Rango máximo 93 días" }, { status: 400 });
-        }
-      }
     }
 
     const list = await prisma.anesthetistAssignment.findMany({
@@ -106,11 +132,14 @@ export async function GET(request: Request) {
       orderBy: [{ date: "asc" }, { shift: "asc" }, { assignmentType: "asc" }, { resourceId: "asc" }],
     });
 
-    const items = list.map((a) => toFrontend(a));
+    // Solo una carga completa de gestor es un snapshot editable. Las vistas filtradas
+    // son de lectura y no exponen una revisión que pudiera confundirse con el conjunto total.
+    const isFullEditableSnapshot = canAssign && !anesthetistId && !dateFrom && !dateTo;
+    const revision = isFullEditableSnapshot ? assignmentSnapshotRevision(snapshotRows(list)) : null;
 
-    return NextResponse.json({ assignments: items });
+    return NextResponse.json({ assignments: list.map(toFrontend), revision });
   } catch (err) {
-    console.error("[anesthetist-assignments GET]", err);
+    console.error("[anesthetist-assignments GET]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
@@ -124,49 +153,72 @@ export async function PUT(request: Request) {
     const denyPerm = requirePermission(session!, "anesthetist:assign");
     if (denyPerm) return denyPerm;
 
-    const body = await request.json();
-    const assignments = Array.isArray(body.assignments) ? body.assignments : [];
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Payload inválido" }, { status: 400 });
+    }
 
-    const toUpsert: Array<{ date: string; shift: "MORNING" | "AFTERNOON"; assignmentType: "OR" | "PREANESTHESIA"; resourceId: string; anesthetistId: string }> = [];
+    const raw = body as { assignments?: unknown; expectedRevision?: unknown };
+    if (!Array.isArray(raw.assignments)) {
+      return NextResponse.json({ error: "assignments debe ser un array" }, { status: 400 });
+    }
+    if (typeof raw.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(raw.expectedRevision)) {
+      return NextResponse.json(
+        {
+          error: "Falta la revisión del snapshot. Recargue las asignaciones antes de guardar.",
+          code: "assignment_revision_required",
+        },
+        { status: 428 },
+      );
+    }
 
-    for (const a of assignments) {
-      const parsed = parseAssignment(a);
-      if (!parsed) continue;
+    const toUpsert: AssignmentSnapshotRow[] = [];
+    for (let i = 0; i < raw.assignments.length; i++) {
+      const item = raw.assignments[i];
+      if (!item || typeof item !== "object") {
+        return NextResponse.json({ error: `Asignación ${i + 1} inválida` }, { status: 400 });
+      }
+      const parsed = parseAssignment(item as Parameters<typeof parseAssignment>[0]);
+      if (!parsed) {
+        return NextResponse.json(
+          { error: `Asignación ${i + 1} inválida. No se ha guardado ningún cambio.` },
+          { status: 400 },
+        );
+      }
       toUpsert.push(parsed);
     }
 
-    // Protección mínima anti-wipe: no permitir payload parseado vacío si ya hay datos existentes.
-    if (toUpsert.length === 0) {
-      const existingCount = await prisma.anesthetistAssignment.count();
-      if (existingCount > 0) {
-        return NextResponse.json(
-          {
-            error:
-              "No se guardaron asignaciones: el payload está vacío y borraría asignaciones existentes. Recargue la pantalla y reintente.",
-            code: "empty_assignments_would_clear_existing",
-          },
-          { status: 409 }
-        );
+    // El payload representa un snapshot completo: ningún slot lógico puede aparecer dos veces.
+    const slotKeys = new Set<string>();
+    for (const a of toUpsert) {
+      const key = `${a.date}|${a.shift}|${a.assignmentType}|${a.resourceId}`;
+      if (slotKeys.has(key)) {
+        return NextResponse.json({ error: "Hay dos anestesistas asignados al mismo recurso/turno." }, { status: 400 });
       }
+      slotKeys.add(key);
     }
 
-    // Validar que los anesthetistId sean usuarios ANESTESISTA/GESTOR_ANESTESISTA (User no tiene isActive en schema)
     const distinctAnesthetistIds = [...new Set(toUpsert.map((a) => a.anesthetistId))];
-    const anesthetists = await prisma.user.findMany({
-      where: {
-        id: { in: distinctAnesthetistIds },
-        deletedAt: null,
-        approved: true,
-      },
-      select: { id: true, role: true },
-    });
-    const validRoles = new Set(["ANESTESISTA", "GESTOR_ANESTESISTA"]);
-    for (const aid of distinctAnesthetistIds) {
-      const u = anesthetists.find((a) => a.id === aid);
-      if (!u || !validRoles.has(u.role)) {
+    if (distinctAnesthetistIds.length > 0) {
+      const anesthetists = await prisma.user.findMany({
+        where: {
+          id: { in: distinctAnesthetistIds },
+          deletedAt: null,
+          approved: true,
+          role: { in: [UserRole.ANESTESISTA, UserRole.GESTOR_ANESTESISTA] },
+        },
+        select: { id: true },
+      });
+      const validIds = new Set(anesthetists.map((u) => u.id));
+      if (distinctAnesthetistIds.some((id) => !validIds.has(id))) {
         return NextResponse.json(
           { error: "Solo se pueden asignar anestesistas o gestores-anestesistas activos a los turnos." },
-          { status: 400 }
+          { status: 400 },
         );
       }
     }
@@ -176,14 +228,14 @@ export async function PUT(request: Request) {
       const dates = [...new Set(orAssignments.map((a) => a.date))];
       const dateMin = dates.reduce((a, b) => (a < b ? a : b));
       const dateMax = dates.reduce((a, b) => (a > b ? a : b));
-      const dateFromObj = new Date(dateMin + "T00:00:00.000Z");
-      const dateToObj = new Date(dateMax + "T23:59:59.999Z");
-
       const [reservationsWithPatients, anesthetists] = await Promise.all([
         prisma.reservation.findMany({
           where: {
-            status: { not: "CANCELLED" },
-            date: { gte: dateFromObj, lte: dateToObj },
+            status: { in: ["PENDING", "CONFIRMED"] },
+            date: {
+              gte: new Date(`${dateMin}T00:00:00.000Z`),
+              lte: new Date(`${dateMax}T23:59:59.999Z`),
+            },
           },
           include: { patients: true },
         }),
@@ -194,51 +246,45 @@ export async function PUT(request: Request) {
       ]);
 
       const canSespaByAnesthetist = new Map(anesthetists.map((u) => [u.id, !!u.canSespa]));
-
-      function isSespaInsurance(s: string | null | undefined): boolean {
-        return !!(s && typeof s === "string" && /^sespa$/i.test(s.trim()));
-      }
-
-      function slotHasSespa(dateStr: string, shift: "MORNING" | "AFTERNOON", resourceId: string): boolean {
+      const isSespaInsurance = (s: string | null | undefined) => !!(s && /^sespa$/i.test(s.trim()));
+      const slotHasSespa = (dateStr: string, shift: "MORNING" | "AFTERNOON", resourceId: string): boolean => {
         const resourceIds = resourceId === FULL_SHIFT ? Array.from(VALID_RESOURCES) : [resourceId];
-        const shiftStr = shift === "MORNING" ? "morning" : "afternoon";
-        for (const r of reservationsWithPatients) {
-          const rDate = r.date.toISOString().slice(0, 10);
-          const rShift = r.shift === "MORNING" ? "morning" : "afternoon";
-          if (rDate !== dateStr || rShift !== shiftStr || !resourceIds.includes(r.resourceId)) continue;
-          const hasSespa = r.patients?.some((p) => isSespaInsurance(p.insuranceType));
-          if (hasSespa) return true;
-        }
-        return false;
-      }
+        return reservationsWithPatients.some((r) =>
+          r.date.toISOString().slice(0, 10) === dateStr &&
+          r.shift === shift &&
+          resourceIds.includes(r.resourceId) &&
+          r.patients.some((p) => isSespaInsurance(p.insuranceType)),
+        );
+      };
 
       for (const a of orAssignments) {
-        if (!slotHasSespa(a.date, a.shift, a.resourceId)) continue;
-        const canSespa = canSespaByAnesthetist.get(a.anesthetistId);
-        if (!canSespa) {
+        if (slotHasSespa(a.date, a.shift, a.resourceId) && !canSespaByAnesthetist.get(a.anesthetistId)) {
           return NextResponse.json(
             {
               error: "Este bloque contiene pacientes SESPA; solo pueden asignarse anestesistas habilitados para SESPA.",
               code: "SESPA_ANESTHETIST_REQUIRED",
             },
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.anesthetistAssignment.deleteMany({});
-      for (const a of toUpsert) {
-        await tx.anesthetistAssignment.create({
-          data: { date: a.date, shift: a.shift, assignmentType: a.assignmentType, resourceId: a.resourceId, anesthetistId: a.anesthetistId },
-        });
-      }
-    });
+    const saved = await replaceAssignmentSnapshot(prisma, raw.expectedRevision, toUpsert);
+    if (!saved.ok) {
+      return NextResponse.json(
+        {
+          error: "Las asignaciones cambiaron desde que abrió la pantalla. Recargue antes de guardar para no sobrescribir el trabajo de otro gestor.",
+          code: "assignment_snapshot_stale",
+          currentRevision: saved.currentRevision,
+        },
+        { status: 409 },
+      );
+    }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, revision: saved.revision });
   } catch (err) {
-    console.error("[anesthetist-assignments PUT]", err);
+    console.error("[anesthetist-assignments PUT]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
