@@ -1,0 +1,50 @@
+name: Booking integrity CI
+
+on:
+  push:
+    branches:
+      - hardening/p0-booking-integrity
+  pull_request:
+    branches:
+      - hardening/integration
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: qxflow_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qxflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npm test
+      - run: npm run test:booking-integration
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - name: Lint informational - pre-existing debt tracked separately
+        continue-on-error: true
+        run: npm run lint

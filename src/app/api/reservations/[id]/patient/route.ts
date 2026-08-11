@@ -8,7 +8,6 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import {
   defaultPatientCircuitColumns,
@@ -22,12 +21,13 @@ import {
   findOverflowInvaderForTargetSlot,
   getActiveReservationsInContext,
 } from "@/lib/reservations/overflowConflicts";
+import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
 
 export const dynamic = "force-dynamic";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = toAuthSession(await getSessionFromCookie());
@@ -61,8 +61,7 @@ export async function PATCH(
     }
 
     const { patientId, ...updates } = parsed.data;
-    const contactOnlyUpdate =
-      updates.patientEmail !== undefined || updates.patientPhone !== undefined;
+    const contactOnlyUpdate = updates.patientEmail !== undefined || updates.patientPhone !== undefined;
     const shouldReinitCircuitStatuses =
       contactOnlyUpdate &&
       updates.historyNumber === undefined &&
@@ -75,11 +74,6 @@ export async function PATCH(
       updates.orderIndex === undefined &&
       updates.notes === undefined &&
       updates.solicitudRecursos === undefined;
-
-    const patient = await prisma.patientInBlock.findFirst({
-      where: { id: patientId, reservationId: id },
-    });
-    if (!patient) return NextResponse.json({ error: "Paciente no encontrado en esta reserva" }, { status: 404 });
 
     const data: Record<string, unknown> = {};
     if (updates.historyNumber !== undefined) data.historyNumber = updates.historyNumber;
@@ -94,71 +88,100 @@ export async function PATCH(
     if (updates.solicitudRecursos !== undefined) data.solicitudRecursos = updates.solicitudRecursos;
     if (updates.patientEmail !== undefined) data.patientEmail = updates.patientEmail ?? null;
     if (updates.patientPhone !== undefined) data.patientPhone = updates.patientPhone ?? null;
-    if (shouldReinitCircuitStatuses) {
-      Object.assign(data, defaultPatientCircuitColumns());
+    if (shouldReinitCircuitStatuses) Object.assign(data, defaultPatientCircuitColumns());
+
+    const dateStr = reservation.date instanceof Date
+      ? reservation.date.toISOString().slice(0, 10)
+      : String(reservation.date).slice(0, 10);
+    const shift = reservation.shift === "MORNING" ? "morning" : "afternoon";
+
+    const lockedResult = await withSchedulingContextLock(
+      { date: dateStr, resourceId: reservation.resourceId, shift },
+      async (tx) => {
+        const live = await tx.reservation.findUnique({
+          where: { id },
+          include: { patients: true },
+        });
+        if (!live) return { kind: "not_found" as const };
+        if (!canModifyPatientInBooking(session!, toBookingLike(live), "patient:update")) {
+          return { kind: "forbidden" as const };
+        }
+        if (live.status !== "PENDING" && live.status !== "CONFIRMED") {
+          return { kind: "inactive" as const };
+        }
+
+        const livePatient = live.patients.find((p) => p.id === patientId);
+        if (!livePatient) return { kind: "patient_not_found" as const };
+
+        if (updates.estimatedDurationMinutes !== undefined) {
+          const activeInContext = await getActiveReservationsInContext(tx, {
+            date: dateStr,
+            resourceId: live.resourceId,
+            shift,
+          });
+          const invader = findOverflowInvaderForTargetSlot({
+            reservations: activeInContext,
+            shift,
+            targetSlotIndex: live.slotIndex,
+            targetSurgeonId: live.surgeonId,
+            excludeReservationId: live.id,
+          });
+          if (invader) return { kind: "overflow_invader" as const };
+
+          const simulatedPatients = live.patients.map((p) => ({
+            estimatedDurationMinutes: p.id === patientId
+              ? updates.estimatedDurationMinutes ?? p.estimatedDurationMinutes
+              : p.estimatedDurationMinutes,
+          }));
+          const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(simulatedPatients));
+          const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
+            reservations: activeInContext,
+            shift,
+            ownerReservationId: live.id,
+            ownerSlotIndex: live.slotIndex,
+            ownerUsedMinutes: usedMinutesCandidate,
+          });
+          if (overflowConflict) return { kind: "overflow_conflict" as const };
+        }
+
+        await tx.patientInBlock.update({
+          where: { id: patientId },
+          data: data as Prisma.PatientInBlockUpdateInput,
+        });
+        await tx.reservation.update({
+          where: { id },
+          data: { updatedByUserId: session!.userId },
+        });
+
+        return {
+          kind: "updated" as const,
+          oldEmail: livePatient.patientEmail,
+          oldPhone: livePatient.patientPhone,
+        };
+      },
+    );
+
+    if (lockedResult.kind === "not_found") {
+      return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
     }
-
-    if (updates.estimatedDurationMinutes !== undefined) {
-      const dateStr = reservation.date instanceof Date
-        ? reservation.date.toISOString().slice(0, 10)
-        : String(reservation.date).slice(0, 10);
-      const shift = reservation.shift === "MORNING" ? "morning" : "afternoon";
-      const activeInContext = await getActiveReservationsInContext(prisma, {
-        date: dateStr,
-        resourceId: reservation.resourceId,
-        shift,
-      });
-      const invader = findOverflowInvaderForTargetSlot({
-        reservations: activeInContext,
-        shift,
-        targetSlotIndex: reservation.slotIndex,
-        targetSurgeonId: reservation.surgeonId,
-        excludeReservationId: reservation.id,
-      });
-      if (invader) {
-        return NextResponse.json(
-          {
-            error: "El hueco base está invadido por la prolongación de otra reserva con pacientes",
-            code: "overflow_conflict",
-          },
-          { status: 409 }
-        );
-      }
-
-      const simulatedPatients = (reservation.patients ?? []).map((p) => ({
-        estimatedDurationMinutes: p.id === patientId
-          ? updates.estimatedDurationMinutes ?? p.estimatedDurationMinutes
-          : p.estimatedDurationMinutes,
-      }));
-      const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(simulatedPatients));
-      const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
-        reservations: activeInContext,
-        shift,
-        ownerReservationId: reservation.id,
-        ownerSlotIndex: reservation.slotIndex,
-        ownerUsedMinutes: usedMinutesCandidate,
-      });
-      if (overflowConflict) {
-        return NextResponse.json(
-          {
-            error: "La duración total invade un tramo ya ocupado por otra reserva con pacientes",
-            code: "overflow_conflict",
-          },
-          { status: 409 }
-        );
-      }
+    if (lockedResult.kind === "forbidden") {
+      return NextResponse.json({ error: "No tiene permiso para modificar pacientes en esta reserva" }, { status: 403 });
     }
-
-    await prisma.$transaction(async (tx) => {
-      await tx.patientInBlock.update({
-        where: { id: patientId },
-        data: data as Prisma.PatientInBlockUpdateInput,
-      });
-      await tx.reservation.update({
-        where: { id },
-        data: { updatedByUserId: session!.userId },
-      });
-    });
+    if (lockedResult.kind === "patient_not_found") {
+      return NextResponse.json({ error: "Paciente no encontrado en esta reserva" }, { status: 404 });
+    }
+    if (lockedResult.kind === "inactive") {
+      return NextResponse.json(
+        { error: "No se puede modificar un paciente de una reserva cancelada o liberada", code: "reservation_not_active" },
+        { status: 409 },
+      );
+    }
+    if (lockedResult.kind === "overflow_invader" || lockedResult.kind === "overflow_conflict") {
+      const message = lockedResult.kind === "overflow_invader"
+        ? "El hueco base está invadido por la prolongación de otra reserva con pacientes"
+        : "La duración total invade un tramo ya ocupado por otra reserva con pacientes";
+      return NextResponse.json({ error: message, code: "overflow_conflict" }, { status: 409 });
+    }
 
     await logReservationEvent({
       eventType: "RESERVATION_PATIENT_UPDATED",
@@ -169,10 +192,8 @@ export async function PATCH(
     });
 
     if (updates.patientEmail !== undefined || updates.patientPhone !== undefined) {
-      const emailAfter =
-        updates.patientEmail !== undefined ? updates.patientEmail ?? null : patient.patientEmail;
-      const phoneAfter =
-        updates.patientPhone !== undefined ? updates.patientPhone ?? null : patient.patientPhone;
+      const emailAfter = updates.patientEmail !== undefined ? updates.patientEmail ?? null : lockedResult.oldEmail;
+      const phoneAfter = updates.patientPhone !== undefined ? updates.patientPhone ?? null : lockedResult.oldPhone;
       await logPatientContactDryRunEvents({
         reservationId: id,
         patientId,
@@ -186,8 +207,7 @@ export async function PATCH(
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
-    const apiReservation = toApiReservation(updated as Parameters<typeof toApiReservation>[0]);
-    return NextResponse.json({ reservation: apiReservation });
+    return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
   } catch (err) {
     console.error("[reservations patient PATCH]", err);
     return NextResponse.json({ error: "Error al actualizar paciente" }, { status: 500 });
