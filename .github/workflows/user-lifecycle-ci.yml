@@ -1,0 +1,50 @@
+name: User lifecycle CI
+
+on:
+  push:
+    branches:
+      - hardening/p1-user-lifecycle-audit
+  pull_request:
+    branches:
+      - hardening/integration
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qxflow_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: qxflow_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qxflow_ci -d qxflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://qxflow_ci@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://qxflow_ci@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ${{ github.sha }}${{ github.sha }}
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npm test
+      - run: npm run test:user-lifecycle-integration
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - name: Lint informational - pre-existing debt tracked separately
+        continue-on-error: true
+        run: npm run lint

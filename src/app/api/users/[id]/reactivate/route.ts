@@ -1,12 +1,10 @@
-/**
- * PATCH /api/users/[id]/reactivate
- * Reactiva un usuario (approved=true). Restaura el acceso al login. Solo GESTOR y GESTOR_ANESTESISTA.
- */
+/** PATCH /api/users/[id]/reactivate */
 
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { reactivateUser } from "@/lib/users/userLifecycleService";
 
 export async function PATCH(
   _req: Request,
@@ -23,22 +21,11 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
-    const user = await prisma.user.findUnique({
-      where: { id },
-      select: { id: true, approved: true, deletedAt: true },
-    });
-    if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
-    const isSoftDeleted = user.deletedAt != null;
-    if (user.approved && !isSoftDeleted) {
-      return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
-    }
-
-    await prisma.user.update({
-      where: { id },
-      data: { approved: true, deletedAt: null, deletedByUserId: null },
-    });
-
-    return NextResponse.json({ ok: true });
+    const result = await reactivateUser(prisma, { targetUserId: id, actorUserId: session!.userId });
+    if (result.ok) return NextResponse.json({ ok: true });
+    if (result.code === "NOT_FOUND") return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
+    if (result.code === "ALREADY_ACTIVE") return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
+    return NextResponse.json({ error: "No se pudo reactivar el usuario" }, { status: 409 });
   } catch (err) {
     console.error("[users reactivate]", err);
     return NextResponse.json({ error: "Error al reactivar" }, { status: 500 });
