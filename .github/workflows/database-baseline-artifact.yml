@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - hardening/p0-database-baseline
+      - hardening/p0-db-baseline-chain
   pull_request:
     branches:
       - hardening/integration
@@ -49,30 +50,49 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: Generate current-schema baseline artifact
+      - name: Verify migration chain shape
         run: |
-          mkdir -p baseline-artifact
-          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output baseline-artifact/generated-from-schema.sql
-          test -s baseline-artifact/generated-from-schema.sql
-          grep -q 'CREATE TABLE "User"' baseline-artifact/generated-from-schema.sql
-          grep -q 'CREATE TABLE "Reservation"' baseline-artifact/generated-from-schema.sql
-          grep -q 'CREATE TABLE "PatientInBlock"' baseline-artifact/generated-from-schema.sql
-          grep -q 'CREATE TABLE "UserAuditEvent"' baseline-artifact/generated-from-schema.sql
-
-      - name: Verify active migration chain contains only baseline
-        run: |
-          test -f prisma/migrations/0_baseline_current/migration.sql
+          test -f prisma/migrations/0_baseline_production_20260811/migration.sql
+          test -f prisma/migrations/20260811071500_reconcile_preanesthesia_phase2/migration.sql
           count=$(find prisma/migrations -mindepth 2 -maxdepth 2 -name migration.sql | wc -l)
-          test "$count" -eq 1
+          test "$count" -eq 2
+          grep -q "PATIENT_WORKFLOW_STARTED" prisma/migrations/0_baseline_production_20260811/migration.sql
+          if grep -q "preanesthesiaAppointmentAt" prisma/migrations/0_baseline_production_20260811/migration.sql; then
+            echo "Production baseline must not contain the missing phase2 column"
+            exit 1
+          fi
+          grep -q "PREANESTHESIA_NO_SLOT_AVAILABLE" prisma/migrations/20260811071500_reconcile_preanesthesia_phase2/migration.sql
+          grep -q "ADD COLUMN IF NOT EXISTS \"preanesthesiaAppointmentAt\"" prisma/migrations/20260811071500_reconcile_preanesthesia_phase2/migration.sql
 
-      - name: Apply migration chain to fresh PostgreSQL
+      - name: Apply baseline only to fresh PostgreSQL
+        run: psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/0_baseline_production_20260811/migration.sql
+
+      - name: Assert baseline matches observed production gaps
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='preanesthesiaAppointmentAt');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='isDeferredUrgency');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='specialCircuitReason');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT COUNT(*) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='ReservationEventType';" | grep -qx 11
+
+      - name: Reset CI database before Prisma migration-chain test
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+
+      - name: Apply full migration chain to fresh PostgreSQL
         run: npx prisma migrate deploy
 
       - name: Verify migration status
         run: npx prisma migrate status
 
-      - name: Verify database matches Prisma schema after deploy
+      - name: Verify database matches Prisma schema after reconciliation
         run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Assert phase2 reconciliation objects exist
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='preanesthesiaAppointmentAt');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='isDeferredUrgency');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='specialCircuitReason');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT COUNT(*) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='ReservationEventType';" | grep -qx 19
 
       - name: Generate Prisma client
         run: npx prisma generate
@@ -93,10 +113,3 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Upload generated baseline for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: prisma-baseline-review
-          path: baseline-artifact/generated-from-schema.sql
-          if-no-files-found: error
