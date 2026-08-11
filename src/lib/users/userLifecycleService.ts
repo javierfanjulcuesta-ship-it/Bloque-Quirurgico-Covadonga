@@ -15,7 +15,7 @@ function serializeDetails(details: Record<string, unknown> | null | undefined): 
 }
 
 async function lockLifecycle(tx: TxClient): Promise<void> {
-  await tx.$queryRawUnsafe("SELECT pg_advisory_xact_lock($1)", USER_LIFECYCLE_LOCK_KEY);
+  await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock($1)", USER_LIFECYCLE_LOCK_KEY);
 }
 
 async function wouldRemoveLastManager(tx: TxClient, role: UserRole, isCurrentlyActive: boolean): Promise<boolean> {
