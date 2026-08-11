@@ -1,0 +1,55 @@
+name: Login rate-limit CI
+
+on:
+  push:
+    branches:
+      - hardening/p1-login-rate-limit
+  pull_request:
+    branches:
+      - hardening/integration
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: qxflow_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qxflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://postgres@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ${{ github.run_id }}-${{ github.run_attempt }}-ci-session-key-not-production
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npm test
+      - run: npm run test:booking-integration
+      - run: npm run test:preanesthesia-integration
+      - run: npm run test:cron-integration
+      - run: npm run test:assignments-integration
+      - run: npm run test:shared-state-integration
+      - run: npm run test:user-lifecycle-integration
+      - run: npm run test:email-idempotency-integration
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - name: Lint
+        run: npm run lint
