@@ -1,8 +1,11 @@
 /**
  * POST /api/users/[id]/resend-invitation
- * Reenvía invitación al usuario existente (nueva contraseña temporal).
+ * Reenvía invitación al usuario existente con una nueva contraseña temporal.
  * Requiere user:create.
- * Usa sendNewUserInvitationEmail (SMTP/Graph real, o mock si no configurado).
+ *
+ * La contraseña solo queda rotada si el envío termina correctamente. Si el envío
+ * falla, se restaura el hash anterior para no bloquear al usuario por un correo
+ * que nunca recibió.
  */
 
 import { NextResponse } from "next/server";
@@ -10,26 +13,16 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
+import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
 import { roleToFrontend } from "@/lib/roleMapping";
 import { getAppUrl } from "@/lib/appUrl";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { logUserAuditEvent } from "@/lib/userAudit";
 
-const TEMP_PASSWORD_LENGTH = 10;
-const CHARS = "abcdefghjkmnpqrstuvwxyz23456789";
-
-function generateTempPassword(): string {
-  let result = "";
-  for (let i = 0; i < TEMP_PASSWORD_LENGTH; i++) {
-    result += CHARS[Math.floor(Math.random() * CHARS.length)];
-  }
-  return result;
-}
-
 export async function POST(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
@@ -42,41 +35,35 @@ export async function POST(
     if (denyPerm) return denyPerm;
 
     const invitedByName = sessionPayload?.name?.trim() || undefined;
-
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
     let appUrl: string;
     try {
       appUrl = getAppUrl();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[resend-invitation] URL no configurada:", msg);
+      console.error("[resend-invitation] URL no configurada", e instanceof Error ? e.message : "Unknown error");
       return NextResponse.json(
-        { error: "La URL de la aplicación no está configurada. Configure NEXT_PUBLIC_APP_URL o NEXTAUTH_URL en Vercel." },
-        { status: 503 }
+        { error: "La URL de la aplicación no está configurada" },
+        { status: 503 },
       );
     }
 
     const user = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, email: true, name: true, role: true, deletedAt: true },
+      select: { id: true, email: true, name: true, role: true, deletedAt: true, passwordHash: true },
     });
     if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     if (user.deletedAt != null) {
       return NextResponse.json({ error: "El usuario está eliminado del directorio" }, { status: 400 });
     }
 
-    const tempPassword = generateTempPassword();
+    const tempPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(tempPassword);
-
-    await prisma.user.update({
-      where: { id },
-      data: { passwordHash },
-    });
-
+    const previousPasswordHash = user.passwordHash;
     const role = roleToFrontend(user.role);
-    const normasTexto =
-      role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
+    const normasTexto = role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
+
+    await prisma.user.update({ where: { id }, data: { passwordHash } });
 
     try {
       await sendNewUserInvitationEmail({
@@ -89,31 +76,36 @@ export async function POST(
         normasTexto,
       });
     } catch (sendErr) {
-      const sendMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
-      console.error("[resend-invitation] error envío:", sendMsg);
-      return NextResponse.json(
-        {
-          error: "No se pudo enviar el correo de invitación",
-          detail: sendMsg,
-        },
-        { status: 500 }
+      const sendMsg = sendErr instanceof Error ? sendErr.message : "Unknown email error";
+      console.error("[resend-invitation] error de envío", sendMsg);
+      try {
+        await prisma.user.update({ where: { id }, data: { passwordHash: previousPasswordHash } });
+      } catch (rollbackErr) {
+        console.error(
+          "[resend-invitation] CRITICAL: no se pudo restaurar el passwordHash anterior",
+          rollbackErr instanceof Error ? rollbackErr.message : "Unknown rollback error",
+        );
+      }
+      return NextResponse.json({ error: "No se pudo enviar el correo de invitación" }, { status: 502 });
+    }
+
+    try {
+      await logUserAuditEvent({
+        userId: id,
+        eventType: "USER_INVITATION_RESENT",
+        actorUserId: session?.userId,
+        detailsJson: { targetEmail: user.email, targetRole: user.role },
+      });
+    } catch (auditErr) {
+      console.error(
+        "[resend-invitation] invitación enviada pero no se pudo registrar auditoría",
+        auditErr instanceof Error ? auditErr.message : "Unknown audit error",
       );
     }
 
-    await logUserAuditEvent({
-      userId: id,
-      eventType: "USER_INVITATION_RESENT",
-      actorUserId: session?.userId,
-      detailsJson: { targetEmail: user.email, targetRole: user.role },
-    }).catch(() => {});
-
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[resend-invitation]", err);
-    return NextResponse.json(
-      { error: "Error al reenviar invitación", detail: msg },
-      { status: 500 }
-    );
+    console.error("[resend-invitation]", err instanceof Error ? err.message : "Unknown error");
+    return NextResponse.json({ error: "Error al reenviar invitación" }, { status: 500 });
   }
 }
