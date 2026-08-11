@@ -16,7 +16,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: qxflow_ci
-          POSTGRES_PASSWORD: qxflow_ci_local
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: qxflow_ci
         ports:
           - 5432:5432
@@ -26,9 +26,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://qxflow_ci:qxflow_ci_local@127.0.0.1:5432/qxflow_ci
-      DIRECT_URL: postgresql://qxflow_ci:qxflow_ci_local@127.0.0.1:5432/qxflow_ci
-      JWT_SECRET: qxflow-ci-jwt-value-not-for-production-000000000000
+      DATABASE_URL: postgresql://qxflow_ci@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://qxflow_ci@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ${{ github.sha }}${{ github.sha }}
       NEXT_PUBLIC_DEMO_MODE: "false"
       NEXT_PUBLIC_USE_REAL_API: "true"
     steps:
