@@ -67,7 +67,8 @@ export function getCalendarGridWeeks(periodStartMonday: Date, numWeeks: number):
   return grid;
 }
 
-const MAX_DAYS_AHEAD = 28;
+/** Horizonte normal de reserva para perfiles no gestores. */
+export const MAX_DAYS_AHEAD = 28;
 
 export function canScheduleWeek(weekStart: Date): boolean {
   const d = new Date(weekStart);
