@@ -6,7 +6,7 @@
  * mismo lock PostgreSQL que usan las mutaciones de reserva/paciente, evitando que
  * el cron libere un tramo al que se acaba de añadir un paciente.
  *
- * Requiere Authorization: Bearer <CRON_SECRET> cuando CRON_SECRET está definido.
+ * Requiere Authorization: Bearer <CRON_SECRET>.
  */
 
 import { NextResponse } from "next/server";
@@ -19,15 +19,17 @@ import {
   type PendingReleaseCandidate,
 } from "@/lib/reservations/releasePendingReservationIfEligible";
 import { sendReleaseNotificationToSurgeons } from "@/lib/email/outlookService";
+import { bearerToken, secretsEqual } from "@/lib/security/secrets";
 
 export async function POST() {
   try {
     const secret = process.env.CRON_SECRET;
-    if (process.env.NODE_ENV === "production" && !secret) {
-      return NextResponse.json({ error: "CRON_SECRET no configurado en producción" }, { status: 503 });
+    if (!secret || secret.length < 24) {
+      return NextResponse.json({ error: "CRON_SECRET no configurado o demasiado corto" }, { status: 503 });
     }
-    const authHeader = (await headers()).get("authorization");
-    if (secret && authHeader !== `Bearer ${secret}`) {
+
+    const token = bearerToken((await headers()).get("authorization"));
+    if (!secretsEqual(token, secret)) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
@@ -135,7 +137,7 @@ export async function POST() {
       notification: { status: emailStatus, recipients: recipientCount },
     });
   } catch (err) {
-    console.error("[cron release-pending-reservations]", err);
+    console.error("[cron release-pending-reservations]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
