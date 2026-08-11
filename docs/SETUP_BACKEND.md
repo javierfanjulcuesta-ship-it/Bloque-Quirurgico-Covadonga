@@ -1,75 +1,112 @@
 # Setup del backend (modo real)
 
+Guía de desarrollo para QxFlow con PostgreSQL y Prisma.
+
 ## Requisitos
 
-- Node.js 18+
+- Node.js 20+
 - npm
+- PostgreSQL de desarrollo o staging
 
-## Pasos
+No usar una base de producción para desarrollo local.
 
-### 1. Instalar dependencias
-
-```bash
-npm install
-```
-
-### 2. Configurar variables de entorno
-
-Copia `.env.example` a `.env`:
+## 1. Instalar dependencias
 
 ```bash
-cp .env.example .env
+npm ci
 ```
 
-Edita `.env`:
+## 2. Variables de entorno
+
+Crear `.env` local fuera de Git con, como mínimo:
 
 ```env
-# SQLite (archivo local)
-DATABASE_URL="file:./dev.db"
-
-# Modo: true = demo, false = backend real
+DATABASE_URL="postgresql://..."
+DIRECT_URL="postgresql://..."
 NEXT_PUBLIC_DEMO_MODE=false
-
-# JWT (obligatorio en modo real). Generar con: openssl rand -base64 32
-JWT_SECRET=tu-clave-secreta-de-al-menos-32-caracteres
+NEXT_PUBLIC_USE_REAL_API=true
+JWT_SECRET="secreto-local-aleatorio-de-al-menos-32-bytes"
 ```
 
-### 3. Inicializar la base de datos
+`DATABASE_URL` y `DIRECT_URL` deben pertenecer al mismo entorno de desarrollo/staging.
+
+Nunca copiar credenciales de producción a documentación, chats de issues o commits.
+
+## 3. Prisma
+
+Validar y generar el cliente:
 
 ```bash
-npm run db:setup
+npx prisma validate
+npm run db:generate
 ```
 
-Esto ejecuta `prisma db push` (crea tablas) y `prisma db seed` (crea usuario inicial).
+### Desarrollo de cambios de esquema
 
-### 4. Usuario inicial
+Los cambios de modelo deben generar migraciones revisables con Prisma Migrate en una base de desarrollo:
 
-Tras el seed, existe un usuario:
+```bash
+npx prisma migrate dev --name descripcion_del_cambio
+```
 
-- **Email:** `gestor@hospital.es`
-- **Contraseña:** `gestor123`
+### Base existente / producción
 
-### 5. Arrancar la aplicación
+No ejecutar `prisma db push` ni `migrate reset`.
+
+Para deploy de migraciones ya revisadas:
+
+```bash
+npm run db:migrate:status
+npm run db:migrate:deploy
+```
+
+El baseline histórico de la base real tiene un procedimiento específico en:
+
+- `docs/audit/DATABASE_BASELINE_PLAN.md`
+- `docs/audit/16_PRODUCTION_SCHEMA_RECONCILIATION.md`
+
+## 4. Seeds y usuarios de prueba
+
+No existe una contraseña común hardcodeada.
+
+Los scripts que crean usuarios requieren credenciales por variables de entorno o generan valores seguros. Ejecutarlos únicamente en desarrollo/staging salvo procedimiento explícito de alta en producción.
+
+Ejemplo:
+
+```powershell
+$env:GESTOR_PASSWORD="<contraseña-segura>"
+$env:GESTOR_EMAIL="gestor@ejemplo.test"
+$env:GESTOR_NAME="Gestor de pruebas"
+npm run usuarios:gestor
+```
+
+No registrar contraseñas en logs.
+
+## 5. Arrancar
 
 ```bash
 npm run dev
 ```
 
-Abre `http://localhost:3000`. Con `NEXT_PUBLIC_DEMO_MODE=false` verás el formulario de login real.
+Abrir `http://localhost:3000`.
 
----
+## 6. Comprobaciones antes de commit
 
-## Endpoints
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+npm run lint
+```
 
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/auth/login` | Login (email + contraseña) |
-| POST | `/api/auth/register` | Registro de usuario |
-| POST | `/api/auth/logout` | Cerrar sesión |
-| GET | `/api/auth/session` | Obtener sesión actual |
-| GET | `/api/users` | Lista de usuarios (requiere sesión) |
+Si `lint` contiene deuda preexistente, no añadir errores nuevos y corregirla en el roadmap correspondiente.
 
 ## Autenticación
 
-- **Contraseñas:** hash bcrypt (12 rounds)
-- **Sesión:** cookie httpOnly `bloque_session` con JWT firmado (7 días)
+- contraseñas: bcrypt (coste 12);
+- sesión: cookie `httpOnly` con JWT firmado;
+- las rutas protegidas validan el estado actual del usuario para que una cuenta desactivada no conserve acceso mediante un JWT antiguo.
+
+## Regla operativa
+
+**Git + `schema.prisma` + migraciones versionadas son la fuente de verdad del esquema.** No hacer ALTER manuales improvisados en el dashboard de PostgreSQL.
