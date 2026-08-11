@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canAccessBooking } from "@/lib/auth";
+import { prisma } from "@/lib/db/prisma";
 import { updateReservationSchema } from "@/lib/validations/reservation";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { patientFieldsForCreate } from "@/lib/reservations/createReservationInDb";
@@ -79,7 +80,7 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID de reserva requerido" }, { status: 400 });
 
-    // Primera lectura: únicamente autorización y resolución del contexto de lock.
+    // Primera lectura: solo autorización y resolución del contexto de lock.
     const reservation = await fetchReservationForAccess(id);
     if (!reservation) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 });
 
@@ -111,7 +112,7 @@ export async function PATCH(
     const lockedResult = await withSchedulingContextLock(
       { date: dateStr, resourceId: reservation.resourceId, shift },
       async (tx) => {
-        // Relectura dentro del lock para eliminar TOCTOU con cancelación/reutilización.
+        // Relectura dentro del lock elimina TOCTOU con cancelación/reutilización.
         const live = await tx.reservation.findUnique({
           where: { id },
           include: { patients: true },
@@ -158,10 +159,7 @@ export async function PATCH(
           const row = await tx.patientInBlock.create({
             data: {
               reservationId: id,
-              ...patientFieldsForCreate(
-                { ...p, orderIndex: p.orderIndex ?? i },
-                i,
-              ),
+              ...patientFieldsForCreate({ ...p, orderIndex: p.orderIndex ?? i }, i),
             },
           });
           addedMeta.push({ id: row.id, orderIndex: row.orderIndex });
@@ -197,7 +195,7 @@ export async function PATCH(
 
     const pSorted = [...patients].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
     const cSorted = [...lockedResult.addedMeta].sort((a, b) => a.orderIndex - b.orderIndex);
-    await applyAndLogPatientCircuitPhase2(prismaLike(), {
+    await applyAndLogPatientCircuitPhase2(prisma, {
       reservationId: id,
       surgeryYmd: dateStr,
       actorUserId: session!.userId,
@@ -231,12 +229,4 @@ export async function PATCH(
     console.error("[reservations PATCH id]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: msg }, { status: 400 });
   }
-}
-
-/** Evita duplicar un import de prisma solo para la fase post-commit. */
-function prismaLike() {
-  // require dinámico no es necesario: el módulo helper ya trabaja con el singleton exportado.
-  // Se importa aquí para mantener el lock transaccional completamente separado de Phase2.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("@/lib/db/prisma").prisma as import("@prisma/client").PrismaClient;
 }
