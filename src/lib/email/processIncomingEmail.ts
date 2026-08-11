@@ -3,6 +3,7 @@
  * Usado por el webhook de correo.
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { isCirujanoOrEndoscopista } from "@/lib/roleMapping";
 import { evaluateBasicBookingPolicy } from "@/lib/reservations/bookingPolicy";
@@ -56,6 +57,87 @@ export interface ProcessEmailResult {
   error?: string;
 }
 
+function resultFromExisting(existing: {
+  id: string;
+  classification: string;
+  processingStatus: string;
+  reservationId: string | null;
+  resultMessage: string | null;
+}): ProcessEmailResult {
+  return {
+    emailMessageId: existing.id,
+    classification: existing.classification,
+    processingStatus: existing.processingStatus,
+    reservationId: existing.reservationId ?? undefined,
+    error: existing.processingStatus === STATUS_FAILED ? existing.resultMessage ?? undefined : undefined,
+  };
+}
+
+async function claimIncomingEmail(params: {
+  externalId: string;
+  fromEmail: string;
+  fromName: string | null;
+  subject: string;
+  bodyPlain: string;
+  bodyHtml: string | null;
+  receivedAt: Date;
+  classification: (typeof CLASSIFICATION_TO_PRISMA)[keyof typeof CLASSIFICATION_TO_PRISMA];
+}) {
+  try {
+    const emailMessage = await prisma.emailMessage.create({
+      data: {
+        externalId: params.externalId,
+        fromEmail: params.fromEmail,
+        fromName: params.fromName,
+        subject: params.subject,
+        bodyPlain: params.bodyPlain,
+        bodyHtml: params.bodyHtml,
+        receivedAt: params.receivedAt,
+        classification: params.classification,
+        processingStatus: "PENDING",
+      },
+    });
+    return { created: true as const, emailMessage };
+  } catch (err) {
+    if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") throw err;
+    const existing = await prisma.emailMessage.findUnique({ where: { externalId: params.externalId } });
+    if (!existing) throw err;
+    return { created: false as const, emailMessage: existing };
+  }
+}
+
+async function sendReplyWithAudit(params: {
+  emailMessageId: string;
+  toEmail: string;
+  subject: string;
+  body: string;
+}): Promise<boolean> {
+  try {
+    await sendReplyToReservationEmail({
+      toEmail: params.toEmail,
+      subject: params.subject,
+      body: params.body,
+    });
+    await prisma.emailProcessingLog.create({
+      data: {
+        emailMessageId: params.emailMessageId,
+        action: "reply_sent",
+        details: "Respuesta automática enviada",
+      },
+    });
+    return true;
+  } catch (err) {
+    await prisma.emailProcessingLog.create({
+      data: {
+        emailMessageId: params.emailMessageId,
+        action: "reply_failed",
+        errorMessage: err instanceof Error ? err.message.slice(0, 1000) : "Error de envío",
+      },
+    }).catch(() => {});
+    return false;
+  }
+}
+
 async function recordFailure(params: {
   emailMessageId: string;
   classification: string;
@@ -66,7 +148,12 @@ async function recordFailure(params: {
 }): Promise<ProcessEmailResult> {
   if (params.replyKind) {
     const reply = getReservationReplyContent(params.replyKind, { errorDetail: params.error });
-    await sendReplyToReservationEmail({ toEmail: params.fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
+    await sendReplyWithAudit({
+      emailMessageId: params.emailMessageId,
+      toEmail: params.fromEmail,
+      subject: reply.subject,
+      body: reply.body,
+    });
   }
   await prisma.emailProcessingLog.create({
     data: {
@@ -95,30 +182,22 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
   const bodyPlain = message.bodyPlain ?? "";
 
   const existing = await prisma.emailMessage.findUnique({ where: { externalId } });
-  if (existing) {
-    return {
-      emailMessageId: existing.id,
-      classification: existing.classification,
-      processingStatus: existing.processingStatus,
-      reservationId: existing.reservationId ?? undefined,
-    };
-  }
+  if (existing) return resultFromExisting(existing);
 
   const classification = classifyIncomingEmail(message);
   const classificationPrisma = CLASSIFICATION_TO_PRISMA[classification];
-  const emailMessage = await prisma.emailMessage.create({
-    data: {
-      externalId,
-      fromEmail,
-      fromName: message.fromName?.trim() || null,
-      subject: message.subject ?? "",
-      bodyPlain,
-      bodyHtml: message.bodyHtml ?? null,
-      receivedAt,
-      classification: classificationPrisma,
-      processingStatus: "PENDING",
-    },
+  const claimed = await claimIncomingEmail({
+    externalId,
+    fromEmail,
+    fromName: message.fromName?.trim() || null,
+    subject: message.subject ?? "",
+    bodyPlain,
+    bodyHtml: message.bodyHtml ?? null,
+    receivedAt,
+    classification: classificationPrisma,
   });
+  if (!claimed.created) return resultFromExisting(claimed.emailMessage);
+  const emailMessage = claimed.emailMessage;
 
   await prisma.emailProcessingLog.create({
     data: {
@@ -153,7 +232,6 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     data: {
       emailMessageId: emailMessage.id,
       action: "parsed",
-      // No registrar rawText ni cuerpo completo en logs auxiliares.
       details: JSON.stringify({
         date: parsed.date,
         resourceId: parsed.resourceId,
@@ -245,22 +323,18 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     date: parsed.date,
     resourceId: parsed.resourceId,
   });
-  await sendReplyToReservationEmail({ toEmail: fromEmail, subject: reply.subject, body: reply.body }).catch(() => {});
+  await sendReplyWithAudit({
+    emailMessageId: emailMessage.id,
+    toEmail: fromEmail,
+    subject: reply.subject,
+    body: reply.body,
+  });
 
   await prisma.emailProcessingLog.create({
     data: {
       emailMessageId: emailMessage.id,
       action: "reservation_created",
       details: JSON.stringify({ reservationId: result.reservationId }),
-    },
-  });
-
-  // Este evento sigue siendo best-effort hasta el bloque específico de hardening de email.
-  await prisma.emailProcessingLog.create({
-    data: {
-      emailMessageId: emailMessage.id,
-      action: "reply_sent",
-      details: "Respuesta automática solicitada",
     },
   });
 
