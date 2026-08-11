@@ -1,3 +1,6 @@
+-- ARCHIVED LEGACY MIGRATION. DO NOT APPLY AS PART OF THE NEW ACTIVE CHAIN.
+-- Original: prisma/migrations/20260502143000_surgical_patient_circuit_phase1/migration.sql
+
 -- Fase 1: contacto y estados de circuito en PatientInBlock; nuevos tipos de evento (trazabilidad dry-run).
 
 ALTER TABLE "PatientInBlock" ADD COLUMN IF NOT EXISTS "patientEmail" TEXT;

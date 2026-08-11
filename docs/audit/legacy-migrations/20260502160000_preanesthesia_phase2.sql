@@ -1,3 +1,6 @@
+-- ARCHIVED LEGACY MIGRATION. DO NOT APPLY AS PART OF THE NEW ACTIVE CHAIN.
+-- Original: prisma/migrations/20260502160000_preanesthesia_phase2/migration.sql
+
 -- Fase 2: autocita preanestesia, urgencia diferida, eventos de trazabilidad.
 
 ALTER TABLE "PatientInBlock" ADD COLUMN "preanesthesiaAppointmentAt" TIMESTAMP(3);
