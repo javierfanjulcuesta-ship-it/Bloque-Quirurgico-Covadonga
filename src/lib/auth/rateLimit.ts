@@ -66,7 +66,11 @@ function checkKey(key: string, windowMs: number): { ok: boolean; retryAfterSec?:
   };
 }
 
-/** Rate limit genérico para endpoints no-login. Esta API cuenta cada petición. */
+/**
+ * Rate limit genérico para endpoints no-login. Cada llamada aceptada consume una
+ * unidad y la petición que completa la cuota sigue siendo válida; se bloquea la
+ * siguiente petición dentro de la ventana.
+ */
 export function checkRateLimit(
   request: Request,
   prefix: string,
@@ -77,7 +81,7 @@ export function checkRateLimit(
   const state = checkKey(key, windowMs);
   if (!state.ok) return state;
   recordFailure(key, maxAttempts, windowMs);
-  return checkKey(key, windowMs);
+  return { ok: true };
 }
 
 /**
