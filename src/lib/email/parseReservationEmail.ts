@@ -1,6 +1,6 @@
 /**
  * Parser de correos de reserva de quirófano.
- * Acepta variantes realistas de formato.
+ * Acepta variantes realistas de formato, pero no inventa el slot de reserva.
  * Devuelve errores claros si faltan campos obligatorios.
  */
 
@@ -37,7 +37,7 @@ function parseResourceId(text: string): string | null {
   return null;
 }
 
-// --- Turno: mañana / afternoon / morning / tarde / am / pm / matutino / vespertino ---
+// --- Turno ---
 function parseShift(text: string): "morning" | "afternoon" | null {
   const lower = text.toLowerCase();
   if (/mañana|manana|morning|am\b|matutino|turno\s*:\s*mañana/i.test(lower)) return "morning";
@@ -45,8 +45,8 @@ function parseShift(text: string): "morning" | "afternoon" | null {
   return null;
 }
 
-// --- Slot / Tramo / tramo ---
-function parseSlotIndex(text: string): number {
+// --- Slot / Tramo ---
+function parseSlotIndex(text: string): number | null {
   const patterns = [
     /slot\s*[:\s]*(\d+)/i,
     /tramo\s*[:\s]*(\d+)/i,
@@ -57,16 +57,19 @@ function parseSlotIndex(text: string): number {
   for (const re of patterns) {
     const m = text.match(re);
     if (m) {
-      const idx = parseInt(m[1] ?? "0", 10);
-      return Math.max(0, Math.min(idx, 5));
+      const idx = Number.parseInt(m[1] ?? "", 10);
+      if (Number.isInteger(idx) && idx >= 0 && idx <= 5) return idx;
+      return null;
     }
   }
-  return 0;
+  // Antes se asumía silenciosamente slot 0. Eso podía crear una reserva real en
+  // un tramo no solicitado. La automatización ahora falla cerrada.
+  return null;
 }
 
-// --- Pacientes: HC-xxx, historia, nº hist, procedure, X min, anesthesia, entidad ---
+// --- Pacientes ---
 const ANESTHESIA_OPTIONS = ["local", "regional", "general", "sedación", "sedacion"];
-const INSURANCE_OPTIONS = ["sns", "privado", "mutua", "sis"];
+const INSURANCE_OPTIONS = ["sespa", "sns", "privado", "mutua", "sis"];
 
 function parsePatients(text: string): ParsedReservationEmail["patients"] {
   const patients: NonNullable<ParsedReservationEmail["patients"]> = [];
@@ -86,7 +89,7 @@ function parsePatients(text: string): ParsedReservationEmail["patients"] {
       ?? trimmed.match(/(.+?)\s+(\d+)\s*min/i);
     const procedure = procedureMatch?.[1]?.trim() ?? "Procedimiento";
     const durationStr = procedureMatch?.[2] ?? trimmed.match(/(\d+)\s*min/i)?.[1];
-    const estimatedDurationMinutes = Math.max(1, parseInt(durationStr ?? "60", 10) || 60);
+    const estimatedDurationMinutes = Math.max(1, Number.parseInt(durationStr ?? "60", 10) || 60);
 
     let anesthesiaType = "General";
     for (const a of ANESTHESIA_OPTIONS) {
@@ -99,14 +102,14 @@ function parsePatients(text: string): ParsedReservationEmail["patients"] {
     let entidadFinanciadora = "SNS";
     for (const ins of INSURANCE_OPTIONS) {
       if (new RegExp(`\\b${ins}\\b`, "i").test(trimmed)) {
-        entidadFinanciadora = ins === "sns" ? "SNS" : ins.charAt(0).toUpperCase() + ins.slice(1);
+        if (ins === "sespa") entidadFinanciadora = "SESPA";
+        else entidadFinanciadora = ins === "sns" ? "SNS" : ins.charAt(0).toUpperCase() + ins.slice(1);
         break;
       }
     }
 
     const nameMatch = trimmed.match(/(?:HC[^,]*|historia[^,]*)[,\s]+([A-Za-záéíóúñ\s]+?)(?:,\s|$|\d)/i);
     const name = nameMatch?.[1]?.trim();
-
     const admissionType = /\bingreso\b/i.test(trimmed) ? "ingreso" as const : "ambulatorio" as const;
 
     patients.push({
@@ -123,9 +126,6 @@ function parsePatients(text: string): ParsedReservationEmail["patients"] {
   return patients.length > 0 ? patients : undefined;
 }
 
-/**
- * Parsea correo de reserva. Devuelve resultado con datos o error con campos faltantes.
- */
 export function parseReservationEmail(message: { subject: string; bodyPlain: string }): ParseReservationResult {
   const text = `${message.subject}\n${message.bodyPlain}`;
   const missingFields: string[] = [];
@@ -139,17 +139,18 @@ export function parseReservationEmail(message: { subject: string; bodyPlain: str
   const shift = parseShift(text);
   if (!shift) missingFields.push("Turno (mañana/morning o tarde/afternoon)");
 
+  const slotIndex = parseSlotIndex(text);
+  if (slotIndex === null) missingFields.push("Slot/Tramo (0 a 5)");
+
   if (missingFields.length > 0) {
     return {
       ok: false,
-      error: `Faltan campos obligatorios: ${missingFields.join("; ")}`,
+      error: `Faltan o son inválidos campos obligatorios: ${missingFields.join("; ")}`,
       missingFields,
     };
   }
 
-  const slotIndex = parseSlotIndex(text);
   const patients = parsePatients(text);
-
   if (patients) {
     for (let i = 0; i < patients.length; i++) {
       const p = patients[i]!;
@@ -169,7 +170,7 @@ export function parseReservationEmail(message: { subject: string; bodyPlain: str
       date: date!,
       resourceId: resourceId!,
       shift: shift!,
-      slotIndex,
+      slotIndex: slotIndex!,
       patients,
       rawText: text.slice(0, 500),
     },
