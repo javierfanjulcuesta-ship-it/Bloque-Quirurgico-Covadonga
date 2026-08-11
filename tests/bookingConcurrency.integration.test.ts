@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 
 const SURGEON_A = "booking-integrity-surgeon-a";
 const SURGEON_B = "booking-integrity-surgeon-b";
-const TEST_DATES = ["2031-01-13", "2031-01-14"];
+const TEST_DATES = ["2031-01-13", "2031-01-14", "2031-01-15"];
 
 async function cleanup(): Promise<void> {
   const reservations = await prisma.reservation.findMany({
@@ -25,6 +25,12 @@ async function cleanup(): Promise<void> {
     await prisma.patientInBlock.deleteMany({ where: { reservationId: { in: ids } } });
     await prisma.reservation.deleteMany({ where: { id: { in: ids } } });
   }
+  await prisma.blockOpeningPlan.deleteMany({
+    where: {
+      date: { in: TEST_DATES.map((d) => new Date(`${d}T00:00:00.000Z`)) },
+      resourceId: "Q1",
+    },
+  });
   await prisma.user.deleteMany({ where: { id: { in: [SURGEON_A, SURGEON_B] } } });
 }
 
@@ -149,4 +155,38 @@ test("concurrent different slots cannot create an overflow overlap", async () =>
     include: { patients: true },
   });
   assert.equal(stored.length, 1);
+});
+
+test("persisted CLOSED plan blocks normal booking but allows gestor override", async () => {
+  const date = TEST_DATES[2];
+  await prisma.blockOpeningPlan.create({
+    data: {
+      date: new Date(`${date}T00:00:00.000Z`),
+      resourceId: "Q1",
+      shift: "MORNING",
+      status: "CLOSED",
+      approvedByUserId: SURGEON_A,
+    },
+  });
+
+  const input = {
+    date,
+    resourceId: "Q1" as const,
+    shift: "morning" as const,
+    slotIndex: 3,
+    patients: [],
+  };
+
+  const normal = await createReservationInDb(input, SURGEON_A, {
+    origin: "APP",
+    actorUserId: SURGEON_A,
+  });
+  assert.equal(normal.ok, false);
+  if (!normal.ok) assert.equal(normal.error, "block_closed");
+
+  const override = await createReservationInDb(input, SURGEON_A, {
+    origin: "GESTOR",
+    actorUserId: SURGEON_A,
+  });
+  assert.equal(override.ok, true);
 });
