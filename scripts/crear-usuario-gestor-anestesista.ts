@@ -1,66 +1,68 @@
 /**
- * Crea el usuario gestor-anestesista real.
- * La contraseña se lee de la variable de entorno GESTOR_ANESTESISTA_PASSWORD.
- * No hardcodear contraseñas en el repositorio.
+ * Crea o actualiza un usuario GESTOR_ANESTESISTA real.
+ * No contiene identidad ni credenciales reales en el repositorio.
  *
- * Uso:
- *   GESTOR_ANESTESISTA_PASSWORD=tu-contraseña-segura npx tsx scripts/crear-usuario-gestor-anestesista.ts
+ * Variables obligatorias:
+ *   GESTOR_ANESTESISTA_EMAIL
+ *   GESTOR_ANESTESISTA_NAME
+ *   GESTOR_ANESTESISTA_PASSWORD (mínimo 12 caracteres)
  *
- * En Windows (PowerShell):
- *   $env:GESTOR_ANESTESISTA_PASSWORD="tu-contraseña-segura"; npx tsx scripts/crear-usuario-gestor-anestesista.ts
+ * Ejemplo PowerShell:
+ *   $env:GESTOR_ANESTESISTA_EMAIL="usuario@hospital.es"
+ *   $env:GESTOR_ANESTESISTA_NAME="Nombre Apellidos"
+ *   $env:GESTOR_ANESTESISTA_PASSWORD="contraseña-larga-y-unica"
+ *   npx tsx scripts/crear-usuario-gestor-anestesista.ts
  */
 
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
 
 const prisma = new PrismaClient();
-
-const EMAIL = "javier.fanjul.cuesta@gmail.com";
 const ROLE = "GESTOR_ANESTESISTA" as const;
-const NAME = "Javier Fanjul";
 
 async function main() {
+  const email = process.env.GESTOR_ANESTESISTA_EMAIL?.trim().toLowerCase();
+  const name = process.env.GESTOR_ANESTESISTA_NAME?.trim();
   const password = process.env.GESTOR_ANESTESISTA_PASSWORD;
-  if (!password || password.length < 8) {
-    console.error("ERROR: Debe definir GESTOR_ANESTESISTA_PASSWORD con al menos 8 caracteres.");
-    console.error("");
-    console.error("Ejemplo (Linux/Mac):");
-    console.error("  GESTOR_ANESTESISTA_PASSWORD=tu-contraseña-segura npx tsx scripts/crear-usuario-gestor-anestesista.ts");
-    console.error("");
-    console.error("Ejemplo (Windows PowerShell):");
-    console.error('  $env:GESTOR_ANESTESISTA_PASSWORD="tu-contraseña-segura"; npx tsx scripts/crear-usuario-gestor-anestesista.ts');
-    process.exit(1);
+
+  if (!email || !email.includes("@")) {
+    throw new Error("GESTOR_ANESTESISTA_EMAIL es obligatorio y debe ser válido.");
+  }
+  if (!name) {
+    throw new Error("GESTOR_ANESTESISTA_NAME es obligatorio.");
+  }
+  if (!password || password.length < 12) {
+    throw new Error("GESTOR_ANESTESISTA_PASSWORD es obligatorio y debe tener al menos 12 caracteres.");
   }
 
-  const existing = await prisma.user.findUnique({ where: { email: EMAIL } });
+  const existing = await prisma.user.findUnique({ where: { email } });
   const passwordHash = await hash(password, 12);
 
   if (existing) {
     await prisma.user.update({
-      where: { email: EMAIL },
-      data: { passwordHash, role: ROLE, approved: true, name: NAME },
+      where: { email },
+      data: { passwordHash, role: ROLE, approved: true, name },
     });
-    console.log(`Usuario actualizado: ${EMAIL} (${ROLE})`);
-    console.log("La contraseña ha sido reemplazada por la que indicaste.");
+    console.log(`Usuario gestor-anestesista actualizado: ${email}`);
   } else {
     await prisma.user.create({
       data: {
-        email: EMAIL,
+        email,
         passwordHash,
-        name: NAME,
+        name,
         role: ROLE,
         approved: true,
       },
     });
-    console.log(`Usuario creado: ${EMAIL} (${ROLE})`);
+    console.log(`Usuario gestor-anestesista creado: ${email}`);
   }
 
-  console.log("\nPuedes iniciar sesión con ese email y la contraseña que definiste.");
+  console.log("La contraseña no se muestra en logs.");
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
