@@ -1,16 +1,23 @@
 /**
  * POST /api/cron/release-pending-reservations
- * Libera reservas PENDING sin pacientes cuya semana objetivo ya pasó el cierre (jueves 00:00).
- * Envía un correo agrupado a todos los CIRUJANO con los huecos liberados.
- * Idempotente: las reservas liberadas no se tocan en ejecuciones posteriores.
- * Requiere: Authorization: Bearer <CRON_SECRET> (si CRON_SECRET está definido)
+ * Libera reservas PENDING sin pacientes cuya semana objetivo ya pasó el cierre configurado.
+ *
+ * La consulta inicial solo obtiene candidatos. Cada liberación se revalida bajo el
+ * mismo lock PostgreSQL que usan las mutaciones de reserva/paciente, evitando que
+ * el cron libere un tramo al que se acaba de añadir un paciente.
+ *
+ * Requiere Authorization: Bearer <CRON_SECRET> cuando CRON_SECRET está definido.
  */
 
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/db/prisma";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
-import { isReservationRetentionStillAllowed } from "@/lib/utils";
+import { isReservationRetentionStillAllowed } from "@/lib/schedulingDeadline";
+import {
+  releasePendingReservationIfEligible,
+  type PendingReleaseCandidate,
+} from "@/lib/reservations/releasePendingReservationIfEligible";
 import { sendReleaseNotificationToSurgeons } from "@/lib/email/outlookService";
 
 export async function POST() {
@@ -24,6 +31,7 @@ export async function POST() {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
+    // Lectura optimista para reducir trabajo. NO autoriza por sí sola la liberación.
     const pending = await prisma.reservation.findMany({
       where: {
         status: "PENDING",
@@ -32,47 +40,48 @@ export async function POST() {
       select: { id: true, date: true, resourceId: true, shift: true, slotIndex: true, surgeonId: true },
     });
 
-    const toRelease = pending.filter((r) => {
-      const dateStr = r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10);
+    const candidates: PendingReleaseCandidate[] = pending.filter((r) => {
+      const dateStr = r.date.toISOString().slice(0, 10);
       return !isReservationRetentionStillAllowed(dateStr);
     });
 
-    if (toRelease.length === 0) {
+    if (candidates.length === 0) {
       return NextResponse.json({ ok: true, released: 0, notification: "skipped" });
     }
 
-    for (const r of toRelease) {
-      await prisma.reservation.update({
-        where: { id: r.id },
-        data: {
-          status: "RELEASED",
-          releasedAt: new Date(),
-          releaseReason: "cierre_automatico_programacion",
-        },
-      });
+    const actuallyReleased: PendingReleaseCandidate[] = [];
+    for (const candidate of candidates) {
+      const result = await releasePendingReservationIfEligible(candidate);
+      if (!result.released) continue;
+
+      actuallyReleased.push(result.reservation);
       await logReservationEvent({
         eventType: "RESERVATION_RELEASED",
-        reservationId: r.id,
+        reservationId: result.reservation.id,
         actorUserId: null,
         origin: "app",
         detailsJson: {
           trigger: "cron_deadline",
-          date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
-          resourceId: r.resourceId,
-          shift: r.shift,
-          slotIndex: r.slotIndex,
+          date: result.reservation.date.toISOString().slice(0, 10),
+          resourceId: result.reservation.resourceId,
+          shift: result.reservation.shift,
+          slotIndex: result.reservation.slotIndex,
         },
       });
     }
 
-    const slotDetails = toRelease.map((r) => ({
-      date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10),
+    if (actuallyReleased.length === 0) {
+      return NextResponse.json({ ok: true, released: 0, notification: "skipped_after_revalidation" });
+    }
+
+    const slotDetails = actuallyReleased.map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
       shift: r.shift === "MORNING" ? "morning" : "afternoon",
       resourceId: r.resourceId,
     }));
 
     const cirujanos = await prisma.user.findMany({
-      where: { role: "CIRUJANO", approved: true },
+      where: { role: "CIRUJANO", approved: true, deletedAt: null },
       select: { email: true },
     });
     const recipientEmails = cirujanos
@@ -87,7 +96,7 @@ export async function POST() {
       const result = await sendReleaseNotificationToSurgeons(slotDetails, recipientEmails);
       recipientCount = result.sent + result.failed;
       if (result.failed > 0) {
-        emailStatus = result.sent > 0 ? "FAILED" : "FAILED";
+        emailStatus = "FAILED";
         errorMessage = result.errors.join("; ");
       } else {
         emailStatus = "SENT";
@@ -96,9 +105,9 @@ export async function POST() {
 
     await prisma.releaseNotificationLog.create({
       data: {
-        releasedCount: toRelease.length,
+        releasedCount: actuallyReleased.length,
         slotDetailsJson: JSON.stringify(slotDetails),
-        releasedReservationIds: JSON.stringify(toRelease.map((r) => r.id)),
+        releasedReservationIds: JSON.stringify(actuallyReleased.map((r) => r.id)),
         recipientCount,
         emailStatus,
         errorMessage,
@@ -111,7 +120,8 @@ export async function POST() {
       actorUserId: null,
       origin: "app",
       detailsJson: {
-        releasedCount: toRelease.length,
+        releasedCount: actuallyReleased.length,
+        candidateCount: candidates.length,
         recipientCount,
         emailStatus,
         slotDetails,
@@ -120,7 +130,8 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
-      released: toRelease.length,
+      released: actuallyReleased.length,
+      candidates: candidates.length,
       notification: { status: emailStatus, recipients: recipientCount },
     });
   } catch (err) {
