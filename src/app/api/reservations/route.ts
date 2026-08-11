@@ -11,6 +11,7 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission, requireAnyPermission, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
+import { evaluateBasicBookingPolicy } from "@/lib/reservations/bookingPolicy";
 import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
 import { toApiReservation } from "@/lib/reservations/reservationApiHelpers";
 import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
@@ -57,7 +58,6 @@ const RESERVATION_SELECT = {
 function hasFullReservationView(role: string): boolean {
   const r = role?.trim().toLowerCase().replace(/_/g, "-") ?? "";
   if (r === "gestor" || r === "gestor-anestesista") return true;
-  // Endurecimiento backend: full dataset solo para roles/permisos de gestión/métricas.
   return hasPermission(role, "metrics:view") || hasPermission(role, "booking:view:all");
 }
 
@@ -90,29 +90,26 @@ export async function GET(request: Request) {
         error:
           "Indique dateFrom y dateTo (YYYY-MM-DD) para acotar la consulta. Ejemplo: ?dateFrom=2026-01-05&dateTo=2026-02-01",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
+  const from = new Date(`${filters.dateFrom}T00:00:00.000Z`);
+  const to = new Date(`${filters.dateTo}T23:59:59.999Z`);
+  const maxQueryDays = 93;
+  const rangeMs = to.getTime() - from.getTime();
+  if (rangeMs < 0 || rangeMs > maxQueryDays * 86_400_000) {
+    return NextResponse.json({ error: `Rango máximo de consulta: ${maxQueryDays} días` }, { status: 400 });
+  }
+
   const where: Prisma.ReservationWhereInput = {};
-  const dateFilter: Prisma.DateTimeFilter = {};
-  if (filters.dateFrom) {
-    dateFilter.gte = new Date(filters.dateFrom + "T00:00:00.000Z");
-  }
-  if (filters.dateTo) {
-    dateFilter.lte = new Date(filters.dateTo + "T23:59:59.999Z");
-  }
-  if (dateFilter.gte || dateFilter.lte) {
-    where.date = dateFilter;
-  }
-  if (filters.resourceId) {
-    where.resourceId = filters.resourceId;
-  }
+  const dateFilter: Prisma.DateTimeFilter = { gte: from, lte: to };
+  where.date = dateFilter;
+  if (filters.resourceId) where.resourceId = filters.resourceId;
 
   const fullView = hasFullReservationView(session!.role);
   const myId = session!.userId;
   if (!fullView) {
-    // No gestión: solo datos estrictamente necesarios para agenda propia.
     where.OR = [{ surgeonId: myId }, { createdByUserId: myId }, { anesthetistId: myId }];
   }
 
@@ -167,11 +164,12 @@ export async function POST(request: Request) {
   const isCoordinator = roleNorm === "gestor" || roleNorm === "gestor-anestesista";
 
   let effectiveSurgeonId = session!.userId;
+  let responsibleRole = session!.role;
   if (isCoordinator) {
     if (!responsibleSurgeonFromBody) {
       return NextResponse.json(
         { error: "Debe indicar el cirujano o endoscopista responsable (campo surgeonId)." },
-        { status: 400 }
+        { status: 400 },
       );
     }
     const surgeonUser = await prisma.user.findFirst({
@@ -181,15 +179,27 @@ export async function POST(request: Request) {
         deletedAt: null,
         role: { in: [UserRole.CIRUJANO, UserRole.ENDOSCOPISTA] },
       },
-      select: { id: true },
+      select: { id: true, role: true },
     });
     if (!surgeonUser) {
       return NextResponse.json(
         { error: "El cirujano responsable no es válido, no está aprobado o no tiene perfil cirujano/endoscopista." },
-        { status: 400 }
+        { status: 400 },
       );
     }
     effectiveSurgeonId = surgeonUser.id;
+    responsibleRole = surgeonUser.role;
+  }
+
+  const policy = evaluateBasicBookingPolicy({
+    date: reservationPayload.date,
+    resourceId: reservationPayload.resourceId,
+    responsibleRole,
+    isCoordinator,
+  });
+  if (!policy.ok) {
+    const status = policy.reason === "resource_not_allowed" ? 403 : 409;
+    return NextResponse.json({ error: policy.message, code: policy.reason }, { status });
   }
 
   const result = await createReservationInDb(reservationPayload, effectiveSurgeonId, {
@@ -204,8 +214,11 @@ export async function POST(request: Request) {
     if (result.error === "overflow_conflict") {
       return NextResponse.json(
         { error: result.message ?? "Conflicto por desbordamiento de otra reserva", code: "overflow_conflict" },
-        { status: 409 }
+        { status: 409 },
       );
+    }
+    if (result.error === "block_closed" || result.error === "block_urgent_reserved") {
+      return NextResponse.json({ error: result.message, code: result.error }, { status: 409 });
     }
     return NextResponse.json({ error: result.message ?? "Datos inválidos" }, { status: 400 });
   }
