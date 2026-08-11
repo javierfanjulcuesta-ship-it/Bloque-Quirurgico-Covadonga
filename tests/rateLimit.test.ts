@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   __resetRateLimitForTests,
   checkLoginRateLimit,
+  checkRateLimit,
   recordLoginFailure,
   resetLoginRateLimitOnSuccess,
 } from "../src/lib/auth/rateLimit";
@@ -68,4 +69,14 @@ test("IP limiter still stops broad credential stuffing after twenty failures", (
   }
 
   assert.equal(checkLoginRateLimit(request, "new-target@example.com").ok, false);
+});
+
+test("generic limiter allows the configured quota and blocks the next request", () => {
+  const request = requestFor("192.0.2.30");
+  for (let i = 0; i < 5; i++) {
+    assert.equal(checkRateLimit(request, "contact", { maxAttempts: 5 }).ok, true);
+  }
+  const blocked = checkRateLimit(request, "contact", { maxAttempts: 5 });
+  assert.equal(blocked.ok, false);
+  assert.ok((blocked.retryAfterSec ?? 0) > 0);
 });
