@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { setPreanesthesiaAssessment } from "@/lib/reservations/preanesthesiaAssessment";
 
 export const dynamic = "force-dynamic";
 
@@ -41,49 +42,16 @@ export async function PATCH(
       return NextResponse.json({ error: parsed.error.errors[0]?.message ?? "Estado inválido" }, { status: 400 });
     }
 
-    const outcome = await prisma.$transaction(async (tx) => {
-      const patient = await tx.patientInBlock.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          reservationId: true,
-          preanesthesiaStatus: true,
-          preanesthesiaAppointmentAt: true,
-        },
-      });
-      if (!patient) return null;
-
-      const nextStatus = parsed.data.status === "NOT_FIT"
-        ? "NOT_FIT"
-        : patient.preanesthesiaAppointmentAt
-          ? "SCHEDULED"
-          : "PENDING";
-
-      await tx.patientInBlock.update({
-        where: { id },
-        data: { preanesthesiaStatus: nextStatus },
-      });
-
-      await tx.reservationEvent.create({
-        data: {
-          reservationId: patient.reservationId,
-          eventType: "RESERVATION_PATIENT_UPDATED",
-          actorUserId: session!.userId,
-          origin: "app",
-          detailsJson: JSON.stringify({
-            action: parsed.data.status === "NOT_FIT" ? "preanesthesia_marked_not_fit" : "preanesthesia_not_fit_cleared",
-            patientId: patient.id,
-            previousPreanesthesiaStatus: patient.preanesthesiaStatus,
-            nextPreanesthesiaStatus: nextStatus,
-          }),
-        },
-      });
-
-      return { patientId: patient.id, preanesthesiaStatus: nextStatus };
+    const outcome = await setPreanesthesiaAssessment(prisma, {
+      patientId: id,
+      actorUserId: session!.userId,
+      action: parsed.data.status,
     });
-
-    if (!outcome) return NextResponse.json({ error: "Paciente no encontrado" }, { status: 404 });
-    return NextResponse.json(outcome);
+    if (!outcome.ok) return NextResponse.json({ error: "Paciente no encontrado" }, { status: 404 });
+    return NextResponse.json({
+      patientId: outcome.patientId,
+      preanesthesiaStatus: outcome.preanesthesiaStatus,
+    });
   } catch (err) {
     console.error("[preanesthesia patient status PATCH]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
