@@ -1,7 +1,7 @@
 /**
  * Capa de acceso a asignaciones de anestesistas.
  * modoDemo → localStorage
- * modo real → API
+ * modo real → API con revisión del snapshot completo.
  */
 
 import type { AnesthetistAssignment } from "./types";
@@ -11,10 +11,12 @@ import {
   setStoredAnesthetistAssignments,
 } from "./storageAnesthetistAssignments";
 import {
-  fetchAssignments,
+  fetchAssignmentsSnapshot,
   saveAssignments as apiSaveAssignments,
   type FetchAssignmentsFilters,
 } from "./api/anesthetistAssignments";
+
+let editableSnapshotRevision: string | null = null;
 
 export async function getAssignments(filters?: FetchAssignmentsFilters): Promise<AnesthetistAssignment[]> {
   if (modoDemo) {
@@ -26,7 +28,10 @@ export async function getAssignments(filters?: FetchAssignmentsFilters): Promise
     if (filters.dateTo) result = result.filter((a) => a.date <= filters.dateTo!);
     return result;
   }
-  return fetchAssignments(filters);
+
+  const snapshot = await fetchAssignmentsSnapshot(filters);
+  if (!filters) editableSnapshotRevision = snapshot.revision;
+  return snapshot.assignments;
 }
 
 export async function saveAssignments(assignments: AnesthetistAssignment[]): Promise<void> {
@@ -34,5 +39,10 @@ export async function saveAssignments(assignments: AnesthetistAssignment[]): Pro
     setStoredAnesthetistAssignments(assignments);
     return;
   }
-  await apiSaveAssignments(assignments);
+
+  if (!editableSnapshotRevision) {
+    throw new Error("Recargue las asignaciones antes de guardar para evitar sobrescribir cambios concurrentes.");
+  }
+
+  editableSnapshotRevision = await apiSaveAssignments(assignments, editableSnapshotRevision);
 }
