@@ -105,7 +105,13 @@ type LockedSuccess = {
   };
 };
 
-type LockedOutcome = LockedSuccess | { result: Exclude<CreateReservationResult, { ok: true }> };
+type LockedFailure = {
+  result: Exclude<CreateReservationResult, { ok: true }>;
+  phase2Rows?: never;
+  event?: never;
+};
+
+type LockedOutcome = LockedSuccess | LockedFailure;
 
 function overflowFailure(message: string): LockedOutcome {
   return {
