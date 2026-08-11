@@ -22,9 +22,7 @@ El snapshot exportado desde Supabase SQL Editor contiene únicamente metadatos d
 - `isDeferredUrgency BOOLEAN NOT NULL DEFAULT false`
 - `specialCircuitReason TEXT NULL`
 
-Por tanto también falta el índice:
-
-- `PatientInBlock_preanesthesiaAppointmentAt_idx`
+Por tanto también falta el índice `PatientInBlock_preanesthesiaAppointmentAt_idx`.
 
 El enum `ReservationEventType` tiene **11 valores en producción**, mientras `schema.prisma` tiene **19**. Faltan:
 
@@ -37,7 +35,7 @@ El enum `ReservationEventType` tiene **11 valores en producción**, mientras `sc
 7. `DEFERRED_URGENCY_CREATED`
 8. `PREANESTHESIA_NO_SLOT_AVAILABLE`
 
-El código de fase 2 escribe directamente los tres campos ausentes y registra varios de esos valores enum; por tanto este drift puede producir errores Prisma `P2022`/errores de enum en ejecución.
+El código de fase 2 escribe directamente los tres campos ausentes y registra varios de esos valores enum; este drift puede producir errores Prisma `P2022` o errores de enum en ejecución.
 
 En el resto de objetos Prisma gestionados, el snapshot de columnas, índices y claves coincide con el estado pre-reconciliación representado por el baseline preparado.
 
@@ -57,15 +55,24 @@ La propuesta anterior de marcar como aplicada una migración generada directamen
 
 ## Ensayo automático en CI
 
-El workflow `database-baseline-artifact.yml` debe demostrar en PostgreSQL limpio:
+El workflow `database-baseline-artifact.yml` demuestra en PostgreSQL limpio:
 
-1. que el baseline por sí solo reproduce exactamente los gaps observados;
+1. que el baseline por sí solo reproduce los gaps observados;
 2. que el baseline tiene 11 valores `ReservationEventType`;
 3. que la cadena completa se aplica con `prisma migrate deploy`;
 4. que al final existen los tres campos fase 2 y los 19 valores enum;
 5. que `prisma migrate status` queda limpio;
-6. que `prisma migrate diff` no detecta drift contra `schema.prisma`;
+6. que en una base limpia la cadena final coincide con `schema.prisma`;
 7. que tests P0, typecheck y build siguen pasando.
+
+## Importante: drift esperado por objetos legacy
+
+En **producción** no se exige que un `prisma migrate diff` global sea vacío, porque la base contiene objetos legacy deliberadamente no modelados por Prisma. Un diff global podría proponer eliminarlos y **no debe utilizarse como instrucción de migración**.
+
+La verificación de producción se hace con:
+
+- `prisma migrate status` para el historial;
+- `scripts/db/verify-production-managed-schema.sql` para confirmar los objetos Prisma críticos y, a la vez, comprobar que los objetos legacy permanecen intactos.
 
 ## Procedimiento de producción — NO EJECUTAR SIN AUTORIZACIÓN
 
@@ -92,16 +99,34 @@ npx prisma migrate status
 # 4) Aplicar el delta revisado
 npx prisma migrate deploy
 
-# 5) Verificación
+# 5) Verificar historial
 npx prisma migrate status
-npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
 ```
+
+Después ejecutar en Supabase SQL Editor el script **solo lectura**:
+
+```text
+scripts/db/verify-production-managed-schema.sql
+```
+
+Resultado esperado:
+
+- `missing_managed_tables = 0`
+- `preanesthesia_appointment_exists = true`
+- `deferred_urgency_exists = true`
+- `special_circuit_reason_exists = true`
+- `preanesthesia_index_exists = true`
+- `missing_reservation_event_values = 0`
+- `reservation_event_value_count = 19`
+- `prisma_migration_history_exists = true`
+- `preserved_external_surgeon_name = true`
+- `preserved_legacy_tables = true`
 
 ### Smoke tests posteriores
 
 - login con usuario activo;
 - listado de reservas;
-- creación/edición de paciente sin datos reales de prueba;
+- creación/edición de paciente con datos ficticios;
 - circuito que persiste `preanesthesiaAppointmentAt`;
 - urgencia diferida (`isDeferredUrgency`, `specialCircuitReason`);
 - creación de eventos con los nuevos valores enum;
@@ -126,6 +151,7 @@ Este P0 solo puede darse por cerrado cuando:
 - existe backup de producción;
 - baseline está marcado como aplicado;
 - delta está aplicado con `migrate deploy`;
-- `migrate status` y diff quedan limpios;
+- `migrate status` está limpio;
+- el verificador de esquema gestionado pasa;
 - smoke tests pasan;
 - no se ha eliminado ningún objeto legacy.
