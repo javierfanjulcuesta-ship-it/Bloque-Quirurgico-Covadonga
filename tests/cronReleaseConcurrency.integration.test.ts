@@ -8,8 +8,17 @@ const prisma = new PrismaClient();
 const USER_ID = "cron-race-surgeon";
 const DATE = "2020-01-06"; // cierre ampliamente vencido
 const RESOURCE = "Q2";
+const AUDIT_FAILURE_ID = "cron-audit-failure-reservation";
+const AUDIT_TRIGGER = "qxflow_test_fail_cron_release_audit";
+const AUDIT_TRIGGER_FN = "qxflow_test_fail_cron_release_audit_fn";
+
+async function removeAuditFailureTrigger(): Promise<void> {
+  await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${AUDIT_TRIGGER} ON "ReservationEvent"`);
+  await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${AUDIT_TRIGGER_FN}()`);
+}
 
 async function cleanup(): Promise<void> {
+  await removeAuditFailureTrigger();
   const reservations = await prisma.reservation.findMany({
     where: {
       date: new Date(`${DATE}T00:00:00.000Z`),
@@ -108,7 +117,7 @@ test("cron release and patient add cannot produce a RELEASED reservation with pa
 
     const final = await prisma.reservation.findUniqueOrThrow({
       where: { id: reservation.id },
-      include: { patients: true },
+      include: { patients: true, events: true },
     });
 
     assert.notEqual(
@@ -121,9 +130,66 @@ test("cron release and patient add cannot produce a RELEASED reservation with pa
       assert.equal(final.status, "RELEASED");
       assert.equal(final.patients.length, 0);
       assert.equal(addResult, "inactive");
+      assert.equal(final.events.filter((e) => e.eventType === "RESERVATION_RELEASED").length, 1);
     } else if (addResult === "added") {
       assert.equal(final.status, "CONFIRMED");
       assert.equal(final.patients.length, 1);
+      assert.equal(final.events.filter((e) => e.eventType === "RESERVATION_RELEASED").length, 0);
     }
+  }
+});
+
+test("release audit failure rolls back the RELEASED status", async () => {
+  const reservation = await prisma.reservation.create({
+    data: {
+      id: AUDIT_FAILURE_ID,
+      date: new Date(`${DATE}T00:00:00.000Z`),
+      resourceId: RESOURCE,
+      shift: "MORNING",
+      slotIndex: 99,
+      surgeonId: USER_ID,
+      status: "PENDING",
+    },
+  });
+
+  await prisma.$executeRawUnsafe(`
+    CREATE OR REPLACE FUNCTION ${AUDIT_TRIGGER_FN}()
+    RETURNS trigger AS $$
+    BEGIN
+      IF NEW."reservationId" = '${AUDIT_FAILURE_ID}' AND NEW."eventType"::text = 'RESERVATION_RELEASED' THEN
+        RAISE EXCEPTION 'forced cron release audit failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TRIGGER ${AUDIT_TRIGGER}
+    BEFORE INSERT ON "ReservationEvent"
+    FOR EACH ROW EXECUTE FUNCTION ${AUDIT_TRIGGER_FN}()
+  `);
+
+  try {
+    await assert.rejects(
+      releasePendingReservationIfEligible({
+        id: reservation.id,
+        date: reservation.date,
+        resourceId: reservation.resourceId,
+        shift: reservation.shift,
+        slotIndex: reservation.slotIndex,
+        surgeonId: reservation.surgeonId,
+      }),
+      /forced cron release audit failure/,
+    );
+
+    const final = await prisma.reservation.findUniqueOrThrow({
+      where: { id: reservation.id },
+      include: { events: true },
+    });
+    assert.equal(final.status, "PENDING");
+    assert.equal(final.releasedAt, null);
+    assert.equal(final.events.filter((e) => e.eventType === "RESERVATION_RELEASED").length, 0);
+  } finally {
+    await removeAuditFailureTrigger();
   }
 });

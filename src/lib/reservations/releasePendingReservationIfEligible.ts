@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { isReservationRetentionStillAllowed } from "@/lib/schedulingDeadline";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
+import { writeReservationEvent } from "@/lib/reservations/logReservationEvent";
 import type { Shift } from "@/lib/types";
 
 export interface PendingReleaseCandidate {
@@ -31,9 +32,8 @@ function ymd(date: Date): string {
  * Libera un hold vacío únicamente después de volver a comprobar su estado dentro
  * del mismo advisory lock que utilizan las mutaciones de reserva/paciente.
  *
- * La primera selección del cron es solo una lista de candidatos. Esta función es
- * la autoridad final: si durante la carrera se añadió un paciente, cambió el
- * estado o cambió el contexto, no libera la reserva.
+ * Estado y evento RESERVATION_RELEASED se escriben en la misma transacción: si la
+ * auditoría no puede persistirse, la reserva no queda liberada silenciosamente.
  */
 export async function releasePendingReservationIfEligible(
   candidate: PendingReleaseCandidate,
@@ -78,8 +78,6 @@ export async function releasePendingReservationIfEligible(
       }
 
       const releasedAt = new Date();
-      // Conditional update is an additional guard if a non-cooperating writer changed
-      // status between the read and update. Patient writes in QxFlow use the same lock.
       const updated = await tx.reservation.updateMany({
         where: {
           id: live.id,
@@ -96,6 +94,20 @@ export async function releasePendingReservationIfEligible(
       if (updated.count !== 1) {
         return { released: false, reason: "not_pending" } as const;
       }
+
+      await writeReservationEvent(tx, {
+        eventType: "RESERVATION_RELEASED",
+        reservationId: live.id,
+        actorUserId: null,
+        origin: "app",
+        detailsJson: {
+          trigger: "cron_deadline",
+          date: candidateDate,
+          resourceId: live.resourceId,
+          shift: live.shift,
+          slotIndex: live.slotIndex,
+        },
+      });
 
       return {
         released: true,
