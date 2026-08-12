@@ -33,5 +33,9 @@ export const useRealReservationsApi = resolveUseRealReservationsApi({
   useRealApiEnv: process.env.NEXT_PUBLIC_USE_REAL_API,
 });
 
-/** Buzón principal del gestor: jfanjul@riberacare.com (Outlook / Microsoft 365) */
-export const GESTOR_EMAIL = process.env.GESTOR_EMAIL ?? "jfanjul@riberacare.com";
+/**
+ * Buzón principal del gestor. Se configura por entorno y nunca se incluye una
+ * dirección real como fallback en el repositorio. Si falta, las superficies que
+ * lo usan deben degradar de forma segura sin inventar un destinatario.
+ */
+export const GESTOR_EMAIL = process.env.GESTOR_EMAIL?.trim() ?? "";
