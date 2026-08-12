@@ -4,10 +4,13 @@ import { UserRole } from "@prisma/client";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { isRealDateOnly, madridDateOnly } from "@/lib/reservations/bookingPolicy";
 import { replaceAnesthetistUnavailability } from "@/lib/anesthetistUnavailability";
 
 export const dynamic = "force-dynamic";
+
+const MAX_UNAVAILABILITY_BODY_BYTES = 16 * 1024;
 
 const putSchema = z.object({
   date: z.string(),
@@ -85,8 +88,8 @@ export async function GET(request: Request) {
     });
 
     return NextResponse.json({ unavailability: toGrouped(rows) });
-  } catch (err) {
-    console.error("[anesthetist-unavailability GET]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[anesthetist-unavailability GET] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
@@ -101,9 +104,14 @@ export async function PUT(request: Request) {
     const own = canManageOwn(session!.role);
     if (!all && !own) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
+    const limitedBody = await readTextBodyWithLimit(request, MAX_UNAVAILABILITY_BODY_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Cuerpo demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -143,8 +151,8 @@ export async function PUT(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[anesthetist-unavailability PUT]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[anesthetist-unavailability PUT] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
