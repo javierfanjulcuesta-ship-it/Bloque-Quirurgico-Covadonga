@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { bearerToken, secretsEqual } from "../src/lib/security/secrets";
 import { validateWebhookSecret } from "../src/lib/email/webhookAuth";
+import { resolveUseRealReservationsApi } from "../src/lib/config";
 
 const originalWebhookSecret = process.env.EMAIL_WEBHOOK_SECRET;
 
@@ -58,4 +59,30 @@ test("email webhook rejects short configured secrets", () => {
     if (originalWebhookSecret === undefined) delete process.env.EMAIL_WEBHOOK_SECRET;
     else process.env.EMAIL_WEBHOOK_SECRET = originalWebhookSecret;
   }
+});
+
+test("production cannot be forced back to browser-local reservation storage", () => {
+  assert.equal(
+    resolveUseRealReservationsApi({ nodeEnv: "production", demoMode: false, useRealApiEnv: "false" }),
+    true,
+  );
+  assert.equal(
+    resolveUseRealReservationsApi({ nodeEnv: "test", demoMode: false, useRealApiEnv: "false" }),
+    true,
+  );
+});
+
+test("development keeps the explicit real/local reservation API override", () => {
+  assert.equal(
+    resolveUseRealReservationsApi({ nodeEnv: "development", demoMode: true, useRealApiEnv: "false" }),
+    false,
+  );
+  assert.equal(
+    resolveUseRealReservationsApi({ nodeEnv: "development", demoMode: true, useRealApiEnv: "true" }),
+    true,
+  );
+  assert.equal(
+    resolveUseRealReservationsApi({ nodeEnv: "development", demoMode: true, useRealApiEnv: undefined }),
+    false,
+  );
 });
