@@ -14,6 +14,7 @@ import {
   hasPermission,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { isRealDateOnly } from "@/lib/reservations/bookingPolicy";
 import {
   assignmentSnapshotRevision,
@@ -30,6 +31,10 @@ const VALID_RESOURCES = new Set([
 ]);
 const PREANESTHESIA = "__preanestesia__";
 const FULL_SHIFT = "__full_shift__";
+// The manager PUT is a complete snapshot and can legitimately be much larger than
+// ordinary API payloads. Keep a generous finite ceiling so malformed/hostile bodies
+// cannot consume unbounded server memory while normal multi-month snapshots remain valid.
+const MAX_ASSIGNMENT_BODY_BYTES = 4 * 1024 * 1024;
 
 /** Convierte slotType legacy a assignmentType + resourceId. Nunca corrige silenciosamente un valor inválido. */
 function parseAssignment(
@@ -138,8 +143,8 @@ export async function GET(request: Request) {
     const revision = isFullEditableSnapshot ? assignmentSnapshotRevision(snapshotRows(list)) : null;
 
     return NextResponse.json({ assignments: list.map(toFrontend), revision });
-  } catch (err) {
-    console.error("[anesthetist-assignments GET]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[anesthetist-assignments GET] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
@@ -153,9 +158,14 @@ export async function PUT(request: Request) {
     const denyPerm = requirePermission(session!, "anesthetist:assign");
     if (denyPerm) return denyPerm;
 
+    const limitedBody = await readTextBodyWithLimit(request, MAX_ASSIGNMENT_BODY_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Cuerpo demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -283,8 +293,8 @@ export async function PUT(request: Request) {
     }
 
     return NextResponse.json({ ok: true, revision: saved.revision });
-  } catch (err) {
-    console.error("[anesthetist-assignments PUT]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[anesthetist-assignments PUT] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
