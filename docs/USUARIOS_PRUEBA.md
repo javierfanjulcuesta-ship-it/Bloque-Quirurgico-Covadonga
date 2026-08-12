@@ -1,12 +1,14 @@
 # Usuarios de prueba – Modo real
 
-Usuarios en base de datos para desarrollo y pruebas con `NEXT_PUBLIC_DEMO_MODE=false`.
+Usuarios ficticios en base de datos para desarrollo y pruebas con `NEXT_PUBLIC_DEMO_MODE=false`.
+
+> **Solo desarrollo/pruebas.** No ejecute los scripts de usuarios de prueba contra producción ni contra una base de datos que contenga información real.
 
 ---
 
 ## Credenciales
 
-**Contraseña inicial para todos: `123`**
+La contraseña de prueba **no está incluida en el repositorio**. Debe definirse mediante la variable de entorno `TEST_USERS_PASSWORD` y tener al menos 12 caracteres.
 
 | Perfil | Email | Rol en BD |
 |--------|-------|-----------|
@@ -16,17 +18,21 @@ Usuarios en base de datos para desarrollo y pruebas con `NEXT_PUBLIC_DEMO_MODE=f
 | Endoscopista | `endoscopista@prueba.test` | ENDOSCOPISTA |
 | Gestor Anestesista | `gestor-anest@prueba.test` | GESTOR_ANESTESISTA |
 
-Dominio `@prueba.test` para identificar claramente como entorno de pruebas internas.
+El dominio `@prueba.test` identifica claramente estas cuentas como ficticias de pruebas internas.
 
 ---
 
-## Uso
+## Preparación segura
 
-1. `.env` con `NEXT_PUBLIC_DEMO_MODE=false`
-2. Base de datos: `npx prisma db push` (si hay cambios de schema)
-3. Crear/actualizar usuarios: `npm run usuarios:reset`
-4. Servidor: `npm run dev`
-5. Acceso: http://localhost:3000 → login con email y contraseña `123`
+1. Configure un entorno local/no productivo con `NEXT_PUBLIC_DEMO_MODE=false` y una `DATABASE_URL` de desarrollo.
+2. Si necesita sincronizar el esquema en una base local de desarrollo, use el wrapper protegido del proyecto. Requiere la confirmación explícita `ALLOW_PRISMA_DB_PUSH=I_UNDERSTAND_DB_PUSH_IS_DEV_ONLY` y ejecuta `npm run db:push`. No utilice `prisma db push` directamente contra producción.
+3. Para crear o actualizar los usuarios ficticios, defina:
+   - `ALLOW_TEST_USER_SEED=I_UNDERSTAND_TEST_USERS_ONLY`
+   - `TEST_USERS_PASSWORD=<contraseña de prueba de al menos 12 caracteres>`
+4. Ejecute `npm run usuarios:reset`.
+5. Inicie el servidor con `npm run dev` e inicie sesión usando uno de los correos `@prueba.test` y la contraseña definida en `TEST_USERS_PASSWORD`.
+
+Los scripts bloquean su ejecución cuando detectan producción/Vercel y no imprimen la contraseña en los logs. Aun así, compruebe siempre que `DATABASE_URL` apunta al entorno de desarrollo correcto antes de ejecutar una operación de seed/reset.
 
 ---
 
@@ -38,12 +44,13 @@ Dominio `@prueba.test` para identificar claramente como entorno de pruebas inter
 | Cambio de contraseña (Mi Perfil) | ✅ |
 | Reserva desde cirujano (API) | ✅ |
 | Calendario gestor (API) | ✅ |
-| Acceso por rol (cirujano → /cirujano, gestor → /calendario) | ✅ |
+| Acceso por rol (cirujano → `/cirujano`, gestor → `/calendario`) | ✅ |
 
 ---
 
 ## Notas
 
-- Usuarios creados con `approved=true` para acceso inmediato.
-- Para resetear contraseñas a `123`: `npm run usuarios:reset`
-- El script `seed-usuarios-prueba.ts` solo añade si no existen; `reset-usuarios-prueba.ts` hace upsert y fuerza contraseña.
+- Los usuarios de prueba se crean con `approved=true` para acceso inmediato en el entorno de desarrollo.
+- `npm run usuarios:reset` hace `upsert` de las cuentas ficticias y establece la contraseña indicada por `TEST_USERS_PASSWORD`.
+- `scripts/seed-usuarios-prueba.ts` solo añade cuentas si no existen; `scripts/reset-usuarios-prueba.ts` hace `upsert` y actualiza su contraseña.
+- No reutilice contraseñas reales, de producción o personales como `TEST_USERS_PASSWORD`.
