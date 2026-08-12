@@ -75,7 +75,7 @@ export function NormasGestorView() {
     const r = rules.find((x) => x.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY);
     if (!r) return;
     setAdminEmail(parseAdminEmailFromValueJson(r.valueJson));
-  }, [adminSyncToken]);
+  }, [adminSyncToken, rules]);
 
   const startEdit = (rule: ProgrammingRuleFull) => {
     setEditingId(rule.id);
@@ -95,7 +95,6 @@ export function NormasGestorView() {
     if (!rule) return;
     let valueToSend = editValue;
     if (
-      rule &&
       ["scheduling_deadline_day", "scheduling_deadline_hour", "scheduling_deadline_minute", "transition_minutes", "max_weeks_ahead"].includes(rule.key)
     ) {
       const n = Number(editValue);
@@ -112,10 +111,19 @@ export function NormasGestorView() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ valueJson: valueToSend }),
+        body: JSON.stringify({
+          valueJson: valueToSend,
+          expectedUpdatedAt: rule.updatedAt,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Error al guardar");
+      if (!res.ok) {
+        if (res.status === 409) {
+          await fetchRules();
+          throw new Error(data.error ?? "La regla cambió en otra sesión. Revise la versión actual antes de guardar de nuevo.");
+        }
+        throw new Error(data.error ?? "Error al guardar");
+      }
       await fetchRules();
       cancelEdit();
     } catch (e) {
@@ -143,10 +151,19 @@ export function NormasGestorView() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ valueJson: JSON.stringify(t) }),
+        body: JSON.stringify({
+          valueJson: JSON.stringify(t),
+          expectedUpdatedAt: adminRule.updatedAt,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Error al guardar");
+      if (!res.ok) {
+        if (res.status === 409) {
+          await fetchRules();
+          throw new Error(data.error ?? "La regla cambió en otra sesión. Revise el valor actual antes de guardar de nuevo.");
+        }
+        throw new Error(data.error ?? "Error al guardar");
+      }
       await fetchRules();
     } catch (e) {
       setAdminSaveError(e instanceof Error ? e.message : "Error al guardar");
