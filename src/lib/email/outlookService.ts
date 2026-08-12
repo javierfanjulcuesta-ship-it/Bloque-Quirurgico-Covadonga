@@ -17,15 +17,22 @@ import { createGraphOutlookAdapter, isGraphConfigured } from "./graphOutlookAdap
 import { createGmailAdapter, isSmtpConfigured } from "./gmailAdapter";
 import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
+import { emailProviderUnavailableMessage, isEmailMockAllowed } from "./emailRuntimePolicy";
 import type { InboxMessage, EmailClassification, ParsedReservationEmail } from "./types";
 
 let _adapter: Awaited<ReturnType<typeof createMockOutlookAdapter>> | null = null;
 let _adapterMode: "smtp" | "graph" | "mock" = "mock";
 
+function unavailableProviderError(provider?: "smtp" | "graph", cause?: unknown): Error {
+  const message = emailProviderUnavailableMessage(provider);
+  if (cause instanceof Error) return new Error(message, { cause });
+  return new Error(message);
+}
+
 async function getAdapter() {
   if (_adapter) return _adapter;
 
-  // Prioridad: SMTP → Graph → Mock
+  // Prioridad: SMTP → Graph → Mock. En producción nunca se degrada silenciosamente a mock.
   if (isSmtpConfigured()) {
     try {
       _adapter = await createGmailAdapter();
@@ -34,9 +41,13 @@ async function getAdapter() {
         console.log("[Email] Usando SMTP (Gmail) – correos reales");
       }
     } catch (err) {
+      if (!isEmailMockAllowed(process.env.NODE_ENV)) {
+        console.error("[Email] SMTP configurado pero no disponible en producción:", err instanceof Error ? err.message : "error desconocido");
+        throw unavailableProviderError("smtp", err);
+      }
       _adapter = createMockOutlookAdapter();
       _adapterMode = "mock";
-      console.warn("[Email] SMTP no disponible, usando mock. Error:", err instanceof Error ? err.message : err);
+      console.warn("[Email] SMTP no disponible, usando mock fuera de producción. Error:", err instanceof Error ? err.message : err);
     }
   } else if (isGraphConfigured()) {
     try {
@@ -46,11 +57,19 @@ async function getAdapter() {
         console.log("[Email] Usando Graph – correos reales");
       }
     } catch (err) {
+      if (!isEmailMockAllowed(process.env.NODE_ENV)) {
+        console.error("[Email] Graph configurado pero no disponible en producción:", err instanceof Error ? err.message : "error desconocido");
+        throw unavailableProviderError("graph", err);
+      }
       _adapter = createMockOutlookAdapter();
       _adapterMode = "mock";
-      console.warn("[Email] Graph no disponible, usando mock. Error:", err instanceof Error ? err.message : err);
+      console.warn("[Email] Graph no disponible, usando mock fuera de producción. Error:", err instanceof Error ? err.message : err);
     }
   } else {
+    if (!isEmailMockAllowed(process.env.NODE_ENV)) {
+      console.error("[Email] Ningún proveedor de correo real configurado en producción");
+      throw unavailableProviderError();
+    }
     _adapter = createMockOutlookAdapter();
     _adapterMode = "mock";
     if (process.env.NODE_ENV !== "test") {
