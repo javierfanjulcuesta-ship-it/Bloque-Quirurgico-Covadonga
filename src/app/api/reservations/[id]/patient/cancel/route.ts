@@ -8,7 +8,6 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
-import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { isReservationRetentionStillAllowed } from "@/lib/schedulingDeadline";
 import { cancelPatientSchema } from "@/lib/validations/reservation";
@@ -104,6 +103,47 @@ export async function PATCH(
           });
         }
 
+        const cancellationDetails = {
+          patientId,
+          historyNumber: patient.historyNumber,
+          procedure: patient.procedure,
+          reason: reasonTrimmed,
+          slotOutcome,
+          slot: {
+            date: dateStr,
+            resourceId: live.resourceId,
+            shift: shiftLabel,
+            slotIndex: live.slotIndex,
+          },
+        };
+
+        // El borrado del paciente, el posible cambio de estado del tramo y sus
+        // eventos de trazabilidad constituyen una única operación clínica. Si la
+        // auditoría no se puede persistir, la transacción completa debe revertir.
+        await tx.reservationEvent.create({
+          data: {
+            eventType: "RESERVATION_PATIENT_CANCELLED",
+            reservationId: id,
+            actorUserId: session!.userId,
+            origin: "app",
+            detailsJson: JSON.stringify(cancellationDetails),
+          },
+        });
+        await tx.reservationEvent.create({
+          data: {
+            eventType: "PATIENT_SURGICAL_CIRCUIT_SUSPENDED",
+            reservationId: id,
+            actorUserId: session!.userId,
+            origin: "app",
+            detailsJson: JSON.stringify({
+              patientId,
+              historyNumber: patient.historyNumber,
+              dryRun: true,
+              reason: reasonTrimmed ?? null,
+            }),
+          },
+        });
+
         return {
           kind: "cancelled" as const,
           slotOutcome,
@@ -136,39 +176,6 @@ export async function PATCH(
         ? "Paciente eliminado. Era el último del tramo y, tras el cierre de programación, el hueco ha pasado a bolsa común (liberado)."
         : "Paciente eliminado correctamente. Siguen otros pacientes en este mismo tramo.";
 
-    await logReservationEvent({
-      eventType: "RESERVATION_PATIENT_CANCELLED",
-      reservationId: id,
-      actorUserId: session!.userId,
-      origin: "app",
-      detailsJson: {
-        patientId,
-        historyNumber: lockedResult.historyNumber,
-        procedure: lockedResult.procedure,
-        reason: reasonTrimmed,
-        slotOutcome,
-        slot: {
-          date: dateStr,
-          resourceId: reservation.resourceId,
-          shift: shiftLabel,
-          slotIndex: reservation.slotIndex,
-        },
-      },
-    });
-
-    await logReservationEvent({
-      eventType: "PATIENT_SURGICAL_CIRCUIT_SUSPENDED",
-      reservationId: id,
-      actorUserId: session!.userId,
-      origin: "app",
-      detailsJson: {
-        patientId,
-        historyNumber: lockedResult.historyNumber,
-        dryRun: true,
-        reason: reasonTrimmed ?? null,
-      },
-    });
-
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
@@ -178,7 +185,7 @@ export async function PATCH(
       message,
     });
   } catch (err) {
-    console.error("[reservations patient/cancel]", err);
+    console.error("[reservations patient/cancel]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error al cancelar paciente" }, { status: 500 });
   }
 }
