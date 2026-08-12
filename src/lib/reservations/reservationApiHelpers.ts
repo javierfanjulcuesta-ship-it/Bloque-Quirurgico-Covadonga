@@ -3,6 +3,10 @@
  */
 
 import { prisma } from "@/lib/db/prisma";
+import {
+  ASSIGNMENT_FULL_SHIFT_RESOURCE,
+  assignedAnesthetistIdsForReservation,
+} from "@/lib/reservations/anesthetistAssignmentAccess";
 
 export interface ReservationWithPatients {
   id: string;
@@ -13,6 +17,7 @@ export interface ReservationWithPatients {
   surgeonId: string;
   status: string;
   anesthetistId: string | null;
+  assignedAnesthetistIds?: string[];
   createdByUserId: string | null;
   createdAt: Date;
   patients: Array<{
@@ -112,11 +117,39 @@ const RESERVATION_SELECT = {
   },
 } as const;
 
+/**
+ * Carga el caso y resuelve además los anestesistas asignados por la tabla canónica
+ * AnesthetistAssignment. Reservation.anesthetistId se conserva solo como fallback
+ * legacy; las nuevas asignaciones se modelan por fecha/recurso/turno.
+ */
 export async function fetchReservationForAccess(id: string) {
-  return prisma.reservation.findUnique({
+  const reservation = await prisma.reservation.findUnique({
     where: { id },
     select: RESERVATION_SELECT,
   });
+  if (!reservation) return null;
+
+  const date = reservation.date.toISOString().slice(0, 10);
+  const assignments = await prisma.anesthetistAssignment.findMany({
+    where: {
+      date,
+      shift: reservation.shift,
+      assignmentType: "OR",
+      resourceId: { in: [reservation.resourceId, ASSIGNMENT_FULL_SHIFT_RESOURCE] },
+    },
+    select: {
+      date: true,
+      shift: true,
+      assignmentType: true,
+      resourceId: true,
+      anesthetistId: true,
+    },
+  });
+
+  return {
+    ...reservation,
+    assignedAnesthetistIds: assignedAnesthetistIdsForReservation(assignments, reservation),
+  };
 }
 
 export function toBookingLike(r: { id: string; surgeonId: string; createdByUserId?: string | null }) {
