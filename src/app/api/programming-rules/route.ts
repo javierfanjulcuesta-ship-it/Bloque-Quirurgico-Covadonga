@@ -92,8 +92,8 @@ export async function GET() {
       .filter((r) => r.content.trim() !== "");
 
     return NextResponse.json({ rules: publicRules });
-  } catch (err) {
-    console.error("[programming-rules GET]", err);
+  } catch {
+    console.error("[programming-rules GET] request failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
