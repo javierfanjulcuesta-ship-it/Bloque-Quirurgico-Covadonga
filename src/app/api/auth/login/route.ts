@@ -1,7 +1,7 @@
 /**
  * POST /api/auth/login
  * Autenticación real: email + contraseña.
- * Rate limit: 5 intentos / 15 min por IP.
+ * Rate limit: 5 intentos / 15 min por combinación IP + cuenta.
  */
 
 import { NextResponse } from "next/server";
@@ -17,10 +17,14 @@ import type { User } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    const rateLimit = checkLoginRateLimit(request);
+    const body = await request.json();
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+
+    const rateLimit = checkLoginRateLimit(request, email);
     if (!rateLimit.ok) {
       return NextResponse.json(
-        { error: "Demasiados intentos de acceso. Espere unos minutos e inténtelo de nuevo." },
+        { error: "Demasiados intentos de acceso para esta cuenta. Espere unos minutos e inténtelo de nuevo." },
         {
           status: 429,
           headers: rateLimit.retryAfterSec
@@ -29,10 +33,6 @@ export async function POST(request: Request) {
         }
       );
     }
-
-    const body = await request.json();
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password : "";
 
     if (!email || !password) {
       return NextResponse.json(
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       approved: user.approved,
     });
 
-    resetLoginRateLimitOnSuccess(request);
+    resetLoginRateLimitOnSuccess(request, email);
     const res = NextResponse.json({ user });
     return addSessionCookieToResponse(res, token);
   } catch (err) {
