@@ -10,6 +10,7 @@ import {
   getStoredAnesthetistAssignments,
   setStoredAnesthetistAssignments,
 } from "./storageAnesthetistAssignments";
+import { hydrateRealUnavailability } from "./storageAnesthetistUnavailability";
 import {
   fetchAssignmentsSnapshot,
   saveAssignments as apiSaveAssignments,
@@ -29,8 +30,19 @@ export async function getAssignments(filters?: FetchAssignmentsFilters): Promise
     return result;
   }
 
+  // La carga completa es la pantalla editable del gestor. Esperamos también a la
+  // no disponibilidad compartida para que el primer render con asignaciones no
+  // marque como disponible a un anestesista cuya caché todavía no se hidrató.
+  if (!filters) {
+    const [snapshot] = await Promise.all([
+      fetchAssignmentsSnapshot(),
+      hydrateRealUnavailability(true),
+    ]);
+    editableSnapshotRevision = snapshot.revision;
+    return snapshot.assignments;
+  }
+
   const snapshot = await fetchAssignmentsSnapshot(filters);
-  if (!filters) editableSnapshotRevision = snapshot.revision;
   return snapshot.assignments;
 }
 
