@@ -53,23 +53,11 @@ export async function POST() {
 
     const actuallyReleased: PendingReleaseCandidate[] = [];
     for (const candidate of candidates) {
+      // La función persiste RESERVATION_RELEASED dentro de la misma transacción
+      // que cambia el estado a RELEASED; aquí solo acumulamos los éxitos reales.
       const result = await releasePendingReservationIfEligible(candidate);
       if (!result.released) continue;
-
       actuallyReleased.push(result.reservation);
-      await logReservationEvent({
-        eventType: "RESERVATION_RELEASED",
-        reservationId: result.reservation.id,
-        actorUserId: null,
-        origin: "app",
-        detailsJson: {
-          trigger: "cron_deadline",
-          date: result.reservation.date.toISOString().slice(0, 10),
-          resourceId: result.reservation.resourceId,
-          shift: result.reservation.shift,
-          slotIndex: result.reservation.slotIndex,
-        },
-      });
     }
 
     if (actuallyReleased.length === 0) {
@@ -116,6 +104,8 @@ export async function POST() {
       },
     });
 
+    // Evento resumen best-effort: la trazabilidad individual de cada liberación ya
+    // está garantizada transaccionalmente por releasePendingReservationIfEligible.
     await logReservationEvent({
       eventType: "AUTO_RELEASE_TO_COMMON_POOL",
       reservationId: null,
