@@ -27,10 +27,11 @@ Configurar en **Vercel → Project → Settings → Environment Variables**.
 | `DATABASE_URL` | Prisma Client en runtime | URL PostgreSQL con pooler apropiado para serverless |
 | `DIRECT_URL` | Prisma Migrate / operaciones directas | conexión directa a la misma base |
 | `JWT_SECRET` | firma de sesión | secreto aleatorio >= 32 bytes; nunca en Git |
+| `GESTOR_EMAIL` | buzón de coordinación usado por la app | configurar explícitamente por entorno; nunca hardcodear una dirección real |
 | `NEXT_PUBLIC_DEMO_MODE` | modo demo | `false` en producción |
 | `NEXT_PUBLIC_USE_REAL_API` | API real | `true` en producción |
 
-No pegar secretos en issues, logs, documentación ni commits.
+No pegar secretos ni datos personales de contacto en issues, logs, documentación ni commits.
 
 ## Build
 
@@ -113,6 +114,7 @@ Si `migrate deploy` detecta un estado inesperado, **detener el release** y recon
 - [ ] `NEXT_PUBLIC_DEMO_MODE=false`
 - [ ] `NEXT_PUBLIC_USE_REAL_API=true`
 - [ ] `JWT_SECRET` configurado y no expuesto
+- [ ] `GESTOR_EMAIL` configurado en el entorno correcto y no hardcodeado
 - [ ] `prisma migrate deploy` completado cuando corresponda
 - [ ] build/deploy completado
 - [ ] smoke tests OK
