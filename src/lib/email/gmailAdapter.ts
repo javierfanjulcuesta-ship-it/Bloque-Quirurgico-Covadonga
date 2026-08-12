@@ -1,7 +1,7 @@
 /**
  * Adaptador de envío de correo vía Gmail SMTP (nodemailer).
  * Usado cuando SMTP_HOST, SMTP_USER y SMTP_PASS están configurados.
- * No expone credenciales ni errores internos.
+ * No expone credenciales ni datos de destinatarios/contenido en logs.
  */
 
 import nodemailer from "nodemailer";
@@ -55,11 +55,10 @@ export async function createGmailAdapter(): Promise<OutlookAdapter> {
         ]);
 
         if (process.env.NODE_ENV !== "test") {
-          console.log("[Email] Enviado vía SMTP:", { to: params.to, subject: params.subject.slice(0, 50) });
+          console.log("[Email] Envío SMTP completado");
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error("[Email] Error SMTP:", { to: params.to, error: msg });
+      } catch {
+        console.error("[Email] Fallo de envío SMTP");
         throw new Error("Error al enviar correo");
       }
     },
