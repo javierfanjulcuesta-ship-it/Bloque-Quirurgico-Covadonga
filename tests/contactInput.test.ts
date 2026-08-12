@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CONTACT_REQUEST_MAX_BYTES, parseContactInput } from "../src/lib/contactInput";
+import { readTextBodyWithLimit } from "../src/lib/http/requestBody";
 
 test("valid contact payload is normalized without truncation", () => {
   const result = parseContactInput(JSON.stringify({
@@ -39,4 +40,38 @@ test("fields over their limits are rejected rather than silently truncated", () 
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.status, 400);
+});
+
+test("bounded reader rejects a streamed body even without Content-Length", async () => {
+  const limit = 16;
+  const request = new Request("http://localhost/contact", {
+    method: "POST",
+    body: "x".repeat(limit + 1),
+  });
+  assert.equal(request.headers.has("content-length"), false);
+
+  const result = await readTextBodyWithLimit(request, limit);
+  assert.deepEqual(result, { ok: false, reason: "too_large" });
+});
+
+test("bounded reader counts UTF-8 bytes and returns accepted text", async () => {
+  const text = "áéí";
+  const request = new Request("http://localhost/contact", {
+    method: "POST",
+    body: text,
+  });
+
+  const accepted = await readTextBodyWithLimit(request, Buffer.byteLength(text, "utf8"));
+  assert.deepEqual(accepted, { ok: true, text });
+});
+
+test("bounded reader rejects declared oversized bodies before reading", async () => {
+  const request = new Request("http://localhost/login", {
+    method: "POST",
+    headers: { "content-length": "100" },
+    body: "{}",
+  });
+
+  const result = await readTextBodyWithLimit(request, 8);
+  assert.deepEqual(result, { ok: false, reason: "too_large" });
 });
