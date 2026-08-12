@@ -4,49 +4,85 @@
  * - SCHEDULING_DEADLINE_DAY (4 = jueves)
  * - SCHEDULING_DEADLINE_HOUR, SCHEDULING_DEADLINE_MINUTE (por defecto 0)
  *
- * Regla: el jueves a las 00:00 de la semana N cierra la reserva para la semana N+1.
+ * Regla: el jueves a las 00:00 de Europe/Madrid de la semana N cierra la reserva
+ * para la semana N+1. No depende de la zona horaria del proceso (Vercel/Node).
  */
 
-import { SCHEDULING_DEADLINE_DAY, SCHEDULING_DEADLINE_HOUR, SCHEDULING_DEADLINE_MINUTE } from "./constants";
-import { getWeekStart } from "./utils";
+import {
+  SCHEDULING_DEADLINE_DAY,
+  SCHEDULING_DEADLINE_HOUR,
+  SCHEDULING_DEADLINE_MINUTE,
+} from "./constants";
+import {
+  addDaysYmd,
+  todayYmdMadrid,
+  utcDateForMadridWallClock,
+} from "./reservations/preanesthesiaAutoAssign";
 
-/** Días desde el lunes de la semana del slot hasta el jueves anterior. Thursday = Lun + 3, luego -4. */
+/** Días desde el lunes de la semana del slot hasta el jueves anterior. */
 const DAYS_BACK_TO_DEADLINE = 8 - SCHEDULING_DEADLINE_DAY;
 
+function assertDateOnly(ymd: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    throw new Error(`Fecha inválida para cierre de programación: ${ymd}`);
+  }
+  const [year, month, day] = ymd.split("-").map(Number);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    throw new Error(`Fecha inválida para cierre de programación: ${ymd}`);
+  }
+}
+
+/** Lunes de la semana que contiene ymd, sin depender de la TZ del proceso. */
+export function mondayYmdForWeek(ymd: string): string {
+  assertDateOnly(ymd);
+  const [year, month, day] = ymd.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay(); // 0=dom, 1=lun
+  const daysSinceMonday = (weekday + 6) % 7;
+  return addDaysYmd(ymd, -daysSinceMonday);
+}
+
 /**
- * Devuelve el instante de cierre para la semana que contiene slotDateIso.
- * La semana del slot se cierra el jueves HH:MM de la semana anterior.
+ * Devuelve el instante UTC de cierre para la semana que contiene slotDateIso,
+ * interpretando la hora configurada en Europe/Madrid.
  */
 export function getDeadlineForSlotWeek(slotDateIso: string): Date {
-  const slotWeekStart = getWeekStart(new Date(slotDateIso + "T12:00:00"));
-  const deadline = new Date(slotWeekStart);
-  deadline.setDate(slotWeekStart.getDate() - DAYS_BACK_TO_DEADLINE);
-  deadline.setHours(SCHEDULING_DEADLINE_HOUR, SCHEDULING_DEADLINE_MINUTE, 0, 0);
-  return deadline;
+  const slotWeekMonday = mondayYmdForWeek(slotDateIso);
+  const deadlineYmd = addDaysYmd(slotWeekMonday, -DAYS_BACK_TO_DEADLINE);
+  return utcDateForMadridWallClock(
+    deadlineYmd,
+    SCHEDULING_DEADLINE_HOUR,
+    SCHEDULING_DEADLINE_MINUTE,
+  );
 }
 
 /**
  * Indica si una reserva vacía (0 pacientes) puede seguir retenida por el cirujano.
- * Solo hasta el jueves 00:00 de la semana anterior a la del slot.
+ * Solo hasta el jueves 00:00 Europe/Madrid de la semana anterior a la del slot.
  */
-export function isReservationRetentionStillAllowed(slotDateIso: string): boolean {
-  const deadline = getDeadlineForSlotWeek(slotDateIso);
-  return new Date() < deadline;
+export function isReservationRetentionStillAllowed(slotDateIso: string, now = new Date()): boolean {
+  return now < getDeadlineForSlotWeek(slotDateIso);
 }
 
 /**
- * Indica si el slot está en la "semana siguiente" y ya pasó el cierre.
- * Usado en UI: si true, no se puede reservar huecos vacíos (solo programar en libres).
+ * Indica si el slot está en la semana siguiente y ya pasó el cierre de la semana
+ * actual. Todas las comparaciones de calendario se hacen en Europe/Madrid.
  */
-export function isNextWeekReserveClosed(slotDateIso: string): boolean {
-  const now = new Date();
-  const currentWeekStart = getWeekStart(now);
-  const thursday = new Date(currentWeekStart);
-  thursday.setDate(currentWeekStart.getDate() + (SCHEDULING_DEADLINE_DAY - 1)); // Lun+3 = Jueves
-  thursday.setHours(SCHEDULING_DEADLINE_HOUR, SCHEDULING_DEADLINE_MINUTE, 0, 0);
-  if (now < thursday) return false;
-  const nextWeekStart = new Date(currentWeekStart);
-  nextWeekStart.setDate(currentWeekStart.getDate() + 7);
-  const slotWeekStart = getWeekStart(new Date(slotDateIso + "T12:00:00"));
-  return slotWeekStart.getTime() === nextWeekStart.getTime();
+export function isNextWeekReserveClosed(slotDateIso: string, now = new Date()): boolean {
+  const todayMadrid = todayYmdMadrid(now);
+  const currentWeekMonday = mondayYmdForWeek(todayMadrid);
+  const thisWeekDeadlineYmd = addDaysYmd(currentWeekMonday, SCHEDULING_DEADLINE_DAY - 1);
+  const thisWeekDeadline = utcDateForMadridWallClock(
+    thisWeekDeadlineYmd,
+    SCHEDULING_DEADLINE_HOUR,
+    SCHEDULING_DEADLINE_MINUTE,
+  );
+  if (now < thisWeekDeadline) return false;
+
+  const nextWeekMonday = addDaysYmd(currentWeekMonday, 7);
+  return mondayYmdForWeek(slotDateIso) === nextWeekMonday;
 }
