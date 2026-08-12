@@ -93,7 +93,8 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
     shift: Shift,
     status: PlanStatus,
     minRequiredMinutes: number,
-    reservedUrgentMinutes: number
+    reservedUrgentMinutes: number,
+    expectedUpdatedAt: string | null
   ) => {
     const key = `${dateStr}-${resourceId}-${shift}`;
     setSaving(key);
@@ -106,6 +107,7 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
         status,
         minRequiredMinutes,
         reservedUrgentMinutes,
+        expectedUpdatedAt,
       });
       setPlans((prev) => {
         const rest = prev.filter((p) => !(p.date === dateStr && p.resourceId === resourceId && p.shift === shift));
@@ -201,7 +203,8 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
                               "morning",
                               s,
                               morningPlan?.minRequiredMinutes ?? minRequiredDefault,
-                              morningPlan?.reservedUrgentMinutes ?? 0
+                              morningPlan?.reservedUrgentMinutes ?? 0,
+                              morningPlan?.updatedAt ?? null
                             )
                           }
                           onMinRequiredChange={(v) =>
@@ -211,7 +214,8 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
                               "morning",
                               morningStatus,
                               v,
-                              morningPlan?.reservedUrgentMinutes ?? 0
+                              morningPlan?.reservedUrgentMinutes ?? 0,
+                              morningPlan?.updatedAt ?? null
                             )
                           }
                         />
@@ -230,7 +234,8 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
                               "afternoon",
                               s,
                               afternoonPlan?.minRequiredMinutes ?? minRequiredDefault,
-                              afternoonPlan?.reservedUrgentMinutes ?? 0
+                              afternoonPlan?.reservedUrgentMinutes ?? 0,
+                              afternoonPlan?.updatedAt ?? null
                             )
                           }
                           onMinRequiredChange={(v) =>
@@ -240,7 +245,8 @@ export function GestionarApertura({ reservations }: GestionarAperturaProps) {
                               "afternoon",
                               afternoonStatus,
                               v,
-                              afternoonPlan?.reservedUrgentMinutes ?? 0
+                              afternoonPlan?.reservedUrgentMinutes ?? 0,
+                              afternoonPlan?.updatedAt ?? null
                             )
                           }
                         />
