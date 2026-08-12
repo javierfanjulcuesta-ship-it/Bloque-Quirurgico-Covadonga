@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - hardening/p1-user-lifecycle-audit
+      - hardening/p1-password-change-race
   pull_request:
     branches:
       - hardening/integration
@@ -44,6 +45,7 @@ jobs:
       - run: npm test
       - run: npm run test:user-lifecycle-integration
       - run: npm run test:invitation-credential-integration
+      - run: npm run test:password-change-integration
       - run: npx tsc --noEmit
       - run: npm run build
       - name: Lint informational - pre-existing debt tracked separately
