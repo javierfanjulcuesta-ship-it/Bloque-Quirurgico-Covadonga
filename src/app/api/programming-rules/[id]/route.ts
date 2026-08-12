@@ -1,6 +1,10 @@
 /**
  * PATCH /api/programming-rules/[id]
  * Actualiza una regla. Solo GESTOR y GESTOR_ANESTESISTA.
+ *
+ * El cliente debe enviar la versión (`expectedUpdatedAt`) que cargó. La escritura
+ * usa compare-and-set para impedir que dos gestores sobrescriban silenciosamente
+ * cambios del otro desde pantallas desactualizadas.
  */
 
 import { NextResponse } from "next/server";
@@ -11,7 +15,8 @@ import { prisma } from "@/lib/db/prisma";
 import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
 
 const patchBodySchema = z.object({
-  valueJson: z.union([z.string(), z.null()]).optional(),
+  valueJson: z.union([z.string(), z.null()]),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 });
 
 export async function PATCH(
@@ -49,10 +54,6 @@ export async function PATCH(
     }
 
     const rawVal = parsed.data.valueJson;
-    if (rawVal === undefined) {
-      return NextResponse.json({ error: "valueJson requerido" }, { status: 400 });
-    }
-
     let valueJson: string | null = rawVal;
 
     if (existing.key === ADMIN_NOTIFICATION_EMAIL_RULE_KEY) {
@@ -70,13 +71,33 @@ export async function PATCH(
       valueJson = JSON.stringify(email);
     }
 
-    const updated = await prisma.programmingRule.update({
-      where: { id },
+    const expectedUpdatedAt = new Date(parsed.data.expectedUpdatedAt);
+    const result = await prisma.programmingRule.updateMany({
+      where: {
+        id,
+        updatedAt: expectedUpdatedAt,
+      },
       data: {
         valueJson,
         updatedByUserId: session!.userId,
       },
     });
+
+    if (result.count !== 1) {
+      const stillExists = await prisma.programmingRule.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!stillExists) {
+        return NextResponse.json({ error: "Regla no encontrada" }, { status: 404 });
+      }
+      return NextResponse.json(
+        { error: "La regla ha cambiado desde que se cargó. Revise la versión actual antes de volver a guardar." },
+        { status: 409 }
+      );
+    }
+
+    const updated = await prisma.programmingRule.findUniqueOrThrow({ where: { id } });
 
     return NextResponse.json({
       rule: {
@@ -91,7 +112,7 @@ export async function PATCH(
       },
     });
   } catch (err) {
-    console.error("[programming-rules PATCH]", err);
+    console.error("[programming-rules PATCH]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
