@@ -9,6 +9,7 @@ import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/auth/rateLimit";
 import { prisma } from "@/lib/db/prisma";
 import { CONTACT_REQUEST_MAX_BYTES, parseContactInput } from "@/lib/contactInput";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 const CONTACT_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 min
 const CONTACT_MAX_ATTEMPTS = 5;
@@ -31,16 +32,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const contentLength = request.headers.get("content-length");
-    if (contentLength) {
-      const parsedLength = Number.parseInt(contentLength, 10);
-      if (Number.isFinite(parsedLength) && parsedLength > CONTACT_REQUEST_MAX_BYTES) {
-        return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
-      }
+    const rawBody = await readTextBodyWithLimit(request, CONTACT_REQUEST_MAX_BYTES);
+    if (!rawBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
     }
 
-    const rawBody = await request.text();
-    const parsed = parseContactInput(rawBody);
+    const parsed = parseContactInput(rawBody.text);
     if (!parsed.ok) {
       return NextResponse.json({ error: parsed.error }, { status: parsed.status });
     }
@@ -56,8 +53,8 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[contact POST]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[contact POST] request failed");
     return NextResponse.json({ error: "Error al enviar" }, { status: 500 });
   }
 }
@@ -86,8 +83,8 @@ export async function GET() {
         date: m.createdAt.toISOString(),
       })),
     });
-  } catch (err) {
-    console.error("[contact GET]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[contact GET] request failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
