@@ -19,7 +19,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: qxflow_ci
         ports:
           - 5432:5432
@@ -29,9 +29,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
-      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
-      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://postgres@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ci-${{ github.sha }}
       NEXT_PUBLIC_DEMO_MODE: "false"
       NEXT_PUBLIC_USE_REAL_API: "true"
     steps:
@@ -50,12 +50,12 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
-      - name: Verify migration chain shape
+      - name: Verify production baseline and first reconciliation remain intact
         run: |
           test -f prisma/migrations/0_baseline_production_20260811/migration.sql
           test -f prisma/migrations/20260811071500_reconcile_preanesthesia_phase2/migration.sql
           count=$(find prisma/migrations -mindepth 2 -maxdepth 2 -name migration.sql | wc -l)
-          test "$count" -eq 2
+          test "$count" -ge 2
           grep -q "PATIENT_WORKFLOW_STARTED" prisma/migrations/0_baseline_production_20260811/migration.sql
           if grep -q "preanesthesiaAppointmentAt" prisma/migrations/0_baseline_production_20260811/migration.sql; then
             echo "Production baseline must not contain the missing phase2 column"
@@ -93,6 +93,10 @@ jobs:
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='isDeferredUrgency');" | grep -qx t
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='PatientInBlock' AND column_name='specialCircuitReason');" | grep -qx t
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT COUNT(*) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='ReservationEventType';" | grep -qx 19
+
+      - name: Assert later additive migrations also converged
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='AnesthetistUnavailability');" | grep -qx t
 
       - name: Generate Prisma client
         run: npx prisma generate
