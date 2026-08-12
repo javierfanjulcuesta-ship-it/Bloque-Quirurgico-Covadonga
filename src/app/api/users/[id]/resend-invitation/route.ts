@@ -3,9 +3,9 @@
  * Reenvía invitación al usuario existente con una nueva contraseña temporal.
  * Requiere user:create.
  *
- * La contraseña solo queda rotada si el envío termina correctamente. Si el envío
- * falla, se restaura el hash anterior para no bloquear al usuario por un correo
- * que nunca recibió.
+ * La rotación usa compare-and-set sobre passwordHash: dos reenvíos concurrentes no
+ * pueden pisarse. Si el envío falla, el rollback solo restaura el hash anterior si
+ * la credencial sigue siendo exactamente la generada por esta petición.
  */
 
 import { NextResponse } from "next/server";
@@ -63,7 +63,20 @@ export async function POST(
     const role = roleToFrontend(user.role);
     const normasTexto = role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
 
-    await prisma.user.update({ where: { id }, data: { passwordHash } });
+    // Compare-and-set: solo rota si nadie cambió la credencial desde nuestra lectura.
+    const claimed = await prisma.user.updateMany({
+      where: { id, passwordHash: previousPasswordHash, deletedAt: null },
+      data: { passwordHash },
+    });
+    if (claimed.count !== 1) {
+      return NextResponse.json(
+        {
+          error: "La credencial del usuario cambió mientras se preparaba la invitación. Vuelva a intentarlo.",
+          code: "INVITATION_CREDENTIAL_CHANGED",
+        },
+        { status: 409 },
+      );
+    }
 
     try {
       await sendNewUserInvitationEmail({
@@ -78,11 +91,21 @@ export async function POST(
     } catch (sendErr) {
       const sendMsg = sendErr instanceof Error ? sendErr.message : "Unknown email error";
       console.error("[resend-invitation] error de envío", sendMsg);
+
+      // Rollback condicionado: nunca restaurar un hash viejo sobre una credencial más nueva.
       try {
-        await prisma.user.update({ where: { id }, data: { passwordHash: previousPasswordHash } });
+        const rolledBack = await prisma.user.updateMany({
+          where: { id, passwordHash },
+          data: { passwordHash: previousPasswordHash },
+        });
+        if (rolledBack.count !== 1) {
+          console.error(
+            "[resend-invitation] rollback omitido: la credencial volvió a cambiar tras iniciar el envío",
+          );
+        }
       } catch (rollbackErr) {
         console.error(
-          "[resend-invitation] CRITICAL: no se pudo restaurar el passwordHash anterior",
+          "[resend-invitation] CRITICAL: no se pudo intentar restaurar el passwordHash anterior",
           rollbackErr instanceof Error ? rollbackErr.message : "Unknown rollback error",
         );
       }
