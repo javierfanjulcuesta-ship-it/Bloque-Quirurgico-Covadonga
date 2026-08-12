@@ -9,6 +9,7 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { verifyPassword, hashPassword } from "@/lib/auth/password";
 import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
+import { changePasswordWithAudit } from "@/lib/users/userPasswordChangeService";
 
 export async function POST(request: Request) {
   try {
@@ -20,10 +21,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json();
-    const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
-    const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
-    const confirmPassword = typeof body.confirmPassword === "string" ? body.confirmPassword : "";
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+    }
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Datos inválidos." }, { status: 400 });
+    }
+    const input = body as Record<string, unknown>;
+    const currentPassword = typeof input.currentPassword === "string" ? input.currentPassword : "";
+    const newPassword = typeof input.newPassword === "string" ? input.newPassword : "";
+    const confirmPassword = typeof input.confirmPassword === "string" ? input.confirmPassword : "";
 
     if (!currentPassword) {
       return NextResponse.json(
@@ -56,7 +66,7 @@ export async function POST(request: Request) {
 
     const dbUser = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { id: true, passwordHash: true, deletedAt: true },
+      select: { id: true, passwordHash: true, approved: true, deletedAt: true },
     });
 
     if (!dbUser) {
@@ -66,7 +76,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (dbUser.deletedAt != null) {
+    if (!dbUser.approved || dbUser.deletedAt != null) {
       return NextResponse.json(
         { error: "Su cuenta ya no está disponible." },
         { status: 403 }
@@ -82,15 +92,24 @@ export async function POST(request: Request) {
     }
 
     const newPasswordHash = await hashPassword(newPassword);
-
-    await prisma.user.update({
-      where: { id: dbUser.id },
-      data: { passwordHash: newPasswordHash },
+    const changed = await changePasswordWithAudit(prisma, {
+      userId: dbUser.id,
+      expectedPasswordHash: dbUser.passwordHash,
+      nextPasswordHash: newPasswordHash,
     });
+
+    if (!changed.ok) {
+      return NextResponse.json(
+        {
+          error: "La credencial cambió mientras se procesaba la solicitud. Vuelva a iniciar sesión e inténtelo de nuevo.",
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[auth/change-password]", err);
+    console.error("[auth/change-password]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json(
       { error: "Error interno al cambiar la contraseña." },
       { status: 500 }
