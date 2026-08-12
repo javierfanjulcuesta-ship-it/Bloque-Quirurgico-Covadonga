@@ -16,9 +16,11 @@ import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
 import type { UserRole } from "@/lib/types";
 import { createUserWithAudit } from "@/lib/users/userCreationService";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
 const SESPA_ROLES = new Set<UserRole>(["anestesista", "gestor-anestesista"]);
+const REGISTER_REQUEST_MAX_BYTES = 8_192;
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
@@ -33,13 +35,18 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
+    const rawBody = await readTextBodyWithLimit(request, REGISTER_REQUEST_MAX_BYTES);
+    if (!rawBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(rawBody.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
     }
     const input = body as Record<string, unknown>;
@@ -97,8 +104,8 @@ export async function POST(request: Request) {
         canSespa: dbUser.canSespa,
       },
     });
-  } catch (err) {
-    console.error("[auth/register]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[auth/register] request failed");
     return NextResponse.json(
       { error: "Error interno" },
       { status: 500 }

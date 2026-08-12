@@ -43,8 +43,8 @@ export async function GET() {
     };
 
     return NextResponse.json({ user });
-  } catch (err) {
-    console.error("[auth/session]", err);
+  } catch {
+    console.error("[auth/session] request failed");
     return NextResponse.json(
       { error: "Error interno" },
       { status: 500 }
