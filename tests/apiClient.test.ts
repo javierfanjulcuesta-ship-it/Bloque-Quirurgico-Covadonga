@@ -53,7 +53,7 @@ test("apiFetch accepts empty 204 responses without trying to parse JSON", async 
 });
 
 test("apiFetch times out stalled requests with a dedicated error", async () => {
-  globalThis.fetch = ((_, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => {
       reject(new DOMException("aborted", "AbortError"));
     }, { once: true });
@@ -70,7 +70,7 @@ test("apiFetch times out stalled requests with a dedicated error", async () => {
 });
 
 test("apiFetch propagates caller aborts instead of reporting them as timeouts", async () => {
-  globalThis.fetch = ((_, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => {
       reject(new DOMException("aborted", "AbortError"));
     }, { once: true });
