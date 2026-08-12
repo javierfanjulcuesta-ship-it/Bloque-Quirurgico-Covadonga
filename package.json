@@ -16,6 +16,7 @@
     "test:user-lifecycle-integration": "node --import tsx --test tests/userLifecycle.integration.test.ts",
     "test:email-idempotency-integration": "node --import tsx --test tests/emailIdempotency.integration.test.ts",
     "test:user-creation-integration": "node --import tsx --test tests/userCreationConcurrency.integration.test.ts",
+    "test:invitation-credential-integration": "node --import tsx --test tests/invitationCredentialRotation.integration.test.ts",
     "db:generate": "prisma generate",
     "db:push": "npx tsx scripts/db/guarded-db-push.ts",
     "db:migrate:status": "prisma migrate status",
@@ -46,7 +47,7 @@
     "nodemailer": "^8.0.3",
     "pdfjs-dist": "^5.6.205",
     "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react-dom": "^19.2.3",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
