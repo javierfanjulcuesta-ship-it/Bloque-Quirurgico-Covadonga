@@ -89,125 +89,164 @@ export function isUsingRealEmail(): boolean {
 export interface SendEmailOptions {
   to: string;
   subject: string;
-  bodyPlain: string;
-  bodyHtml?: string;
+  textBody: string;
+  htmlBody?: string;
 }
 
-export async function sendEmail(options: SendEmailOptions): Promise<void> {
+/** Envía correo desde el buzón configurado. Usa proveedor real o mock según entorno. */
+export async function sendEmail(params: SendEmailOptions): Promise<void> {
   const adapter = await getAdapter();
-  await adapter.send(options);
+  await adapter.send({
+    to: params.to,
+    subject: params.subject,
+    bodyPlain: params.textBody,
+    bodyHtml: params.htmlBody ?? params.textBody.replace(/\n/g, "<br>"),
+  });
 }
 
-export async function sendNewUserInvitationEmail(params: {
-  to: string;
-  name: string;
+export interface NewUserInvitationParams {
+  toEmail: string;
   role: UserRole;
-  temporaryPassword: string;
-  invitedByName: string;
-  expiresAt?: Date;
-}): Promise<void> {
-  const email = buildInvitationEmail({
-    name: params.name,
-    email: params.to,
-    temporaryPassword: params.temporaryPassword,
+  recipientName?: string;
+  accessLink: string;
+  initialPassword: string;
+  /** Quién invita (ej. nombre del gestor que crea el usuario) */
+  invitedByName?: string;
+  /** Normas de programación (desde BD; opcional) */
+  normasTexto?: string;
+}
+
+/** Envía invitación de nuevo usuario desde el buzón configurado. */
+export async function sendNewUserInvitationEmail(params: NewUserInvitationParams): Promise<void> {
+  const adapter = await getAdapter();
+  const { subject, text, html } = buildInvitationEmail({
+    name: params.recipientName ?? "",
+    email: params.toEmail,
     role: params.role,
     invitedByName: params.invitedByName,
-    expiresAt: params.expiresAt,
+    appUrl: params.accessLink,
+    temporaryPassword: params.initialPassword,
+    normasTexto: params.normasTexto,
   });
-
-  await sendEmail({
-    to: params.to,
-    subject: email.subject,
-    bodyPlain: email.bodyPlain,
-    bodyHtml: email.bodyHtml,
-  });
-}
-
-export async function sendReplyToReservationEmail(
-  to: string,
-  subject: string,
-  body: string
-): Promise<void> {
-  await sendEmail({ to, subject, bodyPlain: body });
-}
-
-export async function sendGeneralReplyEmail(
-  to: string,
-  subject: string,
-  body: string
-): Promise<void> {
-  await sendEmail({ to, subject, bodyPlain: body });
-}
-
-export async function sendRecordatorioMiercolesEmail(params: {
-  to: string;
-  userName: string;
-  weekStartLabel: string;
-}): Promise<void> {
-  await sendEmail({
-    to: params.to,
-    subject: getRecordatorioMiercolesSubject(params.weekStartLabel),
-    bodyPlain: getRecordatorioMiercolesBody(params.userName, params.weekStartLabel),
+  await adapter.send({
+    to: params.toEmail,
+    subject,
+    bodyPlain: text,
+    bodyHtml: html ?? text.replace(/\n/g, "<br>"),
   });
 }
 
-export async function sendPacienteNoAptoEmail(params: {
-  to: string;
-  userName: string;
-  patientName: string;
-  surgeryDateLabel: string;
-}): Promise<void> {
-  await sendEmail({
-    to: params.to,
-    subject: getPacienteNoAptoSubject(params.patientName),
-    bodyPlain: getPacienteNoAptoBody(
-      params.userName,
-      params.patientName,
-      params.surgeryDateLabel
-    ),
+export interface ReplyToReservationParams {
+  toEmail: string;
+  subject: string;
+  body: string;
+  replyToMessageId?: string;
+}
+
+/** Responde a correo de reserva (aceptada, error formato, hueco ocupado, no autorizado) */
+export async function sendReplyToReservationEmail(params: ReplyToReservationParams): Promise<void> {
+  const adapter = await getAdapter();
+  await adapter.send({
+    to: params.toEmail,
+    subject: params.subject,
+    bodyPlain: params.body,
+    bodyHtml: params.body.replace(/\n/g, "<br>"),
+    replyToMessageId: params.replyToMessageId,
   });
 }
 
+export interface GeneralReplyParams {
+  toEmail: string;
+  subject: string;
+  body: string;
+  replyToMessageId?: string;
+}
+
+/** Responde a mensaje general de coordinación */
+export async function sendGeneralReplyEmail(params: GeneralReplyParams): Promise<void> {
+  const adapter = await getAdapter();
+  await adapter.send({
+    to: params.toEmail,
+    subject: params.subject,
+    bodyPlain: params.body,
+    bodyHtml: params.body.replace(/\n/g, "<br>"),
+    replyToMessageId: params.replyToMessageId,
+  });
+}
+
+/** Recordatorio miércoles: huecos sin pacientes */
+export async function sendRecordatorioMiercolesEmail(toEmail: string, apellido: string): Promise<void> {
+  const adapter = await getAdapter();
+  await adapter.send({
+    to: toEmail,
+    subject: getRecordatorioMiercolesSubject(),
+    bodyPlain: getRecordatorioMiercolesBody(apellido),
+  });
+}
+
+/** Paciente no apto en consulta de preanestesia */
+export async function sendPacienteNoAptoEmail(toEmail: string, apellido: string): Promise<void> {
+  const adapter = await getAdapter();
+  await adapter.send({
+    to: toEmail,
+    subject: getPacienteNoAptoSubject(),
+    bodyPlain: getPacienteNoAptoBody(apellido),
+  });
+}
+
+/** Notifica a cirujanos sobre huecos liberados a la bolsa común. Un correo por destinatario, mismo contenido. */
 export async function sendReleaseNotificationToSurgeons(
   slots: ReleasedSlotInfo[],
-  surgeonEmails: string[]
+  recipientEmails: string[]
 ): Promise<{ sent: number; failed: number; errors: string[] }> {
-  const email = buildReleaseNotificationEmail(slots);
+  if (slots.length === 0 || recipientEmails.length === 0) {
+    return { sent: 0, failed: 0, errors: [] };
+  }
+  const { subject, text } = buildReleaseNotificationEmail(slots);
+  const adapter = await getAdapter();
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
-
-  for (const to of surgeonEmails) {
+  for (const email of recipientEmails) {
     try {
-      await sendEmail({
-        to,
-        subject: email.subject,
-        bodyPlain: email.bodyPlain,
-        bodyHtml: email.bodyHtml,
+      await adapter.send({
+        to: email,
+        subject,
+        bodyPlain: text,
+        bodyHtml: text.replace(/\n/g, "<br>"),
       });
-      sent += 1;
+      sent++;
     } catch (err) {
-      failed += 1;
-      errors.push(err instanceof Error ? err.message : "Error desconocido");
+      failed++;
+      errors.push(`${email}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-
   return { sent, failed, errors };
 }
 
-// --- Bandeja / clasificación ---
+// --- Lectura y clasificación ---
 
+/** Obtiene mensajes de la bandeja de entrada del buzón gestor */
 export async function fetchInboxMessages(limit = 50): Promise<InboxMessage[]> {
   const adapter = await getAdapter();
   return adapter.fetchInbox(limit);
 }
 
+/** Clasifica un correo entrante */
 export function classifyIncomingEmailMessage(message: InboxMessage): EmailClassification {
   return classifyIncomingEmail(message);
 }
 
+/** Parsea un correo clasificado como reserva */
 export function parseReservationEmailFromMessage(message: InboxMessage): ParsedReservationEmail | null {
-  return parseReservationEmail(message);
+  const result = parseReservationEmail({
+    subject: message.subject,
+    bodyPlain: message.bodyPlain,
+  });
+  return result.ok ? result.data : null;
 }
 
+// --- Utilidades ---
+
 export { GESTOR_EMAIL };
+export type { InboxMessage, EmailClassification, ParsedReservationEmail };
