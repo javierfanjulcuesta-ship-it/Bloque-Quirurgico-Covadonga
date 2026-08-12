@@ -2,6 +2,7 @@
  * Registra eventos del ciclo de vida de reservas para analítica.
  */
 
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 
 export type ReservationEventType =
@@ -35,19 +36,33 @@ export interface LogReservationEventParams {
   detailsJson?: Record<string, unknown> | null;
 }
 
-/** Registra un evento de reserva. No lanza errores para no romper el flujo principal. */
+type ReservationEventDb = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Escritura estricta de auditoría. A diferencia de logReservationEvent, propaga
+ * cualquier error para que el llamador pueda incluir el evento en su transacción
+ * y hacer rollback de la mutación principal si la trazabilidad no persiste.
+ */
+export async function writeReservationEvent(
+  db: ReservationEventDb,
+  params: LogReservationEventParams,
+): Promise<void> {
+  await db.reservationEvent.create({
+    data: {
+      reservationId: params.reservationId ?? null,
+      eventType: params.eventType,
+      actorUserId: params.actorUserId ?? null,
+      origin: params.origin ?? null,
+      detailsJson: params.detailsJson ? JSON.stringify(params.detailsJson) : null,
+    },
+  });
+}
+
+/** Registra un evento best-effort para flujos no críticos/analíticos. */
 export async function logReservationEvent(params: LogReservationEventParams): Promise<void> {
   try {
-    await prisma.reservationEvent.create({
-      data: {
-        reservationId: params.reservationId ?? null,
-        eventType: params.eventType,
-        actorUserId: params.actorUserId ?? null,
-        origin: params.origin ?? null,
-        detailsJson: params.detailsJson ? JSON.stringify(params.detailsJson) : null,
-      },
-    });
+    await writeReservationEvent(prisma, params);
   } catch (err) {
-    console.error("[logReservationEvent]", err);
+    console.error("[logReservationEvent]", err instanceof Error ? err.message : "Unknown error");
   }
 }
