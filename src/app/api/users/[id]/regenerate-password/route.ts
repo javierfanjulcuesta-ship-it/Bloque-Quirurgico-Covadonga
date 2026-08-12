@@ -6,6 +6,7 @@ import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
+import { rotateAdministrativeCredential } from "@/lib/users/administrativeCredentialRotation";
 
 export async function POST(
   _req: Request,
@@ -24,7 +25,7 @@ export async function POST(
 
     const user = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, deletedAt: true },
+      select: { id: true, passwordHash: true, deletedAt: true },
     });
     if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     if (user.deletedAt != null) {
@@ -33,22 +34,25 @@ export async function POST(
 
     const tempPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(tempPassword);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id }, data: { passwordHash } });
-      await tx.userAuditEvent.create({
-        data: {
-          userId: id,
-          eventType: "USER_PASSWORD_REGENERATED",
-          actorUserId: session!.userId,
-          detailsJson: JSON.stringify({ temporaryCredentialIssued: true }),
-        },
-      });
+    const rotated = await rotateAdministrativeCredential(prisma, {
+      userId: id,
+      expectedPasswordHash: user.passwordHash,
+      nextPasswordHash: passwordHash,
+      actorUserId: session!.userId,
     });
+
+    if (!rotated.ok) {
+      return NextResponse.json(
+        {
+          error: "La contraseña cambió durante la solicitud. Vuelva a intentarlo para generar una nueva credencial.",
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({ ok: true, tempPassword });
   } catch (err) {
-    console.error("[regenerate-password]", err);
+    console.error("[regenerate-password]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error al regenerar contraseña" }, { status: 500 });
   }
 }
