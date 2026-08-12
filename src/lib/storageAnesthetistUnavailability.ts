@@ -68,24 +68,33 @@ function rowsFromApi(payload: unknown): AnesthetistUnavailability[] {
   return rows;
 }
 
-/** Refresca la caché de lectura síncrona desde la fuente canónica real. */
+/**
+ * Refresca la caché de lectura síncrona desde la fuente canónica real.
+ * Incluso con force=true se deduplican refrescos simultáneos: dos respuestas
+ * concurrentes no pueden llegar fuera de orden y restaurar una fotografía vieja.
+ */
 export async function hydrateRealUnavailability(force = false): Promise<void> {
   if (modoDemo || typeof window === "undefined") return;
+  if (realCachePromise) return realCachePromise;
   if (realCacheLoaded && !force) return;
-  if (realCachePromise && !force) return realCachePromise;
 
-  realCachePromise = (async () => {
+  const refreshPromise = (async () => {
     const response = await fetch("/api/anesthetist-unavailability", { credentials: "same-origin" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error((payload as { error?: string }).error ?? "No se pudo cargar la no disponibilidad");
     realCache = rowsFromApi(payload);
     realCacheLoaded = true;
     emitRealChange();
-  })().finally(() => {
-    realCachePromise = null;
-  });
+  })();
 
-  return realCachePromise;
+  realCachePromise = refreshPromise;
+  try {
+    await refreshPromise;
+  } finally {
+    // Evita que el finally de una promesa antigua borre la referencia de otra
+    // eventual carga futura si este código cambia para permitir solapamiento.
+    if (realCachePromise === refreshPromise) realCachePromise = null;
+  }
 }
 
 function getStore(): AnesthetistUnavailability[] {
