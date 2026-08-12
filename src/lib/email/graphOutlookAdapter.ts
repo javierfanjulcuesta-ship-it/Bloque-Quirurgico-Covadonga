@@ -1,6 +1,6 @@
 /**
  * Adaptador real de Microsoft Graph para envío de correos.
- * Envía en nombre de jfanjul@riberacare.com (o GESTOR_EMAIL).
+ * Envía en nombre del buzón configurado en GESTOR_EMAIL.
  *
  * Requiere: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, GESTOR_EMAIL
  */
@@ -90,13 +90,12 @@ export async function createGraphOutlookAdapter(): Promise<OutlookAdapter> {
           .post(message);
 
         if (process.env.NODE_ENV !== "test") {
-          console.log("[Email] Enviado vía Graph:", { to: params.to, subject: params.subject.slice(0, 50) });
+          console.log("[Email] Envío Graph completado");
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
         const status = (err as { statusCode?: number }).statusCode;
-        console.error("[Graph] Error al enviar email:", { to: params.to, error: msg, status });
-        throw new Error(`Error al enviar correo: ${msg}`);
+        console.error("[Graph] Fallo de envío", status ? { status } : undefined);
+        throw new Error("Error al enviar correo");
       }
     },
 
