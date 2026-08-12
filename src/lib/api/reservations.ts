@@ -1,10 +1,11 @@
 /**
- * API de reservas. Llamadas directas al backend.
+ * API de reservas. Todas las llamadas pasan por el cliente compartido resiliente.
  */
 
 import type { Reservation, PatientInBlock } from "@/lib/types";
 import type { ResourceId, Shift } from "@/lib/types";
 import { deriveReservationBlockState } from "@/lib/reservationState";
+import { ApiError, apiFetch } from "@/lib/api/client";
 
 export interface ApiReservation {
   id: string;
@@ -174,25 +175,42 @@ export class ReservationsApiError extends Error {
   }
 }
 
+function responseObject(error: ApiError): { error?: string; message?: string; code?: string } {
+  if (!error.responseBody || typeof error.responseBody !== "object") return {};
+  return error.responseBody as { error?: string; message?: string; code?: string };
+}
+
+function asReservationError(
+  error: unknown,
+  messages: Partial<Record<number, string>>,
+  fallback: string,
+): never {
+  if (!(error instanceof ApiError)) throw error;
+  const body = responseObject(error);
+  const message = messages[error.status] ?? body.message ?? body.error ?? error.message ?? fallback;
+  throw new ReservationsApiError(message || fallback, error.status, body.code);
+}
+
 export async function fetchReservations(filters?: FetchReservationsFilters): Promise<Reservation[]> {
   const params = new URLSearchParams();
   if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom);
   if (filters?.dateTo) params.set("dateTo", filters.dateTo);
   if (filters?.resourceId) params.set("resourceId", filters.resourceId);
   const qs = params.toString();
-  const url = `/api/reservations${qs ? `?${qs}` : ""}`;
 
-  const res = await fetch(url, { credentials: "same-origin" });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError("No tiene permiso para ver reservas.", 403);
-    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al cargar reservas", res.status);
+  try {
+    const data = await apiFetch<{ reservations?: ApiReservation[] }>(`/reservations${qs ? `?${qs}` : ""}`);
+    return (data.reservations ?? []).map(mapReservationFromApi);
+  } catch (error) {
+    asReservationError(
+      error,
+      {
+        401: "Sesión expirada. Inicie sesión de nuevo.",
+        403: "No tiene permiso para ver reservas.",
+      },
+      "Error al cargar reservas",
+    );
   }
-
-  const list = (data as { reservations: ApiReservation[] }).reservations ?? [];
-  return list.map(mapReservationFromApi);
 }
 
 export async function createReservation(payload: CreateReservationPayload): Promise<Reservation> {
@@ -208,46 +226,50 @@ export async function createReservation(payload: CreateReservationPayload): Prom
   };
   if (payload.surgeonId) body.surgeonId = payload.surgeonId;
 
-  const res = await fetch("/api/reservations", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError("No tiene permiso para crear esta reserva.", 403);
-    if (res.status === 409) {
-      const d = data as { error?: string; message?: string; code?: string };
-      throw new ReservationsApiError(d.message ?? d.error ?? "Hueco ocupado.", 409, d.code);
+  try {
+    const data = await apiFetch<{ reservation: ApiReservation }>("/reservations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return mapReservationFromApi(data.reservation);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      const response = responseObject(error);
+      throw new ReservationsApiError(
+        response.message ?? response.error ?? "Hueco ocupado.",
+        409,
+        response.code,
+      );
     }
-    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al crear la reserva", res.status);
+    asReservationError(
+      error,
+      {
+        401: "Sesión expirada. Inicie sesión de nuevo.",
+        403: "No tiene permiso para crear esta reserva.",
+      },
+      "Error al crear la reserva",
+    );
   }
-
-  const reservation = (data as { reservation: ApiReservation }).reservation;
-  return mapReservationFromApi(reservation);
 }
 
 async function patchReservation(id: string, path: string, body: unknown): Promise<Reservation> {
-  const res = await fetch(`/api/reservations/${id}${path}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
-    if (res.status === 404) throw new ReservationsApiError((data as { error?: string }).error ?? "No encontrado.", 404);
-    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al actualizar", res.status);
+  try {
+    const data = await apiFetch<{ reservation: ApiReservation }>(`/reservations/${id}${path}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    return mapReservationFromApi(data.reservation);
+  } catch (error) {
+    asReservationError(
+      error,
+      {
+        401: "Sesión expirada. Inicie sesión de nuevo.",
+        403: error instanceof ApiError ? error.message : "Sin permiso.",
+        404: error instanceof ApiError ? error.message : "No encontrado.",
+      },
+      "Error al actualizar",
+    );
   }
-
-  const reservation = (data as { reservation: ApiReservation }).reservation;
-  return mapReservationFromApi(reservation);
 }
 
 /** Añadir pacientes a reserva existente (hueco reservado). */
@@ -283,31 +305,32 @@ export async function cancelReservationPatient(
   patientId: string,
   reason?: string
 ): Promise<CancelPatientResult> {
-  const res = await fetch(`/api/reservations/${reservationId}/patient/cancel`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify({ patientId, reason }),
-  });
-  const data = await res.json().catch(() => ({}));
+  try {
+    const data = await apiFetch<{
+      reservation: ApiReservation;
+      slotOutcome?: "retained" | "released" | null;
+      message?: string;
+    }>(`/reservations/${reservationId}/patient/cancel`, {
+      method: "PATCH",
+      body: JSON.stringify({ patientId, reason }),
+    });
 
-  if (!res.ok) {
-    if (res.status === 401) throw new ReservationsApiError("Sesión expirada. Inicie sesión de nuevo.", 401);
-    if (res.status === 403) throw new ReservationsApiError((data as { error?: string }).error ?? "Sin permiso.", 403);
-    if (res.status === 404) throw new ReservationsApiError((data as { error?: string }).error ?? "No encontrado.", 404);
-    throw new ReservationsApiError((data as { error?: string }).error ?? "Error al cancelar", res.status);
+    return {
+      reservation: mapReservationFromApi(data.reservation),
+      slotOutcome: data.slotOutcome ?? null,
+      message: typeof data.message === "string" ? data.message : undefined,
+    };
+  } catch (error) {
+    asReservationError(
+      error,
+      {
+        401: "Sesión expirada. Inicie sesión de nuevo.",
+        403: error instanceof ApiError ? error.message : "Sin permiso.",
+        404: error instanceof ApiError ? error.message : "No encontrado.",
+      },
+      "Error al cancelar",
+    );
   }
-
-  const typed = data as {
-    reservation: ApiReservation;
-    slotOutcome?: "retained" | "released" | null;
-    message?: string;
-  };
-  return {
-    reservation: mapReservationFromApi(typed.reservation),
-    slotOutcome: typed.slotOutcome ?? null,
-    message: typeof typed.message === "string" ? typed.message : undefined,
-  };
 }
 
 /** Cancelar reserva completa. */
