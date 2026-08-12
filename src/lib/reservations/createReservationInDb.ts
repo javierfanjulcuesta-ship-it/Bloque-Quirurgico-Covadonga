@@ -7,13 +7,15 @@
  */
 
 import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/db/prisma";
 import { canReserveSlot } from "@/lib/blockOpeningPlan";
 import { createReservationSchema } from "@/lib/validations/reservation";
 import type { CreateReservationInput } from "@/lib/validations/reservation";
-import { logReservationEvent, type ReservationEventType } from "./logReservationEvent";
-import { defaultPatientCircuitColumns } from "./surgicalPatientCircuit";
-import { applyAndLogPatientCircuitPhase2, type Phase2PatientInput } from "./patientCircuitPhase2";
+import { writeReservationEvent } from "./logReservationEvent";
+import { defaultPatientCircuitColumns, getAdminNotificationEmail } from "./surgicalPatientCircuit";
+import {
+  applyAndLogPatientCircuitPhase2InTransaction,
+  type Phase2PatientInput,
+} from "./patientCircuitPhase2";
 import {
   findOverflowConflictAgainstOccupiedSlots,
   findOverflowInvaderForTargetSlot,
@@ -85,49 +87,12 @@ function alignPatientsForPhase2(
   });
 }
 
-async function runPhase2AfterPatientCreates(params: {
-  reservationId: string;
-  surgeryYmd: string;
-  actorUserId: string;
-  origin: "app" | "email" | "gestor";
-  createdRows: Array<{ id: string; orderIndex: number }>;
-  inputPatients: NonNullable<CreateReservationInput["patients"]>;
-}) {
-  if (params.inputPatients.length === 0) return;
-  await applyAndLogPatientCircuitPhase2(prisma, {
-    reservationId: params.reservationId,
-    surgeryYmd: params.surgeryYmd,
-    actorUserId: params.actorUserId,
-    origin: params.origin,
-    patients: alignPatientsForPhase2(params.createdRows, params.inputPatients),
-  });
-}
-
-type LockedSuccess = {
-  result: { ok: true; reservationId: string };
-  phase2Rows?: Array<{ id: string; orderIndex: number }>;
-  event?: {
-    eventType: ReservationEventType;
-    detailsJson: Record<string, unknown>;
-  };
-};
-
-type LockedFailure = {
-  result: Exclude<CreateReservationResult, { ok: true }>;
-  phase2Rows?: never;
-  event?: never;
-};
-
-type LockedOutcome = LockedSuccess | LockedFailure;
-
-function overflowFailure(message: string): LockedOutcome {
+function overflowFailure(message: string): CreateReservationResult {
   return {
-    result: {
-      ok: false,
-      error: "overflow_conflict",
-      code: "overflow_conflict",
-      message,
-    },
+    ok: false,
+    error: "overflow_conflict",
+    code: "overflow_conflict",
+    message,
   };
 }
 
@@ -156,21 +121,22 @@ export async function createReservationInDb(
   const actorUserId = options?.actorUserId ?? surgeonId;
   const hasPatients = patients.length > 0;
 
-  let locked: LockedOutcome;
+  // Se resuelve antes de abrir la transacción para no hacer una consulta global
+  // desde dentro de una transacción que ya retiene locks de programación.
+  const adminEmail = hasPatients ? await getAdminNotificationEmail() : null;
+
   try {
-    locked = await withSchedulingContextLock({ date, resourceId, shift }, async (tx) => {
+    return await withSchedulingContextLock({ date, resourceId, shift }, async (tx) => {
       // El plan de apertura se lee DESPUÉS del lock. Su PUT usa el mismo lock,
       // por lo que cerrar el bloque y crear una reserva no pueden cruzarse por TOCTOU.
       const opening = await canReserveSlot(date, resourceId, shift, origin === "GESTOR", tx);
       if (!opening.ok) {
         return {
-          result: {
-            ok: false,
-            error: opening.reason,
-            code: opening.reason,
-            message: opening.message,
-          },
-        };
+          ok: false,
+          error: opening.reason,
+          code: opening.reason,
+          message: opening.message,
+        } as CreateReservationResult;
       }
 
       // Todas las lecturas que deciden ocupación ocurren DESPUÉS del lock.
@@ -195,7 +161,7 @@ export async function createReservationInDb(
         // Completar un hold vacío del mismo titular. POST sin pacientes es idempotente.
         if (patientCount === 0 && existing.surgeonId === surgeonId) {
           if (!hasPatients) {
-            return { result: { ok: true, reservationId: existing.id } };
+            return { ok: true, reservationId: existing.id } as const;
           }
 
           const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(patients));
@@ -210,49 +176,59 @@ export async function createReservationInDb(
             return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
           }
 
-          const phase2Rows: Array<{ id: string; orderIndex: number }> = [];
+          const createdRows: Array<{ id: string; orderIndex: number }> = [];
           for (let i = 0; i < patients.length; i++) {
             const p = patients[i]!;
             const row = await tx.patientInBlock.create({
               data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) },
             });
-            phase2Rows.push({ id: row.id, orderIndex: row.orderIndex });
+            createdRows.push({ id: row.id, orderIndex: row.orderIndex });
           }
           await tx.reservation.update({
             where: { id: existing.id },
             data: { status: "CONFIRMED", updatedByUserId: actorUserId },
           });
 
-          return {
-            result: { ok: true, reservationId: existing.id },
-            phase2Rows,
-            event: {
-              eventType: "RESERVATION_UPDATED",
-              detailsJson: {
-                action: "add_patients_to_empty_hold",
-                date,
-                resourceId,
-                shift,
-                slotIndex,
-                patientCount: patients.length,
-              },
+          await applyAndLogPatientCircuitPhase2InTransaction(
+            tx,
+            {
+              reservationId: existing.id,
+              surgeryYmd: date,
+              actorUserId,
+              origin: originLower,
+              patients: alignPatientsForPhase2(createdRows, patients),
             },
-          };
+            adminEmail,
+          );
+          await writeReservationEvent(tx, {
+            eventType: "RESERVATION_UPDATED",
+            reservationId: existing.id,
+            actorUserId,
+            origin: originLower,
+            detailsJson: {
+              action: "add_patients_to_empty_hold",
+              date,
+              resourceId,
+              shift,
+              slotIndex,
+              patientCount: patients.length,
+            },
+          });
+
+          return { ok: true, reservationId: existing.id } as const;
         }
 
         return {
-          result: {
-            ok: false,
-            error: "slot_occupied",
-            code: "slot_occupied",
-            message: "Hueco ocupado",
-          },
-        };
+          ok: false,
+          error: "slot_occupied",
+          code: "slot_occupied",
+          message: "Hueco ocupado",
+        } as const;
       }
 
       if (existing && (existing.status === "CANCELLED" || existing.status === "RELEASED")) {
         const reusedFrom = existing.status;
-        const phase2Rows: Array<{ id: string; orderIndex: number }> = [];
+        const createdRows: Array<{ id: string; orderIndex: number }> = [];
 
         // Mantiene el comportamiento legacy de reutilización, ahora serializado para evitar carreras.
         await tx.patientInBlock.deleteMany({ where: { reservationId: existing.id } });
@@ -275,17 +251,31 @@ export async function createReservationInDb(
           const row = await tx.patientInBlock.create({
             data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) },
           });
-          phase2Rows.push({ id: row.id, orderIndex: row.orderIndex });
+          createdRows.push({ id: row.id, orderIndex: row.orderIndex });
         }
 
-        return {
-          result: { ok: true, reservationId: existing.id },
-          phase2Rows,
-          event: {
-            eventType: origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED",
-            detailsJson: { date, resourceId, shift, slotIndex, reusedFrom },
-          },
-        };
+        if (createdRows.length > 0) {
+          await applyAndLogPatientCircuitPhase2InTransaction(
+            tx,
+            {
+              reservationId: existing.id,
+              surgeryYmd: date,
+              actorUserId,
+              origin: originLower,
+              patients: alignPatientsForPhase2(createdRows, patients),
+            },
+            adminEmail,
+          );
+        }
+        await writeReservationEvent(tx, {
+          eventType: origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED",
+          reservationId: existing.id,
+          actorUserId,
+          origin: originLower,
+          detailsJson: { date, resourceId, shift, slotIndex, reusedFrom },
+        });
+
+        return { ok: true, reservationId: existing.id } as const;
       }
 
       if (hasPatients) {
@@ -316,14 +306,31 @@ export async function createReservationInDb(
         include: { patients: true },
       });
 
-      return {
-        result: { ok: true, reservationId: reservation.id },
-        phase2Rows: reservation.patients.map((row) => ({ id: row.id, orderIndex: row.orderIndex })),
-        event: {
-          eventType: origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED",
-          detailsJson: { date, resourceId, shift, slotIndex },
-        },
-      };
+      if (reservation.patients.length > 0) {
+        await applyAndLogPatientCircuitPhase2InTransaction(
+          tx,
+          {
+            reservationId: reservation.id,
+            surgeryYmd: date,
+            actorUserId,
+            origin: originLower,
+            patients: alignPatientsForPhase2(
+              reservation.patients.map((row) => ({ id: row.id, orderIndex: row.orderIndex })),
+              patients,
+            ),
+          },
+          adminEmail,
+        );
+      }
+      await writeReservationEvent(tx, {
+        eventType: origin === "EMAIL" ? "RESERVATION_CREATED_FROM_EMAIL" : "RESERVATION_CREATED",
+        reservationId: reservation.id,
+        actorUserId,
+        origin: originLower,
+        detailsJson: { date, resourceId, shift, slotIndex },
+      });
+
+      return { ok: true, reservationId: reservation.id } as const;
     });
   } catch (e) {
     // Defensa adicional frente a escritores antiguos/no cooperativos que no usen el advisory lock.
@@ -337,29 +344,4 @@ export async function createReservationInDb(
     }
     throw e;
   }
-
-  if (!locked.result.ok) return locked.result;
-
-  if (locked.phase2Rows?.length) {
-    await runPhase2AfterPatientCreates({
-      reservationId: locked.result.reservationId,
-      surgeryYmd: date,
-      actorUserId,
-      origin: originLower,
-      createdRows: locked.phase2Rows,
-      inputPatients: patients,
-    });
-  }
-
-  if (locked.event) {
-    await logReservationEvent({
-      eventType: locked.event.eventType,
-      reservationId: locked.result.reservationId,
-      actorUserId,
-      origin: originLower,
-      detailsJson: locked.event.detailsJson,
-    });
-  }
-
-  return locked.result;
 }

@@ -7,11 +7,11 @@ import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canAccessBooking } from "@/lib/auth";
-import { prisma } from "@/lib/db/prisma";
 import { updateReservationSchema } from "@/lib/validations/reservation";
-import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
+import { writeReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { patientFieldsForCreate } from "@/lib/reservations/createReservationInDb";
-import { applyAndLogPatientCircuitPhase2 } from "@/lib/reservations/patientCircuitPhase2";
+import { applyAndLogPatientCircuitPhase2InTransaction } from "@/lib/reservations/patientCircuitPhase2";
+import { getAdminNotificationEmail } from "@/lib/reservations/surgicalPatientCircuit";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { getReservationDetailAccess } from "@/lib/reservations/reservationAccessPolicy";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
@@ -108,6 +108,11 @@ export async function PATCH(
       ? reservation.date.toISOString().slice(0, 10)
       : String(reservation.date).slice(0, 10);
     const shift = reservation.shift === "MORNING" ? "morning" : "afternoon";
+    const pSorted = [...patients].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
+
+    // Se resuelve antes de abrir la transacción para no usar una segunda conexión
+    // mientras el lock de programación está retenido.
+    const adminEmail = await getAdminNotificationEmail();
 
     const lockedResult = await withSchedulingContextLock(
       { date: dateStr, resourceId: reservation.resourceId, shift },
@@ -170,7 +175,37 @@ export async function PATCH(
           data: { status: "CONFIRMED", updatedByUserId: session!.userId },
         });
 
-        return { kind: "updated" as const, addedMeta };
+        const cSorted = [...addedMeta].sort((a, b) => a.orderIndex - b.orderIndex);
+        await applyAndLogPatientCircuitPhase2InTransaction(
+          tx,
+          {
+            reservationId: id,
+            surgeryYmd: dateStr,
+            actorUserId: session!.userId,
+            origin: "app",
+            patients: cSorted.map((row, i) => {
+              const src = pSorted[i]!;
+              return {
+                patientId: row.id,
+                isDeferredUrgency: !!src.isDeferredUrgency,
+                specialCircuitReason: src.isDeferredUrgency ? (src.specialCircuitReason?.trim() || null) : null,
+                patientEmail: src.patientEmail,
+                patientPhone: src.patientPhone,
+              };
+            }),
+          },
+          adminEmail,
+        );
+
+        await writeReservationEvent(tx, {
+          eventType: "RESERVATION_UPDATED",
+          reservationId: id,
+          actorUserId: session!.userId,
+          origin: "app",
+          detailsJson: { action: "add_patients", count: patients.length },
+        });
+
+        return { kind: "updated" as const };
       },
     );
 
@@ -193,40 +228,12 @@ export async function PATCH(
       return NextResponse.json({ error: message, code: "overflow_conflict" }, { status: 409 });
     }
 
-    const pSorted = [...patients].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
-    const cSorted = [...lockedResult.addedMeta].sort((a, b) => a.orderIndex - b.orderIndex);
-    await applyAndLogPatientCircuitPhase2(prisma, {
-      reservationId: id,
-      surgeryYmd: dateStr,
-      actorUserId: session!.userId,
-      origin: "app",
-      patients: cSorted.map((row, i) => {
-        const src = pSorted[i]!;
-        return {
-          patientId: row.id,
-          isDeferredUrgency: !!src.isDeferredUrgency,
-          specialCircuitReason: src.isDeferredUrgency ? (src.specialCircuitReason?.trim() || null) : null,
-          patientEmail: src.patientEmail,
-          patientPhone: src.patientPhone,
-        };
-      }),
-    });
-
-    await logReservationEvent({
-      eventType: "RESERVATION_UPDATED",
-      reservationId: id,
-      actorUserId: session!.userId,
-      origin: "app",
-      detailsJson: { action: "add_patients", count: patients.length },
-    });
-
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
     return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Error al actualizar";
     console.error("[reservations PATCH id]", err instanceof Error ? err.message : "Unknown error");
-    return NextResponse.json({ error: msg }, { status: 400 });
+    return NextResponse.json({ error: "Error interno al actualizar la reserva" }, { status: 500 });
   }
 }

@@ -7,9 +7,17 @@ const prisma = new PrismaClient();
 
 const SURGEON_A = "booking-integrity-surgeon-a";
 const SURGEON_B = "booking-integrity-surgeon-b";
-const TEST_DATES = ["2031-01-13", "2031-01-14", "2031-01-15"];
+const TEST_DATES = ["2031-01-13", "2031-01-14", "2031-01-15", "2031-01-16"];
+const AUDIT_TRIGGER = "qxflow_test_fail_reservation_event";
+const AUDIT_TRIGGER_FN = "qxflow_test_fail_reservation_event_fn";
+
+async function removeFailingAuditTrigger(): Promise<void> {
+  await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${AUDIT_TRIGGER} ON "ReservationEvent"`);
+  await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${AUDIT_TRIGGER_FN}()`);
+}
 
 async function cleanup(): Promise<void> {
+  await removeFailingAuditTrigger();
   const reservations = await prisma.reservation.findMany({
     where: {
       date: {
@@ -189,4 +197,67 @@ test("persisted CLOSED plan blocks normal booking but allows gestor override", a
     actorUserId: SURGEON_A,
   });
   assert.equal(override.ok, true);
+});
+
+test("audit persistence failure rolls back reservation, patient and phase2 state together", async () => {
+  const date = TEST_DATES[3];
+  await prisma.$executeRawUnsafe(`
+    CREATE OR REPLACE FUNCTION ${AUDIT_TRIGGER_FN}()
+    RETURNS trigger AS $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM "Reservation"
+        WHERE id = NEW."reservationId"
+          AND date = TIMESTAMP '${date} 00:00:00'
+      ) THEN
+        RAISE EXCEPTION 'forced reservation audit failure for atomicity test';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TRIGGER ${AUDIT_TRIGGER}
+    BEFORE INSERT ON "ReservationEvent"
+    FOR EACH ROW EXECUTE FUNCTION ${AUDIT_TRIGGER_FN}()
+  `);
+
+  try {
+    const input = {
+      date,
+      resourceId: "Q1" as const,
+      shift: "morning" as const,
+      slotIndex: 4,
+      patients: [
+        {
+          historyNumber: "TEST-ATOMIC-AUDIT",
+          procedure: "Procedimiento ficticio de atomicidad",
+          estimatedDurationMinutes: 30,
+          anesthesiaType: "General",
+          insuranceType: "Privado",
+          orderIndex: 0,
+          isDeferredUrgency: true,
+          specialCircuitReason: "Prueba de rollback transaccional",
+        },
+      ],
+    };
+
+    await assert.rejects(
+      createReservationInDb(input, SURGEON_A, { actorUserId: SURGEON_A }),
+      /forced reservation audit failure for atomicity test/,
+    );
+
+    const stored = await prisma.reservation.findMany({
+      where: {
+        date: new Date(`${date}T00:00:00.000Z`),
+        resourceId: "Q1",
+        shift: "MORNING",
+        slotIndex: 4,
+      },
+      include: { patients: true, events: true },
+    });
+    assert.equal(stored.length, 0);
+  } finally {
+    await removeFailingAuditTrigger();
+  }
 });
