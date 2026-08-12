@@ -19,6 +19,10 @@ import { getAppUrl } from "@/lib/appUrl";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { logUserAuditEvent } from "@/lib/userAudit";
+import {
+  claimInvitationCredential,
+  rollbackInvitationCredential,
+} from "@/lib/users/invitationCredentialRotation";
 
 export async function POST(
   _req: Request,
@@ -63,12 +67,8 @@ export async function POST(
     const role = roleToFrontend(user.role);
     const normasTexto = role === "cirujano" || role === "endoscopista" ? NORMAS_PROGRAMACION_BLOQUE : undefined;
 
-    // Compare-and-set: solo rota si nadie cambió la credencial desde nuestra lectura.
-    const claimed = await prisma.user.updateMany({
-      where: { id, passwordHash: previousPasswordHash, deletedAt: null },
-      data: { passwordHash },
-    });
-    if (claimed.count !== 1) {
+    const claimed = await claimInvitationCredential(prisma, id, previousPasswordHash, passwordHash);
+    if (!claimed) {
       return NextResponse.json(
         {
           error: "La credencial del usuario cambió mientras se preparaba la invitación. Vuelva a intentarlo.",
@@ -92,13 +92,14 @@ export async function POST(
       const sendMsg = sendErr instanceof Error ? sendErr.message : "Unknown email error";
       console.error("[resend-invitation] error de envío", sendMsg);
 
-      // Rollback condicionado: nunca restaurar un hash viejo sobre una credencial más nueva.
       try {
-        const rolledBack = await prisma.user.updateMany({
-          where: { id, passwordHash },
-          data: { passwordHash: previousPasswordHash },
-        });
-        if (rolledBack.count !== 1) {
+        const rolledBack = await rollbackInvitationCredential(
+          prisma,
+          id,
+          passwordHash,
+          previousPasswordHash,
+        );
+        if (!rolledBack) {
           console.error(
             "[resend-invitation] rollback omitido: la credencial volvió a cambiar tras iniciar el envío",
           );
