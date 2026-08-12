@@ -10,13 +10,14 @@ import { Client } from "@microsoft/microsoft-graph-client";
 import type { OutlookAdapter, SendEmailParams } from "./outlookAdapter";
 import type { InboxMessage } from "./types";
 
-const GESTOR_EMAIL = process.env.GESTOR_EMAIL ?? "jfanjul@riberacare.com";
+const GESTOR_EMAIL = process.env.GESTOR_EMAIL?.trim() ?? "";
 
 export function isGraphConfigured(): boolean {
   return !!(
     process.env.AZURE_CLIENT_ID &&
     process.env.AZURE_CLIENT_SECRET &&
-    process.env.AZURE_TENANT_ID
+    process.env.AZURE_TENANT_ID &&
+    GESTOR_EMAIL
   );
 }
 
@@ -25,9 +26,9 @@ export async function createGraphOutlookAdapter(): Promise<OutlookAdapter> {
   const clientSecret = process.env.AZURE_CLIENT_SECRET;
   const tenantId = process.env.AZURE_TENANT_ID;
 
-  if (!clientId || !clientSecret || !tenantId) {
+  if (!clientId || !clientSecret || !tenantId || !GESTOR_EMAIL) {
     throw new Error(
-      "Microsoft Graph no configurado: faltan AZURE_CLIENT_ID, AZURE_CLIENT_SECRET o AZURE_TENANT_ID"
+      "Microsoft Graph no configurado: faltan AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID o GESTOR_EMAIL"
     );
   }
 

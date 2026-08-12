@@ -1,8 +1,8 @@
 /**
  * Servicio de correo Outlook / Microsoft 365.
- * Buzón principal: jfanjul@riberacare.com
+ * El buzón remitente se configura por entorno; no se hardcodean direcciones reales.
  *
- * Usa Microsoft Graph real si hay credenciales; si no, adaptador mock.
+ * Usa Microsoft Graph real si hay credenciales; si no, adaptador mock fuera de producción.
  */
 
 import type { UserRole } from "@/lib/types";
@@ -93,7 +93,7 @@ export interface SendEmailOptions {
   htmlBody?: string;
 }
 
-/** Envía correo desde jfanjul@riberacare.com. Usa Graph real o mock según configuración. */
+/** Envía correo desde el buzón configurado. Usa proveedor real o mock según entorno. */
 export async function sendEmail(params: SendEmailOptions): Promise<void> {
   const adapter = await getAdapter();
   await adapter.send({
@@ -116,7 +116,7 @@ export interface NewUserInvitationParams {
   normasTexto?: string;
 }
 
-/** Envía invitación de nuevo usuario desde jfanjul@riberacare.com */
+/** Envía invitación de nuevo usuario desde el buzón configurado. */
 export async function sendNewUserInvitationEmail(params: NewUserInvitationParams): Promise<void> {
   const adapter = await getAdapter();
   const { subject, text, html } = buildInvitationEmail({
