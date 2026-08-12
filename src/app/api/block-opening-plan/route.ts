@@ -9,12 +9,14 @@ import { z } from "zod";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission, requireAnyPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { RESOURCES } from "@/lib/constants";
 import { toBlockOpeningPlanView } from "@/lib/blockOpeningPlan";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
 
 export const dynamic = "force-dynamic";
 
+const MAX_BLOCK_OPENING_BODY_BYTES = 16 * 1024;
 const RESOURCE_IDS = RESOURCES.map((r) => r.id) as [string, ...string[]];
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida (YYYY-MM-DD)");
 const putSchema = z.object({
@@ -83,8 +85,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       plans: plans.map((plan) => toBlockOpeningPlanView(plan as Parameters<typeof toBlockOpeningPlanView>[0])),
     });
-  } catch (err) {
-    console.error("[block-opening-plan GET]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[block-opening-plan GET] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
@@ -98,9 +100,14 @@ export async function PUT(request: Request) {
     const denyPerm = requirePermission(session!, "or:open_close");
     if (denyPerm) return denyPerm;
 
+    const limitedBody = await readTextBodyWithLimit(request, MAX_BLOCK_OPENING_BODY_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Cuerpo demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -173,7 +180,7 @@ export async function PUT(request: Request) {
     if (err instanceof StaleBlockOpeningPlanError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    console.error("[block-opening-plan PUT]", err instanceof Error ? err.message : "Unknown error");
+    console.error("[block-opening-plan PUT] failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
