@@ -115,7 +115,7 @@ export async function PUT(request: Request) {
 
     const data = parsed.data;
     const dateObj = new Date(`${data.date}T00:00:00.000Z`);
-    const shiftDb = data.shift === "morning" ? "MORNING" : "AFTERNOON";
+    const shiftDb: "MORNING" | "AFTERNOON" = data.shift === "morning" ? "MORNING" : "AFTERNOON";
 
     const plan = await withSchedulingContextLock(
       { date: data.date, resourceId: data.resourceId, shift: data.shift },
