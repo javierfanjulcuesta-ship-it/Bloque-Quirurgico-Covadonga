@@ -3,7 +3,10 @@ import { canAccessBooking } from "@/lib/auth/authorization";
 import { hasPermission } from "@/lib/auth/permissions";
 
 export interface ReservationAccessLike extends BookingLike {
+  /** Campo legacy; se mantiene durante la transición a AnesthetistAssignment. */
   anesthetistId?: string | null;
+  /** Fuente canónica: asignaciones OR que cubren fecha/recurso/turno de la reserva. */
+  assignedAnesthetistIds?: string[];
 }
 
 export type ReservationDetailAccess = "full" | "schedule-only" | "denied";
@@ -13,7 +16,7 @@ export type ReservationDetailAccess = "full" | "schedule-only" | "denied";
  *
  * - Gestión con booking:view:all: detalle completo.
  * - Cirujano/endoscopista propietario o creador autorizado: detalle completo.
- * - Anestesista asignado: solo datos de agenda, sin pacientes/PII.
+ * - Anestesista asignado mediante AnesthetistAssignment (o campo legacy): solo agenda.
  * - Cualquier otro caso: denegado.
  */
 export function getReservationDetailAccess(
@@ -26,10 +29,11 @@ export function getReservationDetailAccess(
 
   if (canAccessBooking(session, reservation, "booking:view:own")) return "full";
 
-  if (
-    hasPermission(session.role, "schedule:view:own") &&
-    reservation.anesthetistId === session.userId
-  ) {
+  const assigned =
+    reservation.anesthetistId === session.userId ||
+    reservation.assignedAnesthetistIds?.includes(session.userId) === true;
+
+  if (hasPermission(session.role, "schedule:view:own") && assigned) {
     return "schedule-only";
   }
 
