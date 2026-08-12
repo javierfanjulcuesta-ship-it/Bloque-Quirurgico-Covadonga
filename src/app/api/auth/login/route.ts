@@ -13,13 +13,30 @@ import { verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";
 import { checkLoginRateLimit, resetLoginRateLimitOnSuccess } from "@/lib/auth/rateLimit";
 import { roleToFrontend } from "@/lib/roleMapping";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import type { User } from "@/lib/types";
+
+const LOGIN_REQUEST_MAX_BYTES = 8_192;
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password : "";
+    const rawBody = await readTextBodyWithLimit(request, LOGIN_REQUEST_MAX_BYTES);
+    if (!rawBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody.text);
+    } catch {
+      return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+    }
+    const input = body as Record<string, unknown>;
+    const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+    const password = typeof input.password === "string" ? input.password : "";
 
     const rateLimit = checkLoginRateLimit(request, email);
     if (!rateLimit.ok) {
@@ -89,8 +106,8 @@ export async function POST(request: Request) {
     resetLoginRateLimitOnSuccess(request, email);
     const res = NextResponse.json({ user });
     return addSessionCookieToResponse(res, token);
-  } catch (err) {
-    console.error("Login error:", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("Login error");
     return NextResponse.json(
       { error: "Error interno" },
       { status: 500 }
