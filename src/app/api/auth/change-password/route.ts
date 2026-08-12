@@ -10,6 +10,9 @@ import { prisma } from "@/lib/db/prisma";
 import { verifyPassword, hashPassword } from "@/lib/auth/password";
 import { validatePasswordStrength } from "@/lib/auth/passwordValidation";
 import { changePasswordWithAudit } from "@/lib/users/userPasswordChangeService";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
+
+const CHANGE_PASSWORD_REQUEST_MAX_BYTES = 8_192;
 
 export async function POST(request: Request) {
   try {
@@ -21,13 +24,18 @@ export async function POST(request: Request) {
       );
     }
 
+    const rawBody = await readTextBodyWithLimit(request, CHANGE_PASSWORD_REQUEST_MAX_BYTES);
+    if (!rawBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande." }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(rawBody.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
     }
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Datos inválidos." }, { status: 400 });
     }
     const input = body as Record<string, unknown>;
@@ -108,8 +116,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[auth/change-password]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[auth/change-password] request failed");
     return NextResponse.json(
       { error: "Error interno al cambiar la contraseña." },
       { status: 500 }
