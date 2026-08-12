@@ -12,7 +12,10 @@ import { z } from "zod";
 import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
+
+const MAX_PATCH_BODY_BYTES = 64 * 1024;
 
 const patchBodySchema = z.object({
   valueJson: z.union([z.string(), z.null()]),
@@ -35,9 +38,14 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID requerido" }, { status: 400 });
 
+    const bodyResult = await readTextBodyWithLimit(request, MAX_PATCH_BODY_BYTES);
+    if (!bodyResult.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(bodyResult.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
@@ -111,8 +119,8 @@ export async function PATCH(
         updatedAt: updated.updatedAt.toISOString(),
       },
     });
-  } catch (err) {
-    console.error("[programming-rules PATCH]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[programming-rules PATCH] request failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
