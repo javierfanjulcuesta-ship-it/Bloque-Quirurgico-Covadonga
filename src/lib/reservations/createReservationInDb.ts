@@ -230,6 +230,19 @@ export async function createReservationInDb(
         const reusedFrom = existing.status;
         const createdRows: Array<{ id: string; orderIndex: number }> = [];
 
+        if (hasPatients) {
+          const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(patients));
+          const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
+            reservations: contextReservations,
+            shift,
+            ownerSlotIndex: slotIndex,
+            ownerUsedMinutes: usedMinutesCandidate,
+          });
+          if (overflowConflict) {
+            return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+          }
+        }
+
         // Mantiene el comportamiento legacy de reutilización, ahora serializado para evitar carreras.
         await tx.patientInBlock.deleteMany({ where: { reservationId: existing.id } });
         await tx.reservation.update({

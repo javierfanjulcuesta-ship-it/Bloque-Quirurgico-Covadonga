@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 
 const SURGEON_A = "booking-integrity-surgeon-a";
 const SURGEON_B = "booking-integrity-surgeon-b";
-const TEST_DATES = ["2031-01-13", "2031-01-14", "2031-01-15", "2031-01-16"];
+const TEST_DATES = ["2031-01-13", "2031-01-14", "2031-01-15", "2031-01-16", "2031-01-17"];
 const AUDIT_TRIGGER = "qxflow_test_fail_reservation_event";
 const AUDIT_TRIGGER_FN = "qxflow_test_fail_reservation_event_fn";
 
@@ -260,4 +260,86 @@ test("audit persistence failure rolls back reservation, patient and phase2 state
   } finally {
     await removeFailingAuditTrigger();
   }
+});
+
+test("reusing a cancelled slot cannot overflow into an occupied later slot", async () => {
+  const date = TEST_DATES[4];
+  const dateObj = new Date(`${date}T00:00:00.000Z`);
+
+  await prisma.reservation.create({
+    data: {
+      date: dateObj,
+      resourceId: "Q1",
+      shift: "MORNING",
+      slotIndex: 0,
+      surgeonId: SURGEON_A,
+      status: "CANCELLED",
+      cancelledAt: new Date(),
+      cancellationReason: "Prueba automatizada de reutilización",
+    },
+  });
+
+  const occupied = await createReservationInDb(
+    {
+      date,
+      resourceId: "Q1",
+      shift: "morning",
+      slotIndex: 1,
+      patients: [
+        {
+          historyNumber: "TEST-REUSE-NEXT",
+          procedure: "Procedimiento ficticio corto",
+          estimatedDurationMinutes: 20,
+          anesthesiaType: "General",
+          insuranceType: "Privado",
+          orderIndex: 0,
+          isDeferredUrgency: true,
+          specialCircuitReason: "Prueba de conflicto al reutilizar",
+        },
+      ],
+    },
+    SURGEON_B,
+    { actorUserId: SURGEON_B },
+  );
+  assert.equal(occupied.ok, true);
+
+  const reuse = await createReservationInDb(
+    {
+      date,
+      resourceId: "Q1",
+      shift: "morning",
+      slotIndex: 0,
+      patients: [
+        {
+          historyNumber: "TEST-REUSE-LONG",
+          procedure: "Procedimiento ficticio largo",
+          estimatedDurationMinutes: 100,
+          anesthesiaType: "General",
+          insuranceType: "Privado",
+          orderIndex: 0,
+          isDeferredUrgency: true,
+          specialCircuitReason: "Prueba de conflicto al reutilizar",
+        },
+      ],
+    },
+    SURGEON_A,
+    { actorUserId: SURGEON_A },
+  );
+
+  assert.equal(reuse.ok, false);
+  if (!reuse.ok) assert.equal(reuse.error, "overflow_conflict");
+
+  const reusedRow = await prisma.reservation.findUnique({
+    where: {
+      date_resourceId_shift_slotIndex: {
+        date: dateObj,
+        resourceId: "Q1",
+        shift: "MORNING",
+        slotIndex: 0,
+      },
+    },
+    include: { patients: true },
+  });
+  assert.equal(reusedRow?.status, "CANCELLED");
+  assert.equal(reusedRow?.patients.length, 0);
 });
