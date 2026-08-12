@@ -139,3 +139,46 @@ test("NOT_FIT survives centrally and clearing restores scheduled when appointmen
   assert.ok(events[0]!.detailsJson?.includes("preanesthesia_marked_not_fit"));
   assert.ok(events[1]!.detailsJson?.includes("preanesthesia_not_fit_cleared"));
 });
+
+test("preanesthesia assessment reads previous status only after concurrent row changes commit", async () => {
+  await prisma.reservationEvent.deleteMany({ where: { reservationId: RESERVATION } });
+  await prisma.patientInBlock.update({
+    where: { id: PATIENT },
+    data: { preanesthesiaStatus: "SCHEDULED" },
+  });
+
+  let assessmentPromise: ReturnType<typeof setPreanesthesiaAssessment> | undefined;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PatientInBlock" WHERE id = ${PATIENT} FOR UPDATE`;
+    await tx.patientInBlock.update({
+      where: { id: PATIENT },
+      data: { preanesthesiaStatus: "NOT_FIT" },
+    });
+
+    assessmentPromise = setPreanesthesiaAssessment(prisma, {
+      patientId: PATIENT,
+      actorUserId: ANESTHETIST,
+      action: "CLEAR_NOT_FIT",
+    });
+
+    // Give the concurrent transaction time to reach the patient row while this
+    // transaction still owns the lock. It must not snapshot the previous state yet.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+
+  const outcome = await assessmentPromise!;
+  assert.equal(outcome.ok, true);
+  if (outcome.ok) assert.equal(outcome.preanesthesiaStatus, "SCHEDULED");
+
+  const event = await prisma.reservationEvent.findFirstOrThrow({
+    where: { reservationId: RESERVATION, eventType: "RESERVATION_PATIENT_UPDATED" },
+    orderBy: { createdAt: "desc" },
+  });
+  const details = JSON.parse(event.detailsJson ?? "{}") as {
+    previousPreanesthesiaStatus?: string;
+    nextPreanesthesiaStatus?: string;
+  };
+  assert.equal(details.previousPreanesthesiaStatus, "NOT_FIT");
+  assert.equal(details.nextPreanesthesiaStatus, "SCHEDULED");
+});
