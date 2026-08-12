@@ -8,7 +8,10 @@
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { logReservationEvent, type ReservationEventOrigin } from "@/lib/reservations/logReservationEvent";
+import {
+  writeReservationEvent,
+  type ReservationEventOrigin,
+} from "@/lib/reservations/logReservationEvent";
 import {
   ADMIN_NOTIFICATION_EMAIL_RULE_KEY,
   DEFAULT_FINANCING_STATUS,
@@ -56,86 +59,84 @@ async function acquirePreanesthesiaAssignmentLock(tx: Prisma.TransactionClient):
 }
 
 /**
- * Elige y persiste el hueco dentro de la misma transacción que mantiene el lock.
- * También es idempotente: si el paciente ya está SCHEDULED conserva su cita.
+ * Elige y persiste el hueco usando la transacción del llamador. El advisory lock
+ * de preanestesia queda retenido hasta el COMMIT/ROLLBACK de esa misma transacción.
  */
-async function assignElectivePatientAtomically(
-  prisma: PrismaClient,
+async function assignElectivePatientInTransaction(
+  tx: Prisma.TransactionClient,
   params: {
     patientId: string;
     surgeryYmd: string;
     todayYmd: string;
   },
 ): Promise<ElectiveAssignmentResult> {
-  return prisma.$transaction(
-    async (tx) => {
-      await acquirePreanesthesiaAssignmentLock(tx);
+  await acquirePreanesthesiaAssignmentLock(tx);
 
-      const current = await tx.patientInBlock.findUnique({
-        where: { id: params.patientId },
-        select: { preanesthesiaStatus: true, preanesthesiaAppointmentAt: true },
-      });
-      if (!current) throw new Error("Paciente no encontrado al asignar preanestesia");
+  const current = await tx.patientInBlock.findUnique({
+    where: { id: params.patientId },
+    select: { preanesthesiaStatus: true, preanesthesiaAppointmentAt: true },
+  });
+  if (!current) throw new Error("Paciente no encontrado al asignar preanestesia");
 
-      if (current.preanesthesiaStatus === PREANESTHESIA_SCHEDULED && current.preanesthesiaAppointmentAt) {
-        return {
-          kind: "scheduled",
-          atUtc: current.preanesthesiaAppointmentAt,
-          alreadyScheduled: true,
-        };
-      }
+  if (current.preanesthesiaStatus === PREANESTHESIA_SCHEDULED && current.preanesthesiaAppointmentAt) {
+    return {
+      kind: "scheduled",
+      atUtc: current.preanesthesiaAppointmentAt,
+      alreadyScheduled: true,
+    };
+  }
 
-      // La ocupación se carga DESPUÉS de adquirir el lock.
-      const occupied = await loadPreanesthesiaOccupiedKeys(tx);
-      const slot = findFirstPreanesthesiaSlotUtc({
-        surgeryYmd: params.surgeryYmd,
-        todayYmd: params.todayYmd,
-        occupiedKeys: occupied,
-      });
+  // La ocupación se carga DESPUÉS de adquirir el lock.
+  const occupied = await loadPreanesthesiaOccupiedKeys(tx);
+  const slot = findFirstPreanesthesiaSlotUtc({
+    surgeryYmd: params.surgeryYmd,
+    todayYmd: params.todayYmd,
+    occupiedKeys: occupied,
+  });
 
-      if (!slot) {
-        await tx.patientInBlock.update({
-          where: { id: params.patientId },
-          data: {
-            workflowStatus: DEFAULT_WORKFLOW_STATUS,
-            isDeferredUrgency: false,
-            specialCircuitReason: null,
-            preanesthesiaStatus: DEFAULT_PREANESTHESIA_STATUS,
-            preanesthesiaAppointmentAt: null,
-          },
-        });
-        return { kind: "no_slot" };
-      }
+  if (!slot) {
+    await tx.patientInBlock.update({
+      where: { id: params.patientId },
+      data: {
+        workflowStatus: DEFAULT_WORKFLOW_STATUS,
+        isDeferredUrgency: false,
+        specialCircuitReason: null,
+        preanesthesiaStatus: DEFAULT_PREANESTHESIA_STATUS,
+        preanesthesiaAppointmentAt: null,
+      },
+    });
+    return { kind: "no_slot" };
+  }
 
-      await tx.patientInBlock.update({
-        where: { id: params.patientId },
-        data: {
-          preanesthesiaAppointmentAt: slot.atUtc,
-          preanesthesiaStatus: PREANESTHESIA_SCHEDULED,
-          workflowStatus: DEFAULT_WORKFLOW_STATUS,
-          isDeferredUrgency: false,
-          specialCircuitReason: null,
-        },
-      });
-
-      return { kind: "scheduled", atUtc: slot.atUtc, alreadyScheduled: false };
+  await tx.patientInBlock.update({
+    where: { id: params.patientId },
+    data: {
+      preanesthesiaAppointmentAt: slot.atUtc,
+      preanesthesiaStatus: PREANESTHESIA_SCHEDULED,
+      workflowStatus: DEFAULT_WORKFLOW_STATUS,
+      isDeferredUrgency: false,
+      specialCircuitReason: null,
     },
-    { maxWait: 5_000, timeout: 15_000 },
-  );
+  });
+
+  return { kind: "scheduled", atUtc: slot.atUtc, alreadyScheduled: false };
 }
 
-async function logAdminDryRun(params: {
-  reservationId: string;
-  patientId: string;
-  actorUserId: string;
-  origin: ReservationEventOrigin;
-  base: Record<string, unknown>;
-  purpose: string;
-  extra?: Record<string, unknown>;
-}): Promise<void> {
-  const adminEmail = await getAdminNotificationEmail();
+async function writeAdminDryRun(
+  tx: Prisma.TransactionClient,
+  adminEmail: string | null,
+  params: {
+    reservationId: string;
+    patientId: string;
+    actorUserId: string;
+    origin: ReservationEventOrigin;
+    base: Record<string, unknown>;
+    purpose: string;
+    extra?: Record<string, unknown>;
+  },
+): Promise<void> {
   if (adminEmail) {
-    await logReservationEvent({
+    await writeReservationEvent(tx, {
       eventType: "ADMIN_NOTIFICATION_DRY_RUN_CREATED",
       reservationId: params.reservationId,
       actorUserId: params.actorUserId,
@@ -149,7 +150,7 @@ async function logAdminDryRun(params: {
       },
     });
   } else {
-    await logReservationEvent({
+    await writeReservationEvent(tx, {
       eventType: "ADMIN_NOTIFICATION_SKIPPED_NO_EMAIL",
       reservationId: params.reservationId,
       actorUserId: params.actorUserId,
@@ -159,10 +160,16 @@ async function logAdminDryRun(params: {
   }
 }
 
-/** Asigna preanestesia / urgencia diferida y registra eventos (tras persistir pacientes). */
-export async function applyAndLogPatientCircuitPhase2(
-  prisma: PrismaClient,
+/**
+ * Variante estricta para flujos que ya están dentro de una transacción de negocio.
+ * Estado clínico y eventos se confirman juntos; cualquier fallo de auditoría provoca
+ * rollback del estado de fase 2 y, si la transacción engloba el alta del paciente,
+ * también del alta principal.
+ */
+export async function applyAndLogPatientCircuitPhase2InTransaction(
+  tx: Prisma.TransactionClient,
   params: ApplyPatientCircuitPhase2Params,
+  adminEmail: string | null,
 ): Promise<void> {
   const todayYmd = params.todayYmd ?? todayYmdMadrid();
 
@@ -175,7 +182,7 @@ export async function applyAndLogPatientCircuitPhase2(
     };
 
     if (p.isDeferredUrgency) {
-      await prisma.patientInBlock.update({
+      await tx.patientInBlock.update({
         where: { id: p.patientId },
         data: {
           workflowStatus: WORKFLOW_MANUAL_REVIEW_REQUIRED,
@@ -187,14 +194,14 @@ export async function applyAndLogPatientCircuitPhase2(
         },
       });
 
-      await logReservationEvent({
+      await writeReservationEvent(tx, {
         eventType: "PATIENT_WORKFLOW_STARTED",
         reservationId: params.reservationId,
         actorUserId: params.actorUserId,
         origin: params.origin,
         detailsJson: { ...base, workflowStatus: WORKFLOW_MANUAL_REVIEW_REQUIRED, preanesthesiaStatus: "PENDING" },
       });
-      await logReservationEvent({
+      await writeReservationEvent(tx, {
         eventType: "DEFERRED_URGENCY_CREATED",
         reservationId: params.reservationId,
         actorUserId: params.actorUserId,
@@ -204,7 +211,7 @@ export async function applyAndLogPatientCircuitPhase2(
           specialCircuitReason: p.specialCircuitReason?.trim() || null,
         },
       });
-      await logAdminDryRun({
+      await writeAdminDryRun(tx, adminEmail, {
         reservationId: params.reservationId,
         patientId: p.patientId,
         actorUserId: params.actorUserId,
@@ -216,21 +223,21 @@ export async function applyAndLogPatientCircuitPhase2(
       continue;
     }
 
-    const assignment = await assignElectivePatientAtomically(prisma, {
+    const assignment = await assignElectivePatientInTransaction(tx, {
       patientId: p.patientId,
       surgeryYmd: params.surgeryYmd,
       todayYmd,
     });
 
     if (assignment.kind === "no_slot") {
-      await logReservationEvent({
+      await writeReservationEvent(tx, {
         eventType: "PATIENT_WORKFLOW_STARTED",
         reservationId: params.reservationId,
         actorUserId: params.actorUserId,
         origin: params.origin,
         detailsJson: { ...base, workflowStatus: DEFAULT_WORKFLOW_STATUS, preanesthesiaStatus: "PENDING" },
       });
-      await logReservationEvent({
+      await writeReservationEvent(tx, {
         eventType: "PREANESTHESIA_NO_SLOT_AVAILABLE",
         reservationId: params.reservationId,
         actorUserId: params.actorUserId,
@@ -246,7 +253,7 @@ export async function applyAndLogPatientCircuitPhase2(
 
     const preanesthesiaAtIso = assignment.atUtc.toISOString();
 
-    await logReservationEvent({
+    await writeReservationEvent(tx, {
       eventType: "PATIENT_WORKFLOW_STARTED",
       reservationId: params.reservationId,
       actorUserId: params.actorUserId,
@@ -257,7 +264,7 @@ export async function applyAndLogPatientCircuitPhase2(
         alreadyScheduled: assignment.alreadyScheduled,
       },
     });
-    await logReservationEvent({
+    await writeReservationEvent(tx, {
       eventType: "PREANESTHESIA_APPOINTMENT_ASSIGNED",
       reservationId: params.reservationId,
       actorUserId: params.actorUserId,
@@ -269,7 +276,7 @@ export async function applyAndLogPatientCircuitPhase2(
         alreadyScheduled: assignment.alreadyScheduled,
       },
     });
-    await logReservationEvent({
+    await writeReservationEvent(tx, {
       eventType: "PATIENT_NOTIFICATION_DRY_RUN_CREATED",
       reservationId: params.reservationId,
       actorUserId: params.actorUserId,
@@ -282,7 +289,7 @@ export async function applyAndLogPatientCircuitPhase2(
         preanesthesiaAppointmentAt: preanesthesiaAtIso,
       },
     });
-    await logAdminDryRun({
+    await writeAdminDryRun(tx, adminEmail, {
       reservationId: params.reservationId,
       patientId: p.patientId,
       actorUserId: params.actorUserId,
@@ -292,4 +299,21 @@ export async function applyAndLogPatientCircuitPhase2(
       extra: { preanesthesiaAppointmentAt: preanesthesiaAtIso },
     });
   }
+}
+
+/**
+ * API autónoma para consumidores que no tengan ya una transacción abierta.
+ * La fase 2 completa (estado + auditoría) se ejecuta de forma atómica.
+ */
+export async function applyAndLogPatientCircuitPhase2(
+  prisma: PrismaClient,
+  params: ApplyPatientCircuitPhase2Params,
+): Promise<void> {
+  const adminEmail = await getAdminNotificationEmail();
+  await prisma.$transaction(
+    async (tx) => {
+      await applyAndLogPatientCircuitPhase2InTransaction(tx, params, adminEmail);
+    },
+    { maxWait: 5_000, timeout: 15_000 },
+  );
 }
