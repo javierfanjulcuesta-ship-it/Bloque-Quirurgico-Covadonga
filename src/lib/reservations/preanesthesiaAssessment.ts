@@ -8,6 +8,8 @@ export type PreanesthesiaAssessmentResult =
 
 /**
  * Persist clinical preanesthesia fitness state and its audit event in one transaction.
+ * The patient row is locked before reading the previous status so concurrent assessments
+ * are serialized and every audit event describes the state it actually replaced.
  */
 export async function setPreanesthesiaAssessment(
   prisma: PrismaClient,
@@ -18,6 +20,14 @@ export async function setPreanesthesiaAssessment(
   },
 ): Promise<PreanesthesiaAssessmentResult> {
   return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM "PatientInBlock"
+      WHERE id = ${params.patientId}
+      FOR UPDATE
+    `;
+    if (locked.length === 0) return { ok: false, reason: "patient_not_found" } as const;
+
     const patient = await tx.patientInBlock.findUnique({
       where: { id: params.patientId },
       select: {
