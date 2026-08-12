@@ -25,7 +25,16 @@ const putSchema = z.object({
   minRequiredMinutes: z.number().int().min(0).max(24 * 60).optional().default(0),
   reservedUrgentMinutes: z.number().int().min(0).max(24 * 60).optional().default(0),
   notes: z.string().max(4000).trim().nullable().optional(),
+  // null = el cliente cargó esta celda sin plan persistido; ISO = versión que vio.
+  expectedUpdatedAt: z.string().datetime({ offset: true }).nullable(),
 });
+
+class StaleBlockOpeningPlanError extends Error {
+  constructor() {
+    super("El plan de apertura ha cambiado desde que se cargó. Recargue la vista y revise la versión actual antes de volver a guardar.");
+    this.name = "StaleBlockOpeningPlanError";
+  }
+}
 
 function isValidDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -106,42 +115,64 @@ export async function PUT(request: Request) {
 
     const data = parsed.data;
     const dateObj = new Date(`${data.date}T00:00:00.000Z`);
-    const shiftDb = data.shift === "morning" ? "MORNING" : "AFTERNOON";
+    const shiftDb: "MORNING" | "AFTERNOON" = data.shift === "morning" ? "MORNING" : "AFTERNOON";
 
     const plan = await withSchedulingContextLock(
       { date: data.date, resourceId: data.resourceId, shift: data.shift },
-      async (tx) => tx.blockOpeningPlan.upsert({
-        where: {
-          date_resourceId_shift: {
-            date: dateObj,
-            resourceId: data.resourceId,
-            shift: shiftDb,
-          },
-        },
-        create: {
+      async (tx) => {
+        const key = {
           date: dateObj,
           resourceId: data.resourceId,
           shift: shiftDb,
-          status: data.status,
-          minRequiredMinutes: data.minRequiredMinutes,
-          reservedUrgentMinutes: data.reservedUrgentMinutes,
-          notes: data.notes ?? null,
-          approvedByUserId: session!.userId,
-        },
-        update: {
-          status: data.status,
-          minRequiredMinutes: data.minRequiredMinutes,
-          reservedUrgentMinutes: data.reservedUrgentMinutes,
-          notes: data.notes ?? null,
-          approvedByUserId: session!.userId,
-        },
-      }),
+        };
+        const current = await tx.blockOpeningPlan.findUnique({
+          where: { date_resourceId_shift: key },
+        });
+
+        // Optimistic concurrency: a gestor solo puede modificar exactamente la versión
+        // que cargó. El lock evita además carreras entre la comprobación y la escritura.
+        if (current) {
+          if (!data.expectedUpdatedAt || current.updatedAt.toISOString() !== data.expectedUpdatedAt) {
+            throw new StaleBlockOpeningPlanError();
+          }
+          return tx.blockOpeningPlan.update({
+            where: { id: current.id },
+            data: {
+              status: data.status,
+              minRequiredMinutes: data.minRequiredMinutes,
+              reservedUrgentMinutes: data.reservedUrgentMinutes,
+              notes: data.notes ?? null,
+              approvedByUserId: session!.userId,
+            },
+          });
+        }
+
+        // Si el cliente creía que existía un plan, este contexto ya no coincide con
+        // lo que vio y no debemos convertir silenciosamente esa edición en un alta.
+        if (data.expectedUpdatedAt !== null) {
+          throw new StaleBlockOpeningPlanError();
+        }
+
+        return tx.blockOpeningPlan.create({
+          data: {
+            ...key,
+            status: data.status,
+            minRequiredMinutes: data.minRequiredMinutes,
+            reservedUrgentMinutes: data.reservedUrgentMinutes,
+            notes: data.notes ?? null,
+            approvedByUserId: session!.userId,
+          },
+        });
+      },
     );
 
     return NextResponse.json({
       plan: toBlockOpeningPlanView(plan as Parameters<typeof toBlockOpeningPlanView>[0]),
     });
   } catch (err) {
+    if (err instanceof StaleBlockOpeningPlanError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
     console.error("[block-opening-plan PUT]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }

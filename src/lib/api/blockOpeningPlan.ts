@@ -24,6 +24,8 @@ export interface UpsertBlockPlanInput {
   minRequiredMinutes?: number;
   reservedUrgentMinutes?: number;
   notes?: string;
+  /** null si no existía plan al cargar; ISO updatedAt si ya existía. */
+  expectedUpdatedAt: string | null;
 }
 
 export async function upsertBlockPlan(input: UpsertBlockPlanInput): Promise<BlockOpeningPlan> {
