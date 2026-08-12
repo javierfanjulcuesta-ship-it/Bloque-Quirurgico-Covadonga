@@ -8,7 +8,6 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canAccessBooking } from "@/lib/auth";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
-import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { cancelReservationSchema } from "@/lib/validations/reservation";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
 
@@ -80,6 +79,30 @@ export async function executeReservationCancelPatch(request: Request, id: string
           },
         });
 
+        // La cancelación es destructiva: el cambio y su trazabilidad deben tener
+        // exactamente el mismo destino transaccional. Si el evento no se puede
+        // persistir, PostgreSQL revierte también el borrado de pacientes y el
+        // cambio de estado, evitando una cancelación sin auditoría.
+        await tx.reservationEvent.create({
+          data: {
+            eventType: "RESERVATION_CANCELLED",
+            reservationId: id,
+            actorUserId: session!.userId,
+            origin: "app",
+            detailsJson: JSON.stringify({
+              reason: cancellationReason ?? undefined,
+              force,
+              patientsCount,
+              slot: {
+                date: dateStr,
+                resourceId: live.resourceId,
+                shift: shiftLabel,
+                slotIndex: live.slotIndex,
+              },
+            }),
+          },
+        });
+
         return { kind: "cancelled" as const, patientsCount };
       },
     );
@@ -107,29 +130,11 @@ export async function executeReservationCancelPatch(request: Request, id: string
       return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
     }
 
-    await logReservationEvent({
-      eventType: "RESERVATION_CANCELLED",
-      reservationId: id,
-      actorUserId: session!.userId,
-      origin: "app",
-      detailsJson: {
-        reason: cancellationReason ?? undefined,
-        force,
-        patientsCount: lockedResult.patientsCount,
-        slot: {
-          date: dateStr,
-          resourceId: reservation.resourceId,
-          shift: shiftLabel,
-          slotIndex: reservation.slotIndex,
-        },
-      },
-    });
-
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva cancelada pero no encontrada" }, { status: 500 });
     return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
   } catch (err) {
-    console.error("[reservations cancel]", err);
+    console.error("[reservations cancel]", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json({ error: "Error al cancelar reserva" }, { status: 500 });
   }
 }
