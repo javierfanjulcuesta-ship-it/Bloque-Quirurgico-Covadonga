@@ -5,6 +5,7 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { isRealDateOnly, madridDateOnly } from "@/lib/reservations/bookingPolicy";
+import { replaceAnesthetistUnavailability } from "@/lib/anesthetistUnavailability";
 
 export const dynamic = "force-dynamic";
 
@@ -132,34 +133,13 @@ export async function PUT(request: Request) {
     });
     if (!target) return NextResponse.json({ error: "Anestesista no válido o inactivo" }, { status: 400 });
 
-    const reason = input.reason?.trim() || null;
-    await prisma.$transaction(async (tx) => {
-      const desired = new Set<"MORNING" | "AFTERNOON">();
-      if (input.morning) desired.add("MORNING");
-      if (input.afternoon) desired.add("AFTERNOON");
-
-      for (const shift of ["MORNING", "AFTERNOON"] as const) {
-        if (desired.has(shift)) {
-          await tx.anesthetistUnavailability.upsert({
-            where: { anesthetistId_date_shift: { anesthetistId: targetId, date: input.date, shift } },
-            create: { anesthetistId: targetId, date: input.date, shift, reason },
-            update: { reason },
-          });
-        } else {
-          await tx.anesthetistUnavailability.deleteMany({
-            where: { anesthetistId: targetId, date: input.date, shift },
-          });
-        }
-      }
-
-      await tx.userAuditEvent.create({
-        data: {
-          userId: targetId,
-          actorUserId: session!.userId,
-          eventType: "ANESTHETIST_UNAVAILABILITY_UPDATED",
-          detailsJson: JSON.stringify({ date: input.date, morning: input.morning, afternoon: input.afternoon }),
-        },
-      });
+    await replaceAnesthetistUnavailability(prisma, {
+      anesthetistId: targetId,
+      actorUserId: session!.userId,
+      date: input.date,
+      morning: input.morning,
+      afternoon: input.afternoon,
+      reason: input.reason?.trim() || null,
     });
 
     return NextResponse.json({ ok: true });
