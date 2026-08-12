@@ -1,8 +1,8 @@
 /**
  * POST /api/email/send-invitation
  * Envía invitación de un usuario ya creado.
- * Requiere user:create. El destinatario y rol deben coincidir con un usuario activo
- * en la base de datos; la URL de acceso solo procede de configuración del servidor.
+ * Requiere user:create. El destinatario, rol, nombre y contraseña temporal deben
+ * corresponder al usuario persistido; la URL de acceso solo procede del servidor.
  */
 
 import { NextResponse } from "next/server";
@@ -11,6 +11,7 @@ import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import type { UserRole } from "@/lib/types";
 import { prisma } from "@/lib/db/prisma";
 import { roleToFrontend } from "@/lib/roleMapping";
+import { verifyPassword } from "@/lib/auth/password";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { getAppUrl } from "@/lib/appUrl";
@@ -43,7 +44,6 @@ export async function POST(request: Request) {
     const requestedRole = typeof input.role === "string" && VALID_ROLES.includes(input.role as UserRole)
       ? input.role as UserRole
       : null;
-    const recipientName = typeof input.recipientName === "string" ? input.recipientName.trim().slice(0, 200) : undefined;
     const initialPassword = typeof input.initialPassword === "string" ? input.initialPassword : "";
 
     if (!toEmail || !requestedRole || initialPassword.length < 12 || initialPassword.length > 128) {
@@ -52,14 +52,31 @@ export async function POST(request: Request) {
 
     const dbUser = await prisma.user.findUnique({
       where: { email: toEmail },
-      select: { id: true, email: true, name: true, role: true, approved: true, deletedAt: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        approved: true,
+        deletedAt: true,
+        passwordHash: true,
+      },
     });
     if (!dbUser || dbUser.deletedAt || !dbUser.approved) {
       return NextResponse.json({ error: "Usuario destinatario no encontrado o inactivo" }, { status: 404 });
     }
+
     const role = roleToFrontend(dbUser.role);
     if (role !== requestedRole) {
       return NextResponse.json({ error: "El rol de invitación no coincide con el usuario" }, { status: 409 });
+    }
+
+    const passwordMatches = await verifyPassword(initialPassword, dbUser.passwordHash);
+    if (!passwordMatches) {
+      return NextResponse.json(
+        { error: "La contraseña temporal ya no coincide con la credencial actual del usuario" },
+        { status: 409 },
+      );
     }
 
     let appUrl: string;
@@ -75,7 +92,7 @@ export async function POST(request: Request) {
     await sendNewUserInvitationEmail({
       toEmail: dbUser.email,
       role,
-      recipientName: recipientName || dbUser.name || undefined,
+      recipientName: dbUser.name || undefined,
       accessLink: appUrl,
       initialPassword,
       invitedByName,
