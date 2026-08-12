@@ -4,6 +4,9 @@
  * En serverless cada instancia mantiene su propio mapa, por lo que esto mitiga
  * ráfagas y abuso oportunista pero no sustituye un rate limiter distribuido.
  * Para producción a gran escala conviene usar Redis/KV compartido.
+ *
+ * El almacén está acotado y se purga periódicamente: un atacante no puede hacer
+ * crecer indefinidamente la memoria del proceso generando claves/IP distintas.
  */
 
 import { createHash } from "node:crypto";
@@ -12,14 +15,18 @@ const WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 min de bloqueo tras 5 intentos fallidos
 const MAX_KEY_PART_LENGTH = 128;
+const MAX_STORE_ENTRIES = 10_000;
+const SWEEP_INTERVAL = 256;
 
 interface Entry {
   count: number;
   firstAttemptAt: number;
+  expiresAt: number;
   lockedUntil?: number;
 }
 
 const store = new Map<string, Entry>();
+let operationsSinceSweep = 0;
 
 function cleanKeyPart(value: string): string {
   return value.trim().slice(0, MAX_KEY_PART_LENGTH) || "unknown";
@@ -40,16 +47,57 @@ function identityKey(identity: string): string {
   return createHash("sha256").update(normalized).digest("hex").slice(0, 24);
 }
 
+function entryIsExpired(entry: Entry, now: number): boolean {
+  if (entry.lockedUntil) return entry.lockedUntil <= now;
+  return entry.expiresAt <= now;
+}
+
+function sweepStore(now: number): void {
+  for (const [key, entry] of store) {
+    if (entryIsExpired(entry, now)) store.delete(key);
+  }
+
+  if (store.size <= MAX_STORE_ENTRIES) return;
+
+  // Map conserva orden de inserción. Las entradas más antiguas son las primeras;
+  // expulsarlas limita memoria sin permitir que una clave nueva invalide todo el mapa.
+  const excess = store.size - MAX_STORE_ENTRIES;
+  let removed = 0;
+  for (const key of store.keys()) {
+    store.delete(key);
+    removed++;
+    if (removed >= excess) break;
+  }
+}
+
+function maintainStore(now: number): void {
+  operationsSinceSweep++;
+  if (operationsSinceSweep < SWEEP_INTERVAL && store.size <= MAX_STORE_ENTRIES) return;
+  operationsSinceSweep = 0;
+  sweepStore(now);
+}
+
 function consumeAttempt(
   key: string,
   options: { windowMs: number; maxAttempts: number; lockoutMs: number }
 ): { ok: boolean; retryAfterSec?: number } {
   const { windowMs, maxAttempts, lockoutMs } = options;
   const now = Date.now();
+  maintainStore(now);
+
   let entry = store.get(key);
 
+  if (entry && entryIsExpired(entry, now)) {
+    store.delete(key);
+    entry = undefined;
+  }
+
   if (!entry) {
-    entry = { count: 0, firstAttemptAt: now };
+    entry = {
+      count: 0,
+      firstAttemptAt: now,
+      expiresAt: now + windowMs,
+    };
     store.set(key, entry);
   }
 
@@ -57,21 +105,19 @@ function consumeAttempt(
     return { ok: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1000) };
   }
 
-  if (entry.lockedUntil && now >= entry.lockedUntil) {
+  // Defensa adicional si cambia la ventana entre llamadas para una misma clave.
+  if (now >= entry.expiresAt) {
     entry.count = 0;
     entry.firstAttemptAt = now;
+    entry.expiresAt = now + windowMs;
     entry.lockedUntil = undefined;
-  }
-
-  if (now - entry.firstAttemptAt > windowMs) {
-    entry.count = 0;
-    entry.firstAttemptAt = now;
   }
 
   entry.count++;
   // maxAttempts significa intentos permitidos; el siguiente activa el bloqueo.
   if (entry.count > maxAttempts) {
     entry.lockedUntil = now + lockoutMs;
+    entry.expiresAt = entry.lockedUntil;
     return { ok: false, retryAfterSec: Math.ceil(lockoutMs / 1000) };
   }
 
