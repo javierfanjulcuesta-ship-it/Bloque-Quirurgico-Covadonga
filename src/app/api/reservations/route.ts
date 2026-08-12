@@ -12,8 +12,12 @@ import { toAuthSession, requireAuth, requirePermission, requireAnyPermission, ha
 import { prisma } from "@/lib/db/prisma";
 import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
 import { evaluateBasicBookingPolicy } from "@/lib/reservations/bookingPolicy";
-import { fetchReservationForAccess } from "@/lib/reservations/reservationApiHelpers";
-import { toApiReservation } from "@/lib/reservations/reservationApiHelpers";
+import { fetchReservationForAccess, toApiReservation } from "@/lib/reservations/reservationApiHelpers";
+import {
+  ASSIGNMENT_FULL_SHIFT_RESOURCE,
+  assignmentCoverageKeys,
+  coverageKeysMatchReservation,
+} from "@/lib/reservations/anesthetistAssignmentAccess";
 import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
 
 export const dynamic = "force-dynamic";
@@ -102,15 +106,40 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: `Rango máximo de consulta: ${maxQueryDays} días` }, { status: 400 });
   }
 
-  const where: Prisma.ReservationWhereInput = {};
-  const dateFilter: Prisma.DateTimeFilter = { gte: from, lte: to };
-  where.date = dateFilter;
+  const where: Prisma.ReservationWhereInput = {
+    date: { gte: from, lte: to },
+  };
   if (filters.resourceId) where.resourceId = filters.resourceId;
 
   const fullView = hasFullReservationView(session!.role);
   const myId = session!.userId;
+  let myAssignmentKeys = new Set<string>();
+
   if (!fullView) {
-    where.OR = [{ surgeonId: myId }, { createdByUserId: myId }, { anesthetistId: myId }];
+    // AnesthetistAssignment es la fuente canónica para el reparto por turno. El
+    // antiguo Reservation.anesthetistId se mantiene como fallback de registros legacy.
+    const myAssignments = await prisma.anesthetistAssignment.findMany({
+      where: {
+        anesthetistId: myId,
+        assignmentType: "OR",
+        date: { gte: filters.dateFrom, lte: filters.dateTo },
+      },
+      select: { date: true, shift: true, assignmentType: true, resourceId: true },
+    });
+    myAssignmentKeys = assignmentCoverageKeys(myAssignments);
+
+    const assignmentConditions: Prisma.ReservationWhereInput[] = myAssignments.map((a) => ({
+      date: new Date(`${a.date}T00:00:00.000Z`),
+      shift: a.shift,
+      ...(a.resourceId === ASSIGNMENT_FULL_SHIFT_RESOURCE ? {} : { resourceId: a.resourceId }),
+    }));
+
+    where.OR = [
+      { surgeonId: myId },
+      { createdByUserId: myId },
+      { anesthetistId: myId },
+      ...assignmentConditions,
+    ];
   }
 
   const list = await prisma.reservation.findMany({
@@ -122,14 +151,25 @@ export async function GET(request: Request) {
   const reservations = list.map((r) => {
     const api = toApiReservation(r as Parameters<typeof toApiReservation>[0]);
     if (fullView) return api;
+
     const isMine = r.surgeonId === myId || r.createdByUserId === myId;
     if (isMine) return api;
+
+    const isAssigned =
+      r.anesthetistId === myId ||
+      coverageKeysMatchReservation(myAssignmentKeys, r);
+
+    // La cláusula SQL anterior ya restringe a reservas propias/asignadas. Esta
+    // comprobación adicional evita que una futura ampliación del WHERE convierta
+    // accidentalmente una fila ajena en respuesta visible.
+    if (!isAssigned) return null;
+
     return {
       ...api,
       surgeonId: "[otro]",
       patients: [],
     };
-  });
+  }).filter((r): r is NonNullable<typeof r> => r !== null);
 
   return NextResponse.json({ reservations });
 }
