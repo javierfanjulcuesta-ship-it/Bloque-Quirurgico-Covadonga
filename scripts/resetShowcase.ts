@@ -5,13 +5,14 @@
  * Uso:
  *   npm run reset:showcase
  *
- * Sin confirmación (CI / automatización):
+ * Sin confirmación (CI / automatización, nunca producción/Vercel):
  *   set SKIP_RESET_CONFIRM=1 && npm run reset:showcase   (Windows)
  *   SKIP_RESET_CONFIRM=1 npm run reset:showcase        (Unix)
  */
 
 import * as readline from "node:readline";
 import { PrismaClient } from "@prisma/client";
+import { assertSeedAllowed } from "./lib/seedSafety";
 
 const prisma = new PrismaClient();
 
@@ -26,6 +27,8 @@ function question(prompt: string): Promise<string> {
 }
 
 async function main() {
+  assertSeedAllowed("reset:showcase");
+
   const skip = process.env.SKIP_RESET_CONFIRM === "1" || process.env.SKIP_RESET_CONFIRM === "true";
   if (!skip) {
     console.log(
