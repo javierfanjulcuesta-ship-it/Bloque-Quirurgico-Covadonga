@@ -8,7 +8,13 @@
 import { NextResponse } from "next/server";
 import { validateWebhookSecret } from "@/lib/email/webhookAuth";
 import { processIncomingEmail } from "@/lib/email/processIncomingEmail";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import type { InboxMessage } from "@/lib/email/types";
+
+// El correo puede contener cuerpo plano + HTML. El límite es deliberadamente
+// amplio para no interferir con mensajes normales, pero evita que el webhook
+// autenticado reserve memoria sin cota ante payloads anómalos o mal configurados.
+const MAX_WEBHOOK_BODY_BYTES = 4 * 1024 * 1024;
 
 const webhookPayloadSchema = {
   id: (v: unknown) => typeof v === "string" && v.length > 0,
@@ -37,9 +43,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const bodyResult = await readTextBodyWithLimit(request, MAX_WEBHOOK_BODY_BYTES);
+    if (!bodyResult.ok) {
+      return NextResponse.json({ error: "Payload demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(bodyResult.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
@@ -71,8 +82,8 @@ export async function POST(request: Request) {
       reservationId: result.reservationId,
       error: result.error,
     });
-  } catch (err) {
-    console.error("[email webhook]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[email webhook] request failed");
     return NextResponse.json({ error: "Error al procesar correo" }, { status: 500 });
   }
 }
