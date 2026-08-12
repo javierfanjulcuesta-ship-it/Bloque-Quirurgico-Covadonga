@@ -72,8 +72,8 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({ releases: slots });
-  } catch (err) {
-    console.error("[common-pool-releases GET]", err);
+  } catch {
+    console.error("[common-pool-releases GET] request failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
