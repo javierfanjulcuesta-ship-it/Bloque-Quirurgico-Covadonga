@@ -15,9 +15,9 @@ const PREVIEW_ROLES: UserRole[] = ["anestesista", "gestor", "gestor-anestesista"
 const EXAMPLE = {
   name: "María García",
   email: "maria.garcia@hospital.local",
-  invitedByName: "Javier Fanjul",
+  invitedByName: "Coordinación QxFlow",
   appUrl: "https://mi-app.vercel.app",
-  temporaryPassword: "Temp-2026-Acceso",
+  temporaryPassword: "Ejemplo-Temporal-2026",
 };
 
 export async function GET(request: Request) {
@@ -55,8 +55,8 @@ export async function GET(request: Request) {
       text,
       html,
     });
-  } catch (err) {
-    console.error("[email preview]", err);
+  } catch {
+    console.error("[email preview] request failed");
     return NextResponse.json({ error: "Error al generar vista previa" }, { status: 500 });
   }
 }
