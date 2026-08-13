@@ -22,8 +22,11 @@ import {
   getActiveReservationsInContext,
 } from "@/lib/reservations/overflowConflicts";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 export const dynamic = "force-dynamic";
+
+const PATIENT_UPDATE_BODY_MAX_BYTES = 1024 * 1024;
 
 export async function PATCH(
   request: Request,
@@ -47,9 +50,14 @@ export async function PATCH(
       return NextResponse.json({ error: "No tiene permiso para modificar pacientes en esta reserva" }, { status: 403 });
     }
 
+    const limitedBody = await readTextBodyWithLimit(request, PATIENT_UPDATE_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -208,8 +216,8 @@ export async function PATCH(
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
     return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
-  } catch (err) {
-    console.error("[reservations patient PATCH]", err);
+  } catch {
+    console.error("[reservations patient PATCH] Failed to update patient");
     return NextResponse.json({ error: "Error al actualizar paciente" }, { status: 500 });
   }
 }
