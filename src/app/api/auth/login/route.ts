@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 import { prisma } from "@/lib/db/prisma";
-import { verifyPassword } from "@/lib/auth/password";
+import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createSession, addSessionCookieToResponse } from "@/lib/auth/session";
 import { checkLoginRateLimit, resetLoginRateLimitOnSuccess } from "@/lib/auth/rateLimit";
 import { roleToFrontend } from "@/lib/roleMapping";
@@ -72,7 +72,10 @@ export async function POST(request: Request) {
       },
     });
 
-    if (!dbUser || !dbUser.approved || dbUser.deletedAt != null) {
+    if (!dbUser) {
+      // Keep unknown-account failures on a bcrypt-cost path too. This reduces
+      // the timing signal that would otherwise reveal whether an account exists.
+      await hashPassword(password);
       return NextResponse.json(
         { error: INVALID_CREDENTIALS_ERROR },
         { status: 401 }
@@ -80,7 +83,7 @@ export async function POST(request: Request) {
     }
 
     const valid = await verifyPassword(password, dbUser.passwordHash);
-    if (!valid) {
+    if (!dbUser.approved || dbUser.deletedAt != null || !valid) {
       return NextResponse.json(
         { error: INVALID_CREDENTIALS_ERROR },
         { status: 401 }
