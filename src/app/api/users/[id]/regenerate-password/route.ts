@@ -51,8 +51,8 @@ export async function POST(
     }
 
     return NextResponse.json({ ok: true, tempPassword });
-  } catch (err) {
-    console.error("[regenerate-password]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[regenerate-password] Credential rotation failed");
     return NextResponse.json({ error: "Error al regenerar contraseña" }, { status: 500 });
   }
 }

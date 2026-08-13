@@ -31,8 +31,8 @@ export async function DELETE(
       return NextResponse.json({ error: "No se puede eliminar el último gestor activo del sistema" }, { status: 409 });
     }
     return NextResponse.json({ error: "No se pudo eliminar el usuario" }, { status: 409 });
-  } catch (err) {
-    console.error("[users DELETE]", err);
+  } catch {
+    console.error("[users DELETE] Failed to delete user");
     return NextResponse.json({ error: "Error al eliminar usuario" }, { status: 500 });
   }
 }
