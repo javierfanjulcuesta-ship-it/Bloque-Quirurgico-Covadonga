@@ -15,6 +15,7 @@ import { getAdminNotificationEmail } from "@/lib/reservations/surgicalPatientCir
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { getReservationDetailAccess } from "@/lib/reservations/reservationAccessPolicy";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import {
   findOverflowConflictAgainstOccupiedSlots,
   findOverflowInvaderForTargetSlot,
@@ -23,6 +24,8 @@ import {
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
 
 export const dynamic = "force-dynamic";
+
+const RESERVATION_PATCH_BODY_MAX_BYTES = 1024 * 1024;
 
 export async function GET(
   _request: Request,
@@ -59,8 +62,8 @@ export async function GET(
     }
 
     return NextResponse.json({ reservation: apiReservation });
-  } catch (err) {
-    console.error("[reservations GET id]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[reservations GET id] Failed to load reservation");
     return NextResponse.json({ error: "Error al cargar reserva" }, { status: 500 });
   }
 }
@@ -88,9 +91,14 @@ export async function PATCH(
       return NextResponse.json({ error: "No tiene permiso para añadir pacientes a esta reserva" }, { status: 403 });
     }
 
+    const limitedBody = await readTextBodyWithLimit(request, RESERVATION_PATCH_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -232,8 +240,8 @@ export async function PATCH(
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });
 
     return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
-  } catch (err) {
-    console.error("[reservations PATCH id]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[reservations PATCH id] Failed to update reservation");
     return NextResponse.json({ error: "Error interno al actualizar la reserva" }, { status: 500 });
   }
 }
