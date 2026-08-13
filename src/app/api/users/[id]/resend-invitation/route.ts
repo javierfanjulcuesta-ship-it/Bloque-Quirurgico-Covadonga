@@ -44,8 +44,8 @@ export async function POST(
     let appUrl: string;
     try {
       appUrl = getAppUrl();
-    } catch (e) {
-      console.error("[resend-invitation] URL no configurada", e instanceof Error ? e.message : "Unknown error");
+    } catch {
+      console.error("[resend-invitation] Application URL unavailable");
       return NextResponse.json(
         { error: "La URL de la aplicación no está configurada" },
         { status: 503 },
@@ -88,9 +88,8 @@ export async function POST(
         invitedByName,
         normasTexto,
       });
-    } catch (sendErr) {
-      const sendMsg = sendErr instanceof Error ? sendErr.message : "Unknown email error";
-      console.error("[resend-invitation] error de envío", sendMsg);
+    } catch {
+      console.error("[resend-invitation] Invitation delivery failed");
 
       try {
         const rolledBack = await rollbackInvitationCredential(
@@ -104,10 +103,9 @@ export async function POST(
             "[resend-invitation] rollback omitido: la credencial volvió a cambiar tras iniciar el envío",
           );
         }
-      } catch (rollbackErr) {
+      } catch {
         console.error(
-          "[resend-invitation] CRITICAL: no se pudo intentar restaurar el passwordHash anterior",
-          rollbackErr instanceof Error ? rollbackErr.message : "Unknown rollback error",
+          "[resend-invitation] CRITICAL: credential rollback failed",
         );
       }
       return NextResponse.json({ error: "No se pudo enviar el correo de invitación" }, { status: 502 });
@@ -120,16 +118,15 @@ export async function POST(
         actorUserId: session?.userId,
         detailsJson: { targetEmail: user.email, targetRole: user.role },
       });
-    } catch (auditErr) {
+    } catch {
       console.error(
-        "[resend-invitation] invitación enviada pero no se pudo registrar auditoría",
-        auditErr instanceof Error ? auditErr.message : "Unknown audit error",
+        "[resend-invitation] Invitation sent but audit persistence failed",
       );
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[resend-invitation]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[resend-invitation] Request failed");
     return NextResponse.json({ error: "Error al reenviar invitación" }, { status: 500 });
   }
 }
