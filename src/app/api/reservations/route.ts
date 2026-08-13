@@ -19,8 +19,11 @@ import {
   coverageKeysMatchReservation,
 } from "@/lib/reservations/anesthetistAssignmentAccess";
 import { createReservationSchema, getReservationsQuerySchema } from "@/lib/validations/reservation";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 export const dynamic = "force-dynamic";
+
+const RESERVATION_WRITE_BODY_MAX_BYTES = 1024 * 1024;
 
 const RESERVATION_SELECT = {
   id: true,
@@ -182,14 +185,21 @@ export async function POST(request: Request) {
   const denyPerm = requirePermission(session!, "booking:create");
   if (denyPerm) return denyPerm;
 
+  const limitedBody = await readTextBodyWithLimit(request, RESERVATION_WRITE_BODY_MAX_BYTES);
+  if (!limitedBody.ok) {
+    return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+  }
+
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(limitedBody.text);
   } catch {
     return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
   }
 
-  const raw = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const raw = typeof body === "object" && body !== null && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : {};
   const { surgeonId: rawSurgeonId, ...reservationFields } = raw;
   const parsed = createReservationSchema.safeParse(reservationFields);
   if (!parsed.success) {
