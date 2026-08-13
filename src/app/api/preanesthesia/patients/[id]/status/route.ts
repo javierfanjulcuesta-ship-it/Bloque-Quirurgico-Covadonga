@@ -4,8 +4,11 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { setPreanesthesiaAssessment } from "@/lib/reservations/preanesthesiaAssessment";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 export const dynamic = "force-dynamic";
+
+const PREANESTHESIA_STATUS_BODY_MAX_BYTES = 8 * 1024;
 
 const bodySchema = z.object({
   status: z.enum(["NOT_FIT", "CLEAR_NOT_FIT"]),
@@ -31,9 +34,14 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "Paciente requerido" }, { status: 400 });
 
+    const limitedBody = await readTextBodyWithLimit(request, PREANESTHESIA_STATUS_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -52,8 +60,8 @@ export async function PATCH(
       patientId: outcome.patientId,
       preanesthesiaStatus: outcome.preanesthesiaStatus,
     });
-  } catch (err) {
-    console.error("[preanesthesia patient status PATCH]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[preanesthesia patient status PATCH] Request failed");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
