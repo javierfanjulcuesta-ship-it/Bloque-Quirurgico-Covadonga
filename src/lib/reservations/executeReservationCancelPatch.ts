@@ -10,6 +10,9 @@ import { canAccessBooking } from "@/lib/auth";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { cancelReservationSchema } from "@/lib/validations/reservation";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
+
+const RESERVATION_CANCEL_BODY_MAX_BYTES = 64 * 1024;
 
 export async function executeReservationCancelPatch(request: Request, id: string): Promise<NextResponse> {
   try {
@@ -29,9 +32,14 @@ export async function executeReservationCancelPatch(request: Request, id: string
       return NextResponse.json({ error: "No tiene permiso para cancelar esta reserva" }, { status: 403 });
     }
 
+    const limitedBody = await readTextBodyWithLimit(request, RESERVATION_CANCEL_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown = {};
     try {
-      body = await request.json();
+      body = limitedBody.text.trim().length > 0 ? JSON.parse(limitedBody.text) : {};
     } catch {
       body = {};
     }
@@ -133,8 +141,8 @@ export async function executeReservationCancelPatch(request: Request, id: string
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva cancelada pero no encontrada" }, { status: 500 });
     return NextResponse.json({ reservation: toApiReservation(updated as Parameters<typeof toApiReservation>[0]) });
-  } catch (err) {
-    console.error("[reservations cancel]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[reservations cancel] Failed to cancel reservation");
     return NextResponse.json({ error: "Error al cancelar reserva" }, { status: 500 });
   }
 }
