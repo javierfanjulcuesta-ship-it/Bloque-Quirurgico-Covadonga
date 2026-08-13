@@ -15,8 +15,10 @@ import { verifyPassword } from "@/lib/auth/password";
 import { sendNewUserInvitationEmail } from "@/lib/email/outlookService";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { getAppUrl } from "@/lib/appUrl";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const SEND_INVITATION_BODY_MAX_BYTES = 16 * 1024;
 
 export async function POST(request: Request) {
   try {
@@ -28,13 +30,18 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
+    const limitedBody = await readTextBodyWithLimit(request, SEND_INVITATION_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
     }
     const input = body as Record<string, unknown>;
@@ -82,8 +89,8 @@ export async function POST(request: Request) {
     let appUrl: string;
     try {
       appUrl = getAppUrl();
-    } catch (e) {
-      console.error("[email send-invitation] URL no configurada", e instanceof Error ? e.message : "Unknown error");
+    } catch {
+      console.error("[email send-invitation] Application URL unavailable");
       return NextResponse.json({ error: "La URL de la aplicación no está configurada" }, { status: 503 });
     }
 
@@ -100,8 +107,8 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[email send-invitation]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[email send-invitation] Invitation delivery failed");
     return NextResponse.json({ error: "Error al enviar invitación" }, { status: 500 });
   }
 }
