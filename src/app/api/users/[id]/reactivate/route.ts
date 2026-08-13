@@ -26,8 +26,8 @@ export async function PATCH(
     if (result.code === "NOT_FOUND") return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     if (result.code === "ALREADY_ACTIVE") return NextResponse.json({ error: "El usuario ya está activo" }, { status: 400 });
     return NextResponse.json({ error: "No se pudo reactivar el usuario" }, { status: 409 });
-  } catch (err) {
-    console.error("[users reactivate]", err);
+  } catch {
+    console.error("[users reactivate] Failed to reactivate user");
     return NextResponse.json({ error: "Error al reactivar" }, { status: 500 });
   }
 }
