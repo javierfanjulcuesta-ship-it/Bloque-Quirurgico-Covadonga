@@ -13,9 +13,11 @@ import { generateTemporaryPassword } from "@/lib/auth/temporaryPassword";
 import { roleToFrontend, roleToPrisma } from "@/lib/roleMapping";
 import type { UserRole } from "@/lib/types";
 import { createUserWithAudit } from "@/lib/users/userCreationService";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
 const SESPA_ROLES = new Set<UserRole>(["anestesista", "gestor-anestesista"]);
+const USER_CREATE_BODY_MAX_BYTES = 16 * 1024;
 
 function emailToDisplayName(email: string): string {
   const local = email.split("@")[0] ?? "Usuario";
@@ -38,13 +40,18 @@ export async function POST(request: Request) {
     const denyPerm = requirePermission(session!, "user:create");
     if (denyPerm) return denyPerm;
 
+    const limitedBody = await readTextBodyWithLimit(request, USER_CREATE_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
     }
     const input = body as Record<string, unknown>;
@@ -88,8 +95,8 @@ export async function POST(request: Request) {
       },
       tempPassword,
     });
-  } catch (err) {
-    console.error("[USERS] ERROR", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[USERS POST] Error creating user");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
@@ -160,8 +167,8 @@ export async function GET(request: Request) {
         }));
 
     return NextResponse.json({ users });
-  } catch (err) {
-    console.error("[USERS GET]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[USERS GET] Error listing users");
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
