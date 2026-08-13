@@ -17,6 +17,7 @@ import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import type { User } from "@/lib/types";
 
 const LOGIN_REQUEST_MAX_BYTES = 8_192;
+const INVALID_CREDENTIALS_ERROR = "Credenciales inválidas";
 
 export async function POST(request: Request) {
   try {
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
 
     if (!dbUser || !dbUser.approved || dbUser.deletedAt != null) {
       return NextResponse.json(
-        { error: "Credenciales inválidas o usuario no aprobado" },
+        { error: INVALID_CREDENTIALS_ERROR },
         { status: 401 }
       );
     }
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
     const valid = await verifyPassword(password, dbUser.passwordHash);
     if (!valid) {
       return NextResponse.json(
-        { error: "Credenciales inválidas" },
+        { error: INVALID_CREDENTIALS_ERROR },
         { status: 401 }
       );
     }
