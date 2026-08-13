@@ -32,8 +32,8 @@ export async function PATCH(
       return NextResponse.json({ error: "No se puede desactivar el último gestor activo del sistema" }, { status: 409 });
     }
     return NextResponse.json({ error: "No se pudo desactivar el usuario" }, { status: 409 });
-  } catch (err) {
-    console.error("[users deactivate]", err);
+  } catch {
+    console.error("[users deactivate] Failed to deactivate user");
     return NextResponse.json({ error: "Error al desactivar" }, { status: 500 });
   }
 }
