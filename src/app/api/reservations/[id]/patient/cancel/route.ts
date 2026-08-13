@@ -12,8 +12,11 @@ import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/li
 import { isReservationRetentionStillAllowed } from "@/lib/schedulingDeadline";
 import { cancelPatientSchema } from "@/lib/validations/reservation";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
+import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 export const dynamic = "force-dynamic";
+
+const PATIENT_CANCEL_BODY_MAX_BYTES = 64 * 1024;
 
 export async function PATCH(
   request: Request,
@@ -37,9 +40,14 @@ export async function PATCH(
       return NextResponse.json({ error: "No tiene permiso para cancelar pacientes en esta reserva" }, { status: 403 });
     }
 
+    const limitedBody = await readTextBodyWithLimit(request, PATIENT_CANCEL_BODY_MAX_BYTES);
+    if (!limitedBody.ok) {
+      return NextResponse.json({ error: "Solicitud demasiado grande" }, { status: 413 });
+    }
+
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(limitedBody.text);
     } catch {
       return NextResponse.json({ error: "Cuerpo JSON inválido" }, { status: 400 });
     }
@@ -184,8 +192,8 @@ export async function PATCH(
       slotOutcome,
       message,
     });
-  } catch (err) {
-    console.error("[reservations patient/cancel]", err instanceof Error ? err.message : "Unknown error");
+  } catch {
+    console.error("[reservations patient/cancel] Failed to cancel patient");
     return NextResponse.json({ error: "Error al cancelar paciente" }, { status: 500 });
   }
 }
