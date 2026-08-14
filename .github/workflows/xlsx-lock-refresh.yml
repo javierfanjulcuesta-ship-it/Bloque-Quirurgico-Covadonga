@@ -1,0 +1,43 @@
+name: SheetJS dependency security guard
+
+on:
+  pull_request:
+    branches:
+      - hardening/integration
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+  push:
+    branches:
+      - hardening/integration
+    paths:
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  verify-sheetjs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify patched SheetJS package
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const expected = 'https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz';
+          const manifestSpec = pkg.dependencies?.xlsx;
+          const locked = lock.packages?.['node_modules/xlsx'];
+          if (manifestSpec !== expected) {
+            throw new Error(`Unexpected xlsx dependency spec: ${manifestSpec ?? '<missing>'}`);
+          }
+          if (locked?.version !== '0.20.3' || locked?.resolved !== expected) {
+            throw new Error(`Unexpected locked xlsx package: ${locked?.version ?? '<missing>'} ${locked?.resolved ?? ''}`);
+          }
+          NODE
