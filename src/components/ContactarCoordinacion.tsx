@@ -8,6 +8,7 @@ import { useState } from "react";
 import type { User } from "@/lib/types";
 import { hasGestorAccess } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
+import { modoDemo } from "@/lib/config";
 import { getProfile } from "@/lib/storagePerfiles";
 import { addMessageToGestor, addNotification } from "@/lib/storageMensajesYNotificaciones";
 
@@ -49,11 +50,16 @@ export function ContactarCoordinacion({ user }: ContactarCoordinacionProps) {
         message: `${user.name} ha enviado un mensaje: ${subject}`,
       });
     });
-    const gestorEmails = gestores
-      .map((g) => (getProfile(g.id)?.email ?? g.email)?.trim())
-      .filter((e): e is string => !!e && e.includes("@"));
+
+    // DEMO conserva el flujo íntegramente dentro del navegador. No debe leer correos
+    // persistidos de perfiles anteriores ni abrir un borrador dirigido a destinatarios reales.
+    const gestorEmails = modoDemo
+      ? []
+      : gestores
+          .map((g) => (getProfile(g.id)?.email ?? g.email)?.trim())
+          .filter((e): e is string => !!e && e.includes("@"));
     let openedMail = false;
-    if (gestorEmails.length > 0) {
+    if (!modoDemo && gestorEmails.length > 0) {
       const emailBody = `Mensaje enviado desde la aplicación Bloque Quirúrgico – Hospital Covadonga
 
 Remitente: ${user.name}${user.email ? ` (${user.email})` : ""}
@@ -76,17 +82,21 @@ ${body}`;
     <div className="rounded-xl border border-gray-200 bg-white p-6">
       <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Contactar coordinación</h2>
       <p className="mb-4 text-sm text-gray-600">
-        Los gestores recibirán una notificación en la aplicación.
+        {modoDemo
+          ? "Los gestores DEMO recibirán una notificación local en la aplicación. No se abrirá ni enviará correo."
+          : "Los gestores recibirán una notificación en la aplicación."}
       </p>
       {contactSent ? (
         <div className="rounded-lg bg-green-50 p-4 text-green-800">
           <p className="font-medium">Mensaje enviado correctamente.</p>
           <p className="mt-1 text-sm">
-            {openedMail
-              ? "Los gestores han recibido una notificación en la aplicación y se ha abierto su cliente de correo con las direcciones de correo del perfil de cada gestor."
-              : "Los gestores han recibido una notificación en la aplicación."}
+            {modoDemo
+              ? "El mensaje y las notificaciones se han guardado localmente en esta demostración; no se ha abierto ni enviado ningún correo."
+              : openedMail
+                ? "Los gestores han recibido una notificación en la aplicación y se ha abierto su cliente de correo con las direcciones de correo del perfil de cada gestor."
+                : "Los gestores han recibido una notificación en la aplicación."}
           </p>
-          {openedMail && (
+          {!modoDemo && openedMail && (
             <p className="mt-2 text-sm">Complete el envío del correo desde su cliente de correo.</p>
           )}
           <button type="button" onClick={() => { setContactSent(false); setOpenedMail(false); }} className="mt-2 text-sm font-medium text-[var(--ribera-red)] hover:underline">
