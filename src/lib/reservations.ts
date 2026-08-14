@@ -138,17 +138,17 @@ export async function cancelPatient(
       status: wasLastPatient && !retainEmptySlot ? "cancelled" : reservation.status,
     };
     addOrUpdateStoredReservation(updated);
+    void reason;
 
-    const suffix = reason?.trim() ? " Motivo registrado solo en esta demostración." : "";
     return Promise.resolve({
       reservation: updated,
       slotOutcome: wasLastPatient ? (retainEmptySlot ? "retained" : "released") : null,
       message:
         wasLastPatient
           ? retainEmptySlot
-            ? `Paciente anulado en DEMO. El hueco sigue reservado sin pacientes.${suffix}`
-            : `Paciente anulado en DEMO. El hueco queda liberado en la demostración.${suffix}`
-          : `Paciente anulado en DEMO.${suffix}`,
+            ? "Paciente anulado en DEMO. El hueco sigue reservado sin pacientes."
+            : "Paciente anulado en DEMO. El hueco queda liberado en la demostración."
+          : "Paciente anulado en DEMO.",
     });
   }
   return cancelReservationPatient(reservationId, patientId, reason);
