@@ -3,6 +3,7 @@
  * El buzón remitente se configura por entorno; no se hardcodean direcciones reales.
  *
  * Usa Microsoft Graph real si hay credenciales; si no, adaptador mock fuera de producción.
+ * Los deployments Vercel Preview fuerzan siempre el adaptador mock para evitar envíos reales.
  */
 
 import type { UserRole } from "@/lib/types";
@@ -17,7 +18,7 @@ import { createGraphOutlookAdapter, isGraphConfigured } from "./graphOutlookAdap
 import { createGmailAdapter, isSmtpConfigured } from "./gmailAdapter";
 import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
-import { emailProviderUnavailableMessage, isEmailMockAllowed } from "./emailRuntimePolicy";
+import { emailProviderUnavailableMessage, isEmailMockAllowed, shouldForceEmailMock } from "./emailRuntimePolicy";
 import type { InboxMessage, EmailClassification, ParsedReservationEmail } from "./types";
 
 let _adapter: Awaited<ReturnType<typeof createMockOutlookAdapter>> | null = null;
@@ -31,6 +32,17 @@ function unavailableProviderError(provider?: "smtp" | "graph", cause?: unknown):
 
 async function getAdapter() {
   if (_adapter) return _adapter;
+
+  // Los previews son entornos de prueba: nunca deben usar proveedores de correo reales,
+  // incluso si Vercel hereda credenciales SMTP/Graph por error de configuración.
+  if (shouldForceEmailMock(process.env.VERCEL_ENV)) {
+    _adapter = createMockOutlookAdapter();
+    _adapterMode = "mock";
+    if (process.env.NODE_ENV !== "test") {
+      console.warn("[Email] Vercel Preview: envío real deshabilitado; usando mock.");
+    }
+    return _adapter;
+  }
 
   // Prioridad: SMTP → Graph → Mock. En producción nunca se degrada silenciosamente a mock.
   if (isSmtpConfigured()) {

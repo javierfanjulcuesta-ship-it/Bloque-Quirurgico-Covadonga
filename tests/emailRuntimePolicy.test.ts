@@ -1,15 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { emailProviderUnavailableMessage, isEmailMockAllowed } from "../src/lib/email/emailRuntimePolicy";
+import {
+  emailProviderUnavailableMessage,
+  isEmailMockAllowed,
+  shouldForceEmailMock,
+} from "../src/lib/email/emailRuntimePolicy";
 
-test("email mock is forbidden in production", () => {
-  assert.equal(isEmailMockAllowed("production"), false);
+test("email mock is forbidden in production outside preview", () => {
+  assert.equal(isEmailMockAllowed("production", "production"), false);
+  assert.equal(isEmailMockAllowed("production", undefined), false);
+});
+
+test("Vercel preview always forces mock email", () => {
+  assert.equal(shouldForceEmailMock("preview"), true);
+  assert.equal(shouldForceEmailMock("production"), false);
+  assert.equal(isEmailMockAllowed("production", "preview"), true);
 });
 
 test("email mock remains available outside production", () => {
-  assert.equal(isEmailMockAllowed("development"), true);
-  assert.equal(isEmailMockAllowed("test"), true);
-  assert.equal(isEmailMockAllowed(undefined), true);
+  assert.equal(isEmailMockAllowed("development", "development"), true);
+  assert.equal(isEmailMockAllowed("test", "development"), true);
+  assert.equal(isEmailMockAllowed(undefined, "development"), true);
 });
 
 test("provider failures expose operational messages without secret material", () => {
