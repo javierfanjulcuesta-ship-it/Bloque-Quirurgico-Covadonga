@@ -66,10 +66,21 @@ test("test credentials must meet the minimum length", () => {
   });
 });
 
-test("npm showcase seed uses the guarded entrypoint", () => {
+test("npm showcase seed uses the canonical guarded entrypoint", () => {
   const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
     scripts?: Record<string, string>;
   };
 
-  assert.equal(packageJson.scripts?.["seed:showcase"], "npx tsx scripts/seedShowcaseSafe.ts");
+  assert.equal(packageJson.scripts?.["seed:showcase"], "npx tsx scripts/seedShowcase.ts");
+});
+
+test("canonical showcase entrypoint guards before loading destructive implementation", () => {
+  const source = readFileSync("scripts/seedShowcase.ts", "utf8");
+  const allowedIndex = source.indexOf("assertSeedAllowed");
+  const confirmationIndex = source.indexOf("requireSeedConfirmation");
+  const importIndex = source.indexOf('import("./lib/seedShowcaseImplementation")');
+
+  assert.ok(allowedIndex >= 0, "canonical entrypoint must check environment safety");
+  assert.ok(confirmationIndex > allowedIndex, "confirmation must follow environment safety check");
+  assert.ok(importIndex > confirmationIndex, "destructive implementation must load only after both guards");
 });
