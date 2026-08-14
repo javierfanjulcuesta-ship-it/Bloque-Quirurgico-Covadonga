@@ -15,6 +15,12 @@ export interface DemoAuditEvent {
 
 const DEMO_AUDIT_STORAGE_KEY = "qxflow:isolated-demo:v1:audit";
 const MAX_DEMO_AUDIT_EVENTS = 250;
+const DEMO_AUDIT_ACTIONS = new Set<DemoAuditAction>([
+  "reservation.created",
+  "reservation.cancelled",
+  "patient.updated",
+  "patient.cancelled",
+]);
 
 function getStorage(): Storage | null {
   if (typeof window === "undefined") return null;
@@ -34,6 +40,7 @@ export function getDemoAuditEvents(): DemoAuditEvent[] {
         typeof candidate.id === "string" &&
         typeof candidate.timestamp === "string" &&
         typeof candidate.action === "string" &&
+        DEMO_AUDIT_ACTIONS.has(candidate.action as DemoAuditAction) &&
         (candidate.entityType === "reservation" || candidate.entityType === "patient") &&
         typeof candidate.entityId === "string" &&
         typeof candidate.reservationId === "string"
@@ -54,13 +61,22 @@ export function recordDemoAuditEvent(
     id: `demo-audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
   };
-  const events = [...getDemoAuditEvents(), next].slice(-MAX_DEMO_AUDIT_EVENTS);
-  storage.setItem(DEMO_AUDIT_STORAGE_KEY, JSON.stringify(events));
-  return next;
+  try {
+    const events = [...getDemoAuditEvents(), next].slice(-MAX_DEMO_AUDIT_EVENTS);
+    storage.setItem(DEMO_AUDIT_STORAGE_KEY, JSON.stringify(events));
+    return next;
+  } catch {
+    // La auditoría DEMO es auxiliar: una cuota/bloqueo de localStorage nunca debe romper la operación simulada.
+    return null;
+  }
 }
 
 export function clearDemoAuditEvents(): void {
-  getStorage()?.removeItem(DEMO_AUDIT_STORAGE_KEY);
+  try {
+    getStorage()?.removeItem(DEMO_AUDIT_STORAGE_KEY);
+  } catch {
+    // Sin efecto: la limpieza DEMO tampoco debe romper la interfaz si el almacenamiento no está disponible.
+  }
 }
 
 export { DEMO_AUDIT_STORAGE_KEY };
