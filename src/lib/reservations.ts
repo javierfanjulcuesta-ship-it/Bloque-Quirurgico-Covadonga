@@ -8,6 +8,7 @@ import type { Reservation, PatientInBlock } from "./types";
 import { modoDemo } from "./config";
 import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMensajesYNotificaciones";
 import { isReservationRetentionStillAllowed } from "./schedulingDeadline";
+import { recordDemoAuditEvent } from "./demoAudit";
 import {
   fetchReservations,
   createReservation,
@@ -73,6 +74,12 @@ export async function createReservationEntry(data: CreateReservationData): Promi
       createdAt: now,
     };
     addOrUpdateStoredReservation(res);
+    recordDemoAuditEvent({
+      action: "reservation.created",
+      entityType: "reservation",
+      entityId: res.id,
+      reservationId: res.id,
+    });
     return Promise.resolve(res);
   }
   const apiPatients = (data.patients ?? []).map((p, i) => mapPatientToApi({ ...p, order: i }));
@@ -138,6 +145,12 @@ export async function cancelPatient(
       status: wasLastPatient && !retainEmptySlot ? "cancelled" : reservation.status,
     };
     addOrUpdateStoredReservation(updated);
+    recordDemoAuditEvent({
+      action: "patient.cancelled",
+      entityType: "patient",
+      entityId: patientId,
+      reservationId,
+    });
     void reason;
 
     return Promise.resolve({
@@ -167,6 +180,12 @@ export async function cancelReservationEntry(
     }
     const updated: Reservation = { ...reservation, status: "cancelled" };
     addOrUpdateStoredReservation(updated);
+    recordDemoAuditEvent({
+      action: "reservation.cancelled",
+      entityType: "reservation",
+      entityId: reservationId,
+      reservationId,
+    });
     void reason;
     void opts;
     return Promise.resolve(updated);
@@ -205,6 +224,12 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     patients[patientIndex] = applyDefinedPatientFields(patients[patientIndex]!, data);
     const updated: Reservation = { ...reservation, patients };
     addOrUpdateStoredReservation(updated);
+    recordDemoAuditEvent({
+      action: "patient.updated",
+      entityType: "patient",
+      entityId: data.patientId,
+      reservationId: data.reservationId,
+    });
     return Promise.resolve(updated);
   }
   return updateReservationPatientApi(data.reservationId, data.patientId, {
