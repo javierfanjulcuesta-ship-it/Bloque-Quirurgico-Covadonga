@@ -1,14 +1,22 @@
-export function isIsolatedDemoServerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (
-    env.QXFLOW_ISOLATED_DEMO === "true" ||
-    env.NEXT_PUBLIC_DEPLOYMENT_MODE === "isolated-demo"
-  );
+export function isIsolatedDemoServerEnabled({
+  runtimeServerFlag,
+  buildPublicMode,
+}: {
+  runtimeServerFlag: string | undefined;
+  buildPublicMode: string | undefined;
+}): boolean {
+  return runtimeServerFlag === "true" || buildPublicMode === "isolated-demo";
 }
 
 export function shouldBlockIsolatedDemoPath(
   pathname: string,
-  env: NodeJS.ProcessEnv = process.env,
+  signals: {
+    runtimeServerFlag: string | undefined;
+    buildPublicMode: string | undefined;
+  },
 ): boolean {
-  return isIsolatedDemoServerEnabled(env) &&
-    (pathname === "/api" || pathname.startsWith("/api/"));
+  return (
+    isIsolatedDemoServerEnabled(signals) &&
+    (pathname === "/api" || pathname.startsWith("/api/"))
+  );
 }
