@@ -7,6 +7,7 @@
 import type { Reservation, PatientInBlock } from "./types";
 import { modoDemo } from "./config";
 import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMensajesYNotificaciones";
+import { isReservationRetentionStillAllowed } from "./schedulingDeadline";
 import {
   fetchReservations,
   createReservation,
@@ -107,14 +108,48 @@ export interface UpdatePatientData {
   patientPhone?: string;
 }
 
-/** Cancelar un paciente. En modoDemo no disponible (usa API real si useRealReservationsApi). */
+/**
+ * Cancela un paciente.
+ * En DEMO opera solo sobre localStorage y reproduce la política ya existente de retención:
+ * si era el último paciente, el tramo queda vacío mientras siga dentro del plazo; pasado el
+ * cierre, la reserva local se marca cancelada para que el hueco vuelva a quedar disponible.
+ */
 export async function cancelPatient(
   reservationId: string,
   patientId: string,
   reason?: string
 ): Promise<CancelPatientResult> {
   if (modoDemo) {
-    throw new ReservationsApiError("Cancelar paciente no disponible en modo demo.", 400);
+    const reservation = getStoredReservations().find((item) => item.id === reservationId);
+    if (!reservation || reservation.status === "cancelled") {
+      throw new ReservationsApiError("Reserva DEMO no encontrada.", 404);
+    }
+    const patientIndex = reservation.patients.findIndex((patient) => patient.id === patientId);
+    if (patientIndex < 0) {
+      throw new ReservationsApiError("Paciente DEMO no encontrado.", 404);
+    }
+
+    const patients = reservation.patients.filter((patient) => patient.id !== patientId);
+    const wasLastPatient = patients.length === 0;
+    const retainEmptySlot = wasLastPatient && isReservationRetentionStillAllowed(reservation.date);
+    const updated: Reservation = {
+      ...reservation,
+      patients,
+      status: wasLastPatient && !retainEmptySlot ? "cancelled" : reservation.status,
+    };
+    addOrUpdateStoredReservation(updated);
+    void reason;
+
+    return Promise.resolve({
+      reservation: updated,
+      slotOutcome: wasLastPatient ? (retainEmptySlot ? "retained" : "released") : null,
+      message:
+        wasLastPatient
+          ? retainEmptySlot
+            ? "Paciente anulado en DEMO. El hueco sigue reservado sin pacientes."
+            : "Paciente anulado en DEMO. El hueco queda liberado en la demostración."
+          : "Paciente anulado en DEMO.",
+    });
   }
   return cancelReservationPatient(reservationId, patientId, reason);
 }
@@ -126,7 +161,15 @@ export async function cancelReservationEntry(
   opts?: { force?: boolean }
 ): Promise<Reservation> {
   if (modoDemo) {
-    throw new ReservationsApiError("Cancelar reserva no disponible en modo demo.", 400);
+    const reservation = getStoredReservations().find((item) => item.id === reservationId);
+    if (!reservation || reservation.status === "cancelled") {
+      throw new ReservationsApiError("Reserva DEMO no encontrada.", 404);
+    }
+    const updated: Reservation = { ...reservation, status: "cancelled" };
+    addOrUpdateStoredReservation(updated);
+    void reason;
+    void opts;
+    return Promise.resolve(updated);
   }
   return cancelReservationApi(reservationId, reason, opts);
 }
