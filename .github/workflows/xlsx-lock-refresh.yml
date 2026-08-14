@@ -1,39 +1,43 @@
-name: Temporary xlsx lock refresh
+name: SheetJS dependency security guard
 
 on:
-  push:
+  pull_request:
     branches:
-      - hardening/xlsx-security-update
+      - hardening/integration
+      - main
     paths:
       - package.json
+      - package-lock.json
+  push:
+    branches:
+      - hardening/integration
+    paths:
+      - package.json
+      - package-lock.json
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  refresh-lock:
+  verify-sheetjs:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout hardening branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: hardening/xlsx-security-update
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - name: Refresh package lock without lifecycle scripts
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Commit refreshed lock
+      - name: Verify patched SheetJS package
         shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "package-lock.json already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore(deps): refresh lock for SheetJS security update"
-          git push origin HEAD:hardening/xlsx-security-update
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const expected = 'https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz';
+          const manifestSpec = pkg.dependencies?.xlsx;
+          const locked = lock.packages?.['node_modules/xlsx'];
+          if (manifestSpec !== expected) {
+            throw new Error(`Unexpected xlsx dependency spec: ${manifestSpec ?? '<missing>'}`);
+          }
+          if (locked?.version !== '0.20.3' || locked?.resolved !== expected) {
+            throw new Error(`Unexpected locked xlsx package: ${locked?.version ?? '<missing>'} ${locked?.resolved ?? ''}`);
+          }
+          NODE
