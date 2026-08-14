@@ -72,8 +72,11 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
       if (r.date < from || r.date > to || !r.patients?.length) return;
       const surgeon = users.find((u) => u.id === r.surgeonId);
       const surgeonName = surgeon?.name ?? "Cirujano";
-      const surgeonEmail =
-        (getProfile(r.surgeonId)?.email?.trim() || surgeon?.email?.trim()) || null;
+      // En DEMO no se leen perfiles persistidos ni destinatarios de correo: incluso si el
+      // navegador conserva datos de otra sesión, no deben entrar en un flujo sintético.
+      const surgeonEmail = modoDemo
+        ? null
+        : (getProfile(r.surgeonId)?.email?.trim() || surgeon?.email?.trim()) || null;
       const resourceLabel = RESOURCES.find((res) => res.id === r.resourceId)?.label ?? r.resourceId;
       r.patients.forEach((p) => {
         const key = `${r.id}-${p.id}`;
@@ -86,7 +89,7 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
           dateStr: r.date,
           resourceLabel,
           surgeonName,
-          surgeonEmail: surgeonEmail || null,
+          surgeonEmail,
           alreadyNoApto: persistedNoApto || locallyMarked.has(key),
         });
       });
@@ -112,11 +115,11 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
       });
       setNoAptoDone(key);
 
-      // El correo sigue siendo una acción explícita del cliente; el estado clínico ya quedó
-      // persistido antes de abrirlo. No se afirma que el correo se haya enviado.
-      const subject = getPacienteNoAptoSubject();
-      const body = getPacienteNoAptoBody(getApellidoFromName(row.surgeonName));
-      if (row.surgeonEmail) {
+      // En modo real, el correo sigue siendo una acción explícita del cliente y el estado
+      // clínico ya quedó persistido antes de abrirlo. DEMO nunca construye ni abre mailto:.
+      if (!modoDemo && row.surgeonEmail) {
+        const subject = getPacienteNoAptoSubject();
+        const body = getPacienteNoAptoBody(getApellidoFromName(row.surgeonName));
         const mailto = buildMailtoLink(row.surgeonEmail, subject, body);
         window.open(mailto, "_blank");
       }
@@ -131,7 +134,7 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
     <section className="rounded-xl border border-gray-200 bg-white p-6">
       <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Valoración consulta de preanestesia</h2>
       <p className="mb-4 text-sm text-gray-600">
-        Los pacientes programados esta semana se asignan automáticamente a la consulta (lunes y jueves, mañana). Puede marcar como &quot;no apto&quot; a un paciente; la valoración queda registrada y, si hay correo del cirujano, se abrirá un borrador para notificarle.
+        Los pacientes programados esta semana se asignan automáticamente a la consulta (lunes y jueves, mañana). Puede marcar como &quot;no apto&quot; a un paciente; la valoración queda registrada{modoDemo ? " localmente en esta demostración." : " y, si hay correo del cirujano, se abrirá un borrador para notificarle."}
       </p>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-100 bg-red-50/50 px-4 py-3">
@@ -200,7 +203,9 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
 
       {noAptoDone && (
         <p className="mt-4 rounded-lg bg-green-50 p-3 text-sm text-green-800">
-          La valoración &quot;no apto&quot; ha quedado registrada. Si se abrió un borrador de correo, complete el envío desde su cliente.
+          {modoDemo
+            ? "La valoración \"no apto\" ha quedado registrada localmente en la demostración; no se ha abierto ni enviado ningún correo."
+            : "La valoración \"no apto\" ha quedado registrada. Si se abrió un borrador de correo, complete el envío desde su cliente."}
         </p>
       )}
     </section>
