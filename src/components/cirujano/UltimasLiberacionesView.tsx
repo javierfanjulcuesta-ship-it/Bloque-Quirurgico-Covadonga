@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { modoDemo } from "@/lib/config";
 
 interface ReleasedSlot {
   date: string;
@@ -20,10 +21,12 @@ interface UltimasLiberacionesViewProps {
 
 export function UltimasLiberacionesView({ onGoToReservar }: UltimasLiberacionesViewProps) {
   const [releases, setReleases] = useState<ReleasedSlot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!modoDemo);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (modoDemo) return;
+
     fetch("/api/common-pool-releases")
       .then((r) => {
         if (!r.ok) throw new Error("Error al cargar");
@@ -59,6 +62,17 @@ export function UltimasLiberacionesView({ onGoToReservar }: UltimasLiberacionesV
       return "";
     }
   };
+
+  if (modoDemo) {
+    return (
+      <section className="rounded-xl border border-gray-200 bg-white p-6">
+        <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Últimas liberaciones a bolsa común</h2>
+        <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-center text-sm text-gray-600">
+          No disponible en modo demostración.
+        </p>
+      </section>
+    );
+  }
 
   if (loading) {
     return (
