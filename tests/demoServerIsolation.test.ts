@@ -8,17 +8,36 @@ import {
 
 test("server isolation enables from either explicit isolated-demo signal", () => {
   assert.equal(
-    isIsolatedDemoServerEnabled({ QXFLOW_ISOLATED_DEMO: "true" } as NodeJS.ProcessEnv),
+    isIsolatedDemoServerEnabled({
+      runtimeServerFlag: "true",
+      buildPublicMode: undefined,
+    }),
     true,
   );
   assert.equal(
-    isIsolatedDemoServerEnabled({ NEXT_PUBLIC_DEPLOYMENT_MODE: "isolated-demo" } as NodeJS.ProcessEnv),
+    isIsolatedDemoServerEnabled({
+      runtimeServerFlag: undefined,
+      buildPublicMode: "isolated-demo",
+    }),
+    true,
+  );
+});
+
+test("build-time isolated-demo signal still blocks API if runtime public env is absent", () => {
+  assert.equal(
+    shouldBlockIsolatedDemoPath("/api/reservations", {
+      runtimeServerFlag: undefined,
+      buildPublicMode: "isolated-demo",
+    }),
     true,
   );
 });
 
 test("isolated demo blocks every API surface before route code", () => {
-  const env = { QXFLOW_ISOLATED_DEMO: "true" } as NodeJS.ProcessEnv;
+  const signals = {
+    runtimeServerFlag: "true",
+    buildPublicMode: undefined,
+  };
   const protectedPaths = [
     "/api/reservations",
     "/api/preanesthesia/demo",
@@ -31,13 +50,22 @@ test("isolated demo blocks every API surface before route code", () => {
   ];
 
   for (const pathname of protectedPaths) {
-    assert.equal(shouldBlockIsolatedDemoPath(pathname, env), true, pathname);
+    assert.equal(shouldBlockIsolatedDemoPath(pathname, signals), true, pathname);
   }
 });
 
 test("server isolation does not block application pages or real mode", () => {
-  const isolatedEnv = { QXFLOW_ISOLATED_DEMO: "true" } as NodeJS.ProcessEnv;
-  assert.equal(shouldBlockIsolatedDemoPath("/", isolatedEnv), false);
-  assert.equal(shouldBlockIsolatedDemoPath("/calendario", isolatedEnv), false);
-  assert.equal(shouldBlockIsolatedDemoPath("/api/reservations", {} as NodeJS.ProcessEnv), false);
+  const isolatedSignals = {
+    runtimeServerFlag: "true",
+    buildPublicMode: undefined,
+  };
+  assert.equal(shouldBlockIsolatedDemoPath("/", isolatedSignals), false);
+  assert.equal(shouldBlockIsolatedDemoPath("/calendario", isolatedSignals), false);
+  assert.equal(
+    shouldBlockIsolatedDemoPath("/api/reservations", {
+      runtimeServerFlag: undefined,
+      buildPublicMode: undefined,
+    }),
+    false,
+  );
 });
