@@ -34,6 +34,14 @@ El dominio `@prueba.test` identifica claramente estas cuentas como ficticias de 
 
 Los scripts bloquean su ejecución cuando detectan producción/Vercel y no imprimen la contraseña en los logs. Aun así, compruebe siempre que `DATABASE_URL` apunta al entorno de desarrollo correcto antes de ejecutar una operación de seed/reset.
 
+### Dataset showcase de reservas
+
+`npm run seed:showcase` es únicamente para una base de desarrollo/preproducción sin actividad real. Antes de ejecutarlo debe definir `ALLOW_SHOWCASE_SEED=I_UNDERSTAND_SHOWCASE_DATA_ONLY`.
+
+El comando está bloqueado en producción/Vercel y pasa por un entrypoint de seguridad antes de cargar el dataset. Aun así, es una operación destructiva dentro de su semana objetivo: elimina las reservas existentes de Q1, Q2 y Q3 en ese intervalo antes de insertar los casos ficticios de showcase.
+
+No ejecute `seed:showcase` contra una base que contenga programación quirúrgica real, pacientes reales o cualquier otro dato asistencial. Compruebe siempre la `DATABASE_URL` y `SHOWCASE_WEEK_MONDAY` antes de confirmar la operación.
+
 ---
 
 ## Flujos verificados
