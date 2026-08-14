@@ -1,5 +1,12 @@
-export function isEmailMockAllowed(nodeEnv: string | undefined): boolean {
-  return nodeEnv !== "production";
+export function shouldForceEmailMock(vercelEnv: string | undefined): boolean {
+  return vercelEnv === "preview";
+}
+
+export function isEmailMockAllowed(
+  nodeEnv: string | undefined,
+  vercelEnv: string | undefined = process.env.VERCEL_ENV,
+): boolean {
+  return shouldForceEmailMock(vercelEnv) || nodeEnv !== "production";
 }
 
 export function emailProviderUnavailableMessage(provider?: "smtp" | "graph"): string {
