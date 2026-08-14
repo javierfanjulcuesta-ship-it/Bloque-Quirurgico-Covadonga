@@ -131,10 +131,38 @@ export async function cancelReservationEntry(
   return cancelReservationApi(reservationId, reason, opts);
 }
 
+function applyDefinedPatientFields(patient: PatientInBlock, data: UpdatePatientData): PatientInBlock {
+  const next = { ...patient };
+  if (data.numeroHistoria !== undefined) next.numeroHistoria = data.numeroHistoria;
+  if (data.name !== undefined) next.name = data.name;
+  if (data.procedure !== undefined) next.procedure = data.procedure;
+  if (data.estimatedDurationMinutes !== undefined) next.estimatedDurationMinutes = data.estimatedDurationMinutes;
+  if (data.anesthesiaType !== undefined) next.anesthesiaType = data.anesthesiaType;
+  if (data.entidadFinanciadora !== undefined) next.entidadFinanciadora = data.entidadFinanciadora;
+  if (data.admissionType !== undefined) next.admissionType = data.admissionType;
+  if (data.notes !== undefined) next.notes = data.notes;
+  if (data.solicitudRecursos !== undefined) next.solicitudRecursos = data.solicitudRecursos;
+  if (data.patientEmail !== undefined) next.patientEmail = data.patientEmail.trim() || undefined;
+  if (data.patientPhone !== undefined) next.patientPhone = data.patientPhone.trim() || undefined;
+  return next;
+}
+
 /** Actualiza un paciente dentro de una reserva existente. */
 export async function updateReservationPatientEntry(data: UpdatePatientData): Promise<Reservation> {
   if (modoDemo) {
-    throw new ReservationsApiError("Editar paciente no disponible en modo demo.", 400);
+    const reservation = getStoredReservations().find((item) => item.id === data.reservationId);
+    if (!reservation) {
+      throw new ReservationsApiError("Reserva DEMO no encontrada.", 404);
+    }
+    const patientIndex = reservation.patients.findIndex((patient) => patient.id === data.patientId);
+    if (patientIndex < 0) {
+      throw new ReservationsApiError("Paciente DEMO no encontrado.", 404);
+    }
+    const patients = [...reservation.patients];
+    patients[patientIndex] = applyDefinedPatientFields(patients[patientIndex]!, data);
+    const updated: Reservation = { ...reservation, patients };
+    addOrUpdateStoredReservation(updated);
+    return Promise.resolve(updated);
   }
   return updateReservationPatientApi(data.reservationId, data.patientId, {
     historyNumber: data.numeroHistoria,
