@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "NEXT_PUBLIC_DEPLOYMENT_MODE=isolated-demo QXFLOW_ISOLATED_DEMO=true npm run build",
   "env": {
     "NEXT_PUBLIC_DEPLOYMENT_MODE": "isolated-demo",
     "QXFLOW_ISOLATED_DEMO": "true"
