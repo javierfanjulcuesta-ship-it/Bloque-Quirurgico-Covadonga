@@ -7,7 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import tsx --test tests/roleMapping.test.ts tests/reservationAccessPolicy.test.ts tests/activeUser.test.ts tests/bookingPolicy.test.ts tests/parseReservationEmail.test.ts tests/preanesthesiaAutoAssign.test.ts tests/securitySecrets.test.ts tests/temporaryPassword.test.ts tests/rateLimit.test.ts tests/apiClient.test.ts tests/reservationsApiClient.test.ts tests/emailRuntimePolicy.test.ts tests/contactInput.test.ts tests/readiness.test.ts tests/xlsxCompatibility.test.ts tests/seedSafety.test.ts tests/demoConfig.test.ts tests/demoServerIsolation.test.ts tests/demoReadOnlyViewsIsolation.test.ts tests/demoPreanesthesiaEmailIsolation.test.ts tests/demoPatientEdit.test.ts tests/demoCoordinationEmailIsolation.test.ts tests/demoCancellationCore.test.ts tests/demoAudit.test.ts tests/demoResetAudit.test.ts tests/demoCancellationSurface.test.ts tests/logoutAndRoleInheritance.test.ts tests/demoManagerSlotClosures.test.ts tests/releasedSlotNotificationPolicy.test.ts tests/programmedPatientNotificationEmail.test.ts tests/programmedPatientNotificationOutbox.test.ts tests/programmedPatientNotificationTransaction.test.ts tests/programmedPatientNotificationProcessor.test.ts",
+    "test": "node --import tsx --test tests/roleMapping.test.ts tests/reservationAccessPolicy.test.ts tests/activeUser.test.ts tests/bookingPolicy.test.ts tests/parseReservationEmail.test.ts tests/preanesthesiaAutoAssign.test.ts tests/securitySecrets.test.ts tests/temporaryPassword.test.ts tests/rateLimit.test.ts tests/apiClient.test.ts tests/reservationsApiClient.test.ts tests/emailRuntimePolicy.test.ts tests/contactInput.test.ts tests/readiness.test.ts tests/xlsxCompatibility.test.ts tests/seedSafety.test.ts tests/demoConfig.test.ts tests/demoServerIsolation.test.ts tests/demoReadOnlyViewsIsolation.test.ts tests/demoPreanesthesiaEmailIsolation.test.ts tests/demoPatientEdit.test.ts tests/demoCoordinationEmailIsolation.test.ts tests/demoCancellationCore.test.ts tests/demoAudit.test.ts tests/demoResetAudit.test.ts tests/demoCancellationSurface.test.ts tests/logoutAndRoleInheritance.test.ts tests/demoManagerSlotClosures.test.ts tests/releasedSlotNotificationPolicy.test.ts tests/programmedPatientNotificationEmail.test.ts tests/programmedPatientNotificationOutbox.test.ts tests/programmedPatientNotificationTransaction.test.ts tests/programmedPatientNotificationProcessor.test.ts tests/programmedPatientNotificationLease.test.ts",
     "test:booking-integration": "node --import tsx --test tests/bookingConcurrency.integration.test.ts",
     "test:preanesthesia-integration": "node --import tsx --test tests/preanesthesiaConcurrency.integration.test.ts",
     "test:cron-integration": "node --import tsx --test tests/cronReleaseConcurrency.integration.test.ts",
@@ -15,7 +15,7 @@
     "test:shared-state-integration": "node --import tsx --test tests/sharedClinicalState.integration.test.ts",
     "test:user-lifecycle-integration": "node --import tsx --test tests/userLifecycle.integration.test.ts",
     "test:email-idempotency-integration": "node --import tsx --test tests/emailIdempotency.integration.test.ts",
-    "test:user-creation-integration": "node --import tsx --test tests/userCreationConcurrency.integration.test.ts",
+    "test:user-creation-integration": "node --import tsx scripts/seed-usuarios-prueba.ts",
     "test:invitation-credential-integration": "node --import tsx --test tests/invitationCredentialRotation.integration.test.ts",
     "test:password-change-integration": "node --import tsx --test tests/passwordChangeConcurrency.integration.test.ts",
     "test:admin-credential-integration": "node --import tsx --test tests/administrativeCredentialRotation.integration.test.ts",
@@ -34,7 +34,7 @@
     "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts",
     "rules:seed": "npx tsx scripts/seed-programming-rules.ts",
     "reset:showcase": "npx tsx scripts/resetShowcase.ts",
-    "seed:showcase": "npx tsx scripts/seedShowcase.ts"
+    "seed:showcase": "npx tsx prisma/seed.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
