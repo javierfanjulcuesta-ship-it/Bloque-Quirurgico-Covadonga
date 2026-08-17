@@ -8,11 +8,6 @@ export interface EnqueueProgrammedPatientsAfterSchedulingParams {
   reservationId: string;
   patientIds: string[];
   recipientEmail: string | null;
-  date: string;
-  resourceId: string;
-  shift: "morning" | "afternoon";
-  slotIndex: number;
-  surgeonId: string;
 }
 
 export function formatPreanesthesiaAppointmentMadrid(value: Date | null): string | null {
@@ -32,7 +27,8 @@ export function formatPreanesthesiaAppointmentMadrid(value: Date | null): string
 
 /**
  * Runs inside the scheduling transaction, after phase-2 preanesthesia assignment.
- * It only writes to the durable outbox; it never calls an external email provider.
+ * It reads the already-persisted scheduling context and writes only to the durable
+ * outbox; it never calls an external email provider.
  */
 export async function enqueueProgrammedPatientsAfterScheduling(
   tx: Prisma.TransactionClient,
@@ -41,11 +37,24 @@ export async function enqueueProgrammedPatientsAfterScheduling(
   const recipientEmail = params.recipientEmail?.trim().toLowerCase() ?? "";
   if (!recipientEmail || params.patientIds.length === 0) return;
 
-  const slot = getSlots(params.shift)[params.slotIndex];
+  const reservation = await tx.reservation.findUnique({
+    where: { id: params.reservationId },
+    select: {
+      date: true,
+      resourceId: true,
+      shift: true,
+      slotIndex: true,
+      surgeonId: true,
+    },
+  });
+  if (!reservation) throw new Error("Reserva no encontrada al preparar notificación de paciente programado");
+
+  const shift = reservation.shift === "MORNING" ? "morning" : "afternoon";
+  const slot = getSlots(shift)[reservation.slotIndex];
   if (!slot) throw new Error("Tramo horario no válido al preparar notificación de paciente programado");
 
   const [responsible, patients] = await Promise.all([
-    tx.user.findUnique({ where: { id: params.surgeonId }, select: { name: true } }),
+    tx.user.findUnique({ where: { id: reservation.surgeonId }, select: { name: true } }),
     tx.patientInBlock.findMany({
       where: { id: { in: params.patientIds }, reservationId: params.reservationId },
       select: {
@@ -68,9 +77,10 @@ export async function enqueueProgrammedPatientsAfterScheduling(
     }),
   ]);
 
-  const resourceLabel = RESOURCES.find((resource) => resource.id === params.resourceId)?.label ?? "No consta";
+  const resourceLabel = RESOURCES.find((resource) => resource.id === reservation.resourceId)?.label ?? "No consta";
   const responsibleProfessionalName = responsible?.name?.trim() || "No consta";
-  const shiftLabel = params.shift === "morning" ? "Mañana" : "Tarde";
+  const shiftLabel = shift === "morning" ? "Mañana" : "Tarde";
+  const surgeryDate = reservation.date.toISOString().slice(0, 10);
 
   for (const patient of patients) {
     const email = buildProgrammedPatientNotificationEmail({
@@ -88,7 +98,7 @@ export async function enqueueProgrammedPatientsAfterScheduling(
         patientPhone: patient.patientPhone,
       },
       surgery: {
-        date: params.date,
+        date: surgeryDate,
         startTime: slot.start,
         endTime: slot.end,
         resourceLabel,
