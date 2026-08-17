@@ -24,6 +24,7 @@ import {
   loadPreanesthesiaOccupiedKeys,
   todayYmdMadrid,
 } from "@/lib/reservations/preanesthesiaAutoAssign";
+import { enqueueProgrammedPatientsAfterScheduling } from "@/lib/email/enqueueProgrammedPatientAfterScheduling";
 
 export const WORKFLOW_MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED";
 export const PREANESTHESIA_SCHEDULED = "SCHEDULED";
@@ -299,6 +300,15 @@ export async function applyAndLogPatientCircuitPhase2InTransaction(
       extra: { preanesthesiaAppointmentAt: preanesthesiaAtIso },
     });
   }
+
+  // The management notification is queued only after every patient has reached its
+  // final persisted phase-2 state. This remains inside the caller's transaction, so
+  // reservation/patient/preanesthesia/outbox commit or roll back together.
+  await enqueueProgrammedPatientsAfterScheduling(tx, {
+    reservationId: params.reservationId,
+    patientIds: params.patients.map((patient) => patient.patientId),
+    recipientEmail: adminEmail,
+  });
 }
 
 /**
