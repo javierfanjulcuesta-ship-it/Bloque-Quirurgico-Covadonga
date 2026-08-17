@@ -34,7 +34,7 @@
     "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts",
     "rules:seed": "npx tsx scripts/seed-programming-rules.ts",
     "reset:showcase": "npx tsx scripts/resetShowcase.ts",
-    "seed:showcase": "npx tsx prisma/seed.ts"
+    "seed:showcase": "npx tsx scripts/seedShowcase.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
