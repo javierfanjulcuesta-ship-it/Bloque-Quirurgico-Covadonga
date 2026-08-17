@@ -232,9 +232,8 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     if (patientIndex < 0) {
       throw new ReservationsApiError("Paciente DEMO no encontrado.", 404);
     }
-    const patients = reservation.patients.map((patient) =>
-      patient.id === data.patientId ? applyDefinedPatientFields(patient, data) : patient
-    );
+    const patients = [...reservation.patients];
+    patients[patientIndex] = applyDefinedPatientFields(patients[patientIndex]!, data);
     const updated: Reservation = { ...reservation, patients };
     addOrUpdateStoredReservation(updated);
     recordDemoAuditEvent({
@@ -245,5 +244,17 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     });
     return Promise.resolve(updated);
   }
-  return updateReservationPatientApi(data);
+  return updateReservationPatientApi(data.reservationId, data.patientId, {
+    historyNumber: data.numeroHistoria,
+    fullName: data.name,
+    procedure: data.procedure,
+    estimatedDurationMinutes: data.estimatedDurationMinutes,
+    anesthesiaType: data.anesthesiaType,
+    insuranceType: data.entidadFinanciadora,
+    admissionType: data.admissionType,
+    notes: data.notes,
+    solicitudRecursos: data.solicitudRecursos,
+    patientEmail: data.patientEmail?.trim() || undefined,
+    patientPhone: data.patientPhone?.trim() || undefined,
+  });
 }
