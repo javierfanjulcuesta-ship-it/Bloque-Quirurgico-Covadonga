@@ -9,6 +9,7 @@ import { modoDemo } from "./config";
 import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMensajesYNotificaciones";
 import { isReservationRetentionStillAllowed } from "./schedulingDeadline";
 import { recordDemoAuditEvent } from "./demoAudit";
+import { isDemoSlotClosed } from "./demoBlockClosures";
 import {
   fetchReservations,
   createReservation,
@@ -54,6 +55,17 @@ export interface CreateReservationData {
 /** Crea una reserva (localStorage si modoDemo, API si no) */
 export async function createReservationEntry(data: CreateReservationData): Promise<Reservation> {
   if (modoDemo) {
+    if (
+      isDemoSlotClosed({
+        date: data.date,
+        resourceId: data.resourceId as Reservation["resourceId"],
+        shift: data.shift as Reservation["shift"],
+        slotIndex: data.slotIndex,
+      })
+    ) {
+      throw new ReservationsApiError("Este tramo está cerrado por gestión en la DEMO.", 409);
+    }
+
     const now = new Date().toISOString();
     const patientsWithId: PatientInBlock[] = (data.patients ?? []).map((p, i) => ({
       ...p,
