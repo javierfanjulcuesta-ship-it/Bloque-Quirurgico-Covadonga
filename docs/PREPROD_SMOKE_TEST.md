@@ -1,10 +1,10 @@
 # QxFlow — checklist de humo para preproducción aislada
 
-Objetivo: validar `preprod/isolated-demo` con datos exclusivamente ficticios y sin acceso a backend real, Supabase, correo, webhook o cron.
+Objetivo: validar `preprod/isolated-demo-week` con datos exclusivamente ficticios y sin acceso a backend real, Supabase, correo, webhook o cron.
 
 ## Precondiciones
 
-- Despliegue de Vercel en estado `READY` para la rama `preprod/isolated-demo`.
+- Despliegue de Vercel en estado `READY` para la rama `preprod/isolated-demo-week`.
 - `NEXT_PUBLIC_DEPLOYMENT_MODE=isolated-demo` activo durante el build.
 - `QXFLOW_ISOLATED_DEMO=true` activo en runtime.
 - No introducir nombres, NHC, correos, teléfonos ni otros datos reales durante la prueba.
@@ -24,7 +24,14 @@ Objetivo: validar `preprod/isolated-demo` con datos exclusivamente ficticios y s
 - [ ] Abrir una ruta `/api/*` de forma deliberada y confirmar respuesta de bloqueo `ISOLATED_DEMO_BACKEND_DISABLED` sin ejecutar lógica de aplicación.
 - [ ] Confirmar que ninguna acción DEMO abre `mailto:` ni intenta enviar correo.
 - [ ] Confirmar que normas/liberaciones/gestión de usuarios que no tienen fixture local muestran un estado neutral de “No disponible en modo demostración” y no llaman a `/api`.
-- [ ] Confirmar que el reset DEMO elimina reservas, mensajes, asignaciones, indisponibilidades y auditoría sintética del navegador.
+- [ ] Confirmar que el reset DEMO elimina reservas, mensajes, asignaciones, indisponibilidades, cierres locales y auditoría sintética del navegador.
+
+## Sesión y roles
+
+- [ ] Entrar con cualquier perfil, pulsar “Cerrar sesión” y confirmar que vuelve a la pantalla de acceso sin error ni rebote al workspace anterior.
+- [ ] Repetir el cierre de sesión desde al menos el espacio de cirujano y el calendario de gestor/anestesia.
+- [ ] Entrar como Gestor Anestesista Demo y confirmar que dispone de las superficies de gestor y de anestesista.
+- [ ] Confirmar que Gestor Anestesista conserva todos los permisos de ambos perfiles y no pierde funciones al cambiar entre módulos.
 
 ## Datos iniciales
 
@@ -46,17 +53,26 @@ Objetivo: validar `preprod/isolated-demo` con datos exclusivamente ficticios y s
 
 ## Cancelaciones DEMO
 
-El núcleo local de cancelación está implementado. La validación de interfaz debe hacerse solo cuando los controles estén visibles en el DEMO.
-
 - [ ] Cancelar un paciente de una reserva con varios pacientes y confirmar que solo desaparece ese paciente.
 - [ ] Cancelar el último paciente dentro del plazo de retención y confirmar que el hueco queda reservado vacío.
 - [ ] Cancelar el último paciente fuera del plazo de retención y confirmar que el hueco se libera según la política existente.
 - [ ] Cancelar una reserva completa y confirmar que el hueco queda marcado como cancelado/libre en DEMO.
 - [ ] Confirmar que ninguna cancelación ejecuta `/api/*`.
 
-## Gestor
+## Gestor — cierres de disponibilidad
 
-- [ ] Entrar como Gestor Demo.
+- [ ] Entrar como Gestor Demo o Gestor Anestesista Demo y abrir `/demo/cierres`.
+- [ ] Seleccionar una sola franja horaria de una sala y pulsar “Cerrar selección”.
+- [ ] Seleccionar varias franjas y varias salas y confirmar que se cierran exactamente las seleccionadas.
+- [ ] Usar “Seleccionar toda la mañana” y confirmar que puede cerrarse el turno completo de todas las salas.
+- [ ] Repetir con la tarde si procede.
+- [ ] Reabrir un único tramo cerrado y comprobar que los demás cierres permanecen.
+- [ ] Reabrir todos los cierres del día y comprobar que vuelven a estar disponibles.
+- [ ] Desde un perfil cirujano, intentar reservar un tramo cerrado y confirmar que la reserva es rechazada antes de persistirse.
+- [ ] Confirmar que el cierre/reapertura se guarda únicamente en el navegador y no ejecuta `/api/*`.
+
+## Gestor — resto de funciones
+
 - [ ] Revisar calendario global y visibilidad por roles.
 - [ ] Crear/programar una reserva ficticia para un cirujano ficticio si la UI DEMO lo permite.
 - [ ] Comprobar que gestión de usuarios reales está bloqueada/no disponible en DEMO.
@@ -87,6 +103,7 @@ El núcleo local de cancelación está implementado. La validación de interfaz 
 - [ ] Probar selección de varios tramos y confirmar contigüidad cuando corresponda.
 - [ ] Comprobar cálculo de duración/ocupación en varios tramos.
 - [ ] Verificar que reservas canceladas no bloquean huecos futuros en DEMO.
+- [ ] Verificar que cierres de gestión sí bloquean la creación local de nuevas reservas hasta su reapertura.
 
 ## Criterio de salida
 
@@ -96,7 +113,10 @@ La preproducción se considera apta para entrega al usuario cuando:
 2. La portada muestra acceso DEMO por perfiles ficticios.
 3. `/api/*` queda bloqueado por la frontera de servidor.
 4. No existe envío ni borrador de correo desde DEMO.
-5. Crear/editar/cancelar reservas y pacientes funciona de forma local o queda explícitamente identificado como pendiente de UI.
-6. Asignaciones, indisponibilidad y preanestesia funcionan con datos sintéticos.
-7. Reset y auditoría local funcionan sin restos entre sesiones.
-8. No se ha usado Supabase de producción ni ningún dato real durante la prueba.
+5. Crear/editar/cancelar reservas y pacientes funciona de forma local.
+6. Los cierres de gestión funcionan por tramo/sala/turno y bloquean la reserva local hasta reapertura.
+7. Gestor Anestesista mantiene la unión de permisos de gestor y anestesista.
+8. Logout vuelve de forma estable a la pantalla de acceso.
+9. Asignaciones, indisponibilidad y preanestesia funcionan con datos sintéticos.
+10. Reset y auditoría local funcionan sin restos entre sesiones.
+11. No se ha usado Supabase de producción ni ningún dato real durante la prueba.
