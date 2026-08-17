@@ -37,6 +37,11 @@ function writeDemoSlotClosures(closures: DemoSlotClosure[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(deduped));
 }
 
+export function isDemoSlotClosed(slot: DemoSlotClosure): boolean {
+  const target = keyOf(slot);
+  return getDemoSlotClosures().some((closure) => keyOf(closure) === target);
+}
+
 export function closeDemoSlots(slots: DemoSlotClosure[]): DemoSlotClosure[] {
   const merged = [...getDemoSlotClosures(), ...slots];
   writeDemoSlotClosures(merged);
