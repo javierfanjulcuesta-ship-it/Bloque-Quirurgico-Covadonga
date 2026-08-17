@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { NotificationOutboxStatus, PrismaClient } from "@prisma/client";
 import {
   PROGRAMMED_PATIENT_NOTIFICATION_LEASE_MS,
   PROGRAMMED_PATIENT_NOTIFICATION_MAX_ATTEMPTS,
@@ -14,8 +14,9 @@ export interface ProgrammedPatientLeaseStore {
 export function createPrismaProgrammedPatientLeaseStore(
   prisma: PrismaClient,
 ): ProgrammedPatientLeaseStore {
+  const eligibleStatuses: NotificationOutboxStatus[] = ["PENDING", "FAILED"];
   const eligibleWhere = (now: Date) => ({
-    status: { in: ["PENDING", "FAILED"] as const },
+    status: { in: eligibleStatuses },
     nextAttemptAt: { lte: now },
     attemptCount: { lt: PROGRAMMED_PATIENT_NOTIFICATION_MAX_ATTEMPTS },
     OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
