@@ -41,7 +41,7 @@ function setStoredUser(user: User | null) {
 interface AuthContextType {
   user: User | null;
   login: (user: User) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   loginWithPassword: (email: string, password: string) => Promise<{ ok: boolean; user?: User; error?: string }>;
   setUser: (user: User | null) => void;
   hydrated: boolean;
@@ -119,11 +119,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    if (!modoDemo) {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    }
+    // Vaciar primero el estado cliente evita que la pantalla de acceso vuelva a
+    // redirigir al workspace mientras la petición de logout real sigue en curso.
     setStoredUser(null);
     setUserState(null);
+
+    if (!modoDemo) {
+      try {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+      } catch {
+        // La navegación de salida debe seguir siendo segura aunque la red falle.
+        // La cookie httpOnly sigue siendo responsabilidad del endpoint real.
+      }
+    }
   }, []);
 
   const setUser = useCallback((u: User | null) => {
