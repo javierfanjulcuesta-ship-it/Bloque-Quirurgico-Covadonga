@@ -132,6 +132,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // La cookie httpOnly sigue siendo responsabilidad del endpoint real.
       }
     }
+
+    // El cierre de sesión es una responsabilidad central de autenticación, no de
+    // cada pantalla. El replace del navegador evita volver con Atrás a una vista
+    // autenticada y funciona igual en DEMO y en modo real. En la propia portada no
+    // recargamos innecesariamente.
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.location.replace("/");
+    }
   }, []);
 
   const setUser = useCallback((u: User | null) => {
