@@ -116,13 +116,13 @@ function deriveGlobalStatus(params: {
   preanesthesia: PreanesthesiaOperationalStatus;
   authorization: AuthorizationOperationalStatus;
   confirmation: ConfirmationOperationalStatus;
-  hasContact: boolean;
+  contactComplete: boolean;
 }): GestionCitasRow["globalStatus"] {
   if (
     params.preanesthesia === "NO_APTO" ||
     params.authorization === "DENEGADA" ||
     params.confirmation === "INCIDENCIA" ||
-    !params.hasContact
+    !params.contactComplete
   ) return "REQUIERE_ATENCION";
 
   const preResolved = params.preanesthesia === "APTO" || params.preanesthesia === "NO_PRECISA";
@@ -135,9 +135,9 @@ function priorityForRow(params: {
   preanesthesia: PreanesthesiaOperationalStatus;
   authorization: AuthorizationOperationalStatus;
   confirmation: ConfirmationOperationalStatus;
-  hasContact: boolean;
+  contactComplete: boolean;
 }): number {
-  if (!params.hasContact || params.preanesthesia === "NO_APTO" || params.authorization === "DENEGADA" || params.confirmation === "INCIDENCIA") return 10;
+  if (!params.contactComplete || params.preanesthesia === "NO_APTO" || params.authorization === "DENEGADA" || params.confirmation === "INCIDENCIA") return 10;
   if (params.confirmation === "PENDIENTE") return 20;
   if (params.confirmation === "NO_LOCALIZADO" || params.confirmation === "REQUIERE_NUEVA_LLAMADA") return 30;
   if (params.preanesthesia === "PENDIENTE_CON_CITA" || params.preanesthesia === "PENDIENTE_SIN_CITA") return 40;
@@ -159,7 +159,7 @@ export function buildGestionCitasRows(
       const confirmation = overlay?.confirmationStatus ?? "PENDIENTE";
       const preanesthesia = derivePreanesthesiaOperationalStatus(patient, now);
       const authorization = deriveAuthorizationOperationalStatus(patient, overlay);
-      const hasContact = !!(patient.patientPhone?.trim() || patient.patientEmail?.trim());
+      const contactComplete = !!(patient.patientPhone?.trim() && patient.patientEmail?.trim());
       const reasons: string[] = [];
       if (!patient.patientPhone?.trim()) reasons.push("Falta teléfono");
       if (!patient.patientEmail?.trim()) reasons.push("Falta email");
@@ -186,8 +186,8 @@ export function buildGestionCitasRows(
         authorizationStatus: authorization,
         confirmationStatus: confirmation,
         attemptCount: overlay?.attemptCount ?? 0,
-        globalStatus: deriveGlobalStatus({ preanesthesia, authorization, confirmation, hasContact }),
-        priority: priorityForRow({ preanesthesia, authorization, confirmation, hasContact }),
+        globalStatus: deriveGlobalStatus({ preanesthesia, authorization, confirmation, contactComplete }),
+        priority: priorityForRow({ preanesthesia, authorization, confirmation, contactComplete }),
         reasons,
       });
     }
