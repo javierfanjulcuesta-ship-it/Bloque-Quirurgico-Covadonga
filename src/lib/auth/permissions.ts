@@ -2,6 +2,7 @@
  * Sistema centralizado de permisos explícitos.
  * Jerarquía: ANESTESISTA < GESTOR < GESTOR_ANESTESISTA
  * CIRUJANO/ENDOSCOPISTA: permisos limitados.
+ * GESTION_CITAS: espacio operativo propio, sin permisos clínicos, de gestor ni de programación.
  * Validación siempre en backend. No confiar en el frontend.
  */
 
@@ -27,23 +28,29 @@ export type Permission =
   | "user:approve"
   | "or:open_close"
   | "contact:view"
-  | "rules:edit";
+  | "rules:edit"
+  | "appointments:view"
+  | "appointments:update-contact"
+  | "appointments:update-confirmation"
+  | "appointments:update-authorization";
 
-/** Rol normalizado (formato sesión). Compatible con Prisma UserRole. */
+/** Rol normalizado (formato sesión). Compatible con Prisma UserRole cuando se habilite el enum real. */
 export type Role =
   | "gestor"
   | "gestor-anestesista"
   | "anestesista"
   | "cirujano"
-  | "endoscopista";
+  | "endoscopista"
+  | "gestion-citas";
 
 /** Normaliza string de sesión a Role. Devuelve null si inválido. */
 export function normalizeRole(raw: string | undefined): Role | null {
   if (!raw || typeof raw !== "string") return null;
   const r = raw.trim().toLowerCase();
-  const valid: Role[] = ["gestor", "gestor-anestesista", "anestesista", "cirujano", "endoscopista"];
+  const valid: Role[] = ["gestor", "gestor-anestesista", "anestesista", "cirujano", "endoscopista", "gestion-citas"];
   if (valid.includes(r as Role)) return r as Role;
   if (r === "gestor_anestesista") return "gestor-anestesista";
+  if (r === "gestion_citas") return "gestion-citas";
   return null;
 }
 
@@ -72,6 +79,12 @@ const ROLE_PERMISSIONS_BASE: Record<Role, Permission[]> = {
   anestesista: [
     "booking:view:own",
     "schedule:view:own",
+  ],
+  "gestion-citas": [
+    "appointments:view",
+    "appointments:update-contact",
+    "appointments:update-confirmation",
+    "appointments:update-authorization",
   ],
   gestor: [
     "booking:create",
