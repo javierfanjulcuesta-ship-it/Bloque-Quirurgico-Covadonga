@@ -55,6 +55,11 @@ test("special local option is exact and normal Local still requires the anesthes
   assert.equal(isLocalWithoutAnesthetist("Sedación"), false);
 });
 
+test("surgeon programming exposes the exact local-without-anesthetist choice alongside normal Local", () => {
+  const source = readFileSync("src/components/cirujano/ProgramarPacientesModal.tsx", "utf8");
+  assert.match(source, /ANESTHESIA_OPTIONS\s*=\s*\[[^\]]*"Local"[^\]]*"Local \(no precisa anestesista\)"[^\]]*\]/s);
+});
+
 test("changing a normal anesthesia to local-without-anesthetist clears preanesthesia without consuming capacity", async () => {
   const f = fakeTx({});
   const result = await reconcilePreanesthesiaAfterAnesthesiaTypeChangeInTransaction(f.tx, {
