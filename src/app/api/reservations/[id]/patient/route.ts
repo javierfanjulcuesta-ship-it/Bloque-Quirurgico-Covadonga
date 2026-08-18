@@ -9,10 +9,7 @@ import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
-import {
-  defaultPatientCircuitColumns,
-  logPatientContactDryRunEvents,
-} from "@/lib/reservations/surgicalPatientCircuit";
+import { logPatientContactDryRunEvents } from "@/lib/reservations/surgicalPatientCircuit";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { updatePatientSchema } from "@/lib/validations/reservation";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
@@ -22,6 +19,7 @@ import {
   getActiveReservationsInContext,
 } from "@/lib/reservations/overflowConflicts";
 import { withSchedulingContextLock } from "@/lib/reservations/bookingContextLock";
+import { reconcilePreanesthesiaAfterAnesthesiaTypeChangeInTransaction } from "@/lib/reservations/reconcileAnesthesiaPreanesthesia";
 import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
 export const dynamic = "force-dynamic";
@@ -69,9 +67,8 @@ export async function PATCH(
     }
 
     const { patientId, ...updates } = parsed.data;
-    const contactOnlyUpdate = updates.patientEmail !== undefined || updates.patientPhone !== undefined;
-    const shouldReinitCircuitStatuses =
-      contactOnlyUpdate &&
+    const contactOnlyUpdate =
+      (updates.patientEmail !== undefined || updates.patientPhone !== undefined) &&
       updates.historyNumber === undefined &&
       updates.fullName === undefined &&
       updates.procedure === undefined &&
@@ -96,7 +93,6 @@ export async function PATCH(
     if (updates.solicitudRecursos !== undefined) data.solicitudRecursos = updates.solicitudRecursos;
     if (updates.patientEmail !== undefined) data.patientEmail = updates.patientEmail ?? null;
     if (updates.patientPhone !== undefined) data.patientPhone = updates.patientPhone ?? null;
-    if (shouldReinitCircuitStatuses) Object.assign(data, defaultPatientCircuitColumns());
 
     const dateStr = reservation.date instanceof Date
       ? reservation.date.toISOString().slice(0, 10)
@@ -156,6 +152,16 @@ export async function PATCH(
           where: { id: patientId },
           data: data as Prisma.PatientInBlockUpdateInput,
         });
+
+        const preanesthesiaTransition = updates.anesthesiaType !== undefined
+          ? await reconcilePreanesthesiaAfterAnesthesiaTypeChangeInTransaction(tx, {
+              patientId,
+              surgeryYmd: dateStr,
+              previousAnesthesiaType: livePatient.anesthesiaType,
+              nextAnesthesiaType: updates.anesthesiaType,
+            })
+          : { kind: "unchanged" as const };
+
         await tx.reservation.update({
           where: { id },
           data: { updatedByUserId: session!.userId },
@@ -165,6 +171,7 @@ export async function PATCH(
           kind: "updated" as const,
           oldEmail: livePatient.patientEmail,
           oldPhone: livePatient.patientPhone,
+          preanesthesiaTransition,
         };
       },
     );
@@ -196,7 +203,12 @@ export async function PATCH(
       reservationId: id,
       actorUserId: session!.userId,
       origin: "app",
-      detailsJson: { patientId, fields: Object.keys(updates) },
+      detailsJson: {
+        patientId,
+        fields: Object.keys(updates),
+        contactOnlyUpdate,
+        preanesthesiaTransition: lockedResult.preanesthesiaTransition.kind,
+      },
     });
 
     if (updates.patientEmail !== undefined || updates.patientPhone !== undefined) {
