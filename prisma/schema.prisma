@@ -199,6 +199,35 @@ enum EmailProcessingStatus {
   SKIPPED
 }
 
+enum NotificationOutboxStatus {
+  PENDING
+  FAILED
+  SENT
+}
+
+model ProgrammedPatientNotificationOutbox {
+  id             String                   @id @default(cuid())
+  idempotencyKey String                   @unique
+  reservationId  String
+  patientId      String
+  recipientEmail String
+  subject        String
+  bodyText       String?                  @db.Text
+  status         NotificationOutboxStatus @default(PENDING)
+  attemptCount   Int                      @default(0)
+  nextAttemptAt  DateTime                 @default(now())
+  leaseUntil     DateTime?
+  lastAttemptAt  DateTime?
+  sentAt         DateTime?
+  lastError      String?                  @db.Text
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([reservationId])
+  @@index([patientId])
+}
+
 model EmailMessage {
   id                String              @id @default(cuid())
   externalId        String              @unique
