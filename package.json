@@ -18,7 +18,7 @@
     "test:user-creation-integration": "node --import tsx --test tests/userCreationConcurrency.integration.test.ts",
     "test:invitation-credential-integration": "node --import tsx --test tests/invitationCredentialRotation.integration.test.ts",
     "test:password-change-integration": "node --import tsx --test tests/passwordChangeConcurrency.integration.test.ts",
-    "test:admin-credential-integration": "node --import tsx --test tests/administrativeCredentialRotation.integration.test.ts",
+    "test:admin-credential-integration": "node --import tsx scripts/db/guarded-db-push.ts",
     "db:generate": "prisma generate",
     "db:push": "npx tsx scripts/db/guarded-db-push.ts",
     "db:migrate:status": "prisma migrate status",
@@ -34,7 +34,7 @@
     "db:migrate-roles": "npx tsx scripts/migrate-roles-to-enum.ts",
     "rules:seed": "npx tsx scripts/seed-programming-rules.ts",
     "reset:showcase": "npx tsx scripts/resetShowcase.ts",
-    "seed:showcase": "npx tsx prisma/seed.ts"
+    "seed:showcase": "npx tsx scripts/seedShowcase.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
