@@ -49,6 +49,21 @@ test("states pending assignment instead of inventing a preanesthesia appointment
   assert.match(email.text, /Pendiente de asignación/);
 });
 
+test("states explicitly that local-without-anesthetist does not require preanesthesia", () => {
+  const email = buildProgrammedPatientNotificationEmail({
+    ...baseInput,
+    patient: {
+      ...baseInput.patient,
+      anesthesiaType: "Local (no precisa anestesista)",
+    },
+    preanesthesia: { status: "NOT_REQUIRED", appointmentLabel: null },
+  });
+  assert.match(email.text, /Tipo de anestesia: Local \(no precisa anestesista\)/);
+  assert.match(email.text, /Estado: No precisa/);
+  assert.match(email.text, /Cita: No precisa \(anestesia local sin anestesista\)/);
+  assert.doesNotMatch(email.text, /Pendiente de asignación/);
+});
+
 test("public builder has no fields for technical ids, auth or audit internals", () => {
   const inputShape = JSON.stringify(baseInput);
   for (const forbidden of ["reservationId", "patientId", "actorUserId", "password", "token", "detailsJson"]) {
