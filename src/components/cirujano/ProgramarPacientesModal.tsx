@@ -45,7 +45,7 @@ export interface ProgramarPacientesModalProps {
   saving?: boolean;
 }
 
-const ANESTHESIA_OPTIONS = ["Local", "Regional", "General", "Sedación"];
+const ANESTHESIA_OPTIONS = ["Local", "Local (no precisa anestesista)", "Regional", "General", "Sedación"];
 
 /** Fila con mínimo obligatorio para contar tiempo frente al bloque reservado. */
 function rowHasRequiredCore(p: Partial<PatientInBlock>): boolean {

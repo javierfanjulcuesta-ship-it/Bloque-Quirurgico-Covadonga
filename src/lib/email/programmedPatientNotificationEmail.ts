@@ -45,8 +45,12 @@ export function buildProgrammedPatientNotificationEmail(
   input: ProgrammedPatientNotificationInput,
 ): ProgrammedPatientNotificationEmail {
   const patientLabel = input.patient.fullName?.trim() || "Paciente programado";
-  const preanesthesiaLabel = input.preanesthesia.appointmentLabel?.trim()
-    || (input.preanesthesia.status === "SCHEDULED" ? "Cita asignada (hora no disponible)" : "Pendiente de asignación");
+  const preanesthesiaNotRequired = input.preanesthesia.status === "NOT_REQUIRED";
+  const preanesthesiaStatusLabel = preanesthesiaNotRequired ? "No precisa" : input.preanesthesia.status;
+  const preanesthesiaLabel = preanesthesiaNotRequired
+    ? "No precisa (anestesia local sin anestesista)"
+    : input.preanesthesia.appointmentLabel?.trim()
+      || (input.preanesthesia.status === "SCHEDULED" ? "Cita asignada (hora no disponible)" : "Pendiente de asignación");
 
   const subject = `QxFlow · Paciente programado · ${input.surgery.date} · ${input.surgery.resourceLabel}`;
   const text = [
@@ -73,7 +77,7 @@ export function buildProgrammedPatientNotificationEmail(
     line("Cirujano/endoscopista responsable", input.surgery.responsibleProfessionalName),
     "",
     "PREANESTESIA",
-    line("Estado", input.preanesthesia.status),
+    line("Estado", preanesthesiaStatusLabel),
     line("Cita", preanesthesiaLabel),
   ].join("\n");
 
