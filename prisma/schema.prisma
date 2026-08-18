@@ -49,6 +49,7 @@ model User {
   anesthetistAssignments   AnesthetistAssignment[]
   anesthetistUnavailability AnesthetistUnavailability[]
   blockOpeningPlansApproved BlockOpeningPlan[]
+  blockSlotPlansApproved   BlockSlotOpeningPlan[]
 }
 
 enum ReservationOrigin {
@@ -310,6 +311,27 @@ model BlockOpeningPlan {
   @@unique([date, resourceId, shift])
   @@index([date])
   @@index([resourceId])
+}
+
+/** Override exacto de apertura/cierre para un tramo horario; si falta, hereda BlockOpeningPlan del turno. */
+model BlockSlotOpeningPlan {
+  id               String              @id @default(cuid())
+  date             DateTime
+  shift            Shift
+  resourceId       String
+  slotIndex        Int
+  status           BlockOpeningStatus  @default(OPEN)
+  notes            String?             @db.Text
+  approvedByUserId String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  approvedByUser   User?               @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([date, resourceId, shift, slotIndex])
+  @@index([date])
+  @@index([resourceId])
+  @@index([status])
 }
 
 model ProgrammingRule {

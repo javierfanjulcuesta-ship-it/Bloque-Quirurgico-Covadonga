@@ -129,7 +129,7 @@ export async function createReservationInDb(
     return await withSchedulingContextLock({ date, resourceId, shift }, async (tx) => {
       // El plan de apertura se lee DESPUÉS del lock. Su PUT usa el mismo lock,
       // por lo que cerrar el bloque y crear una reserva no pueden cruzarse por TOCTOU.
-      const opening = await canReserveSlot(date, resourceId, shift, origin === "GESTOR", tx);
+      const opening = await canReserveSlot(date, resourceId, shift, slotIndex, origin === "GESTOR", tx);
       if (!opening.ok) {
         return {
           ok: false,
