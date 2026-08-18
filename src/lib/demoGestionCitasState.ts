@@ -1,15 +1,20 @@
 import type { GestionCitasOverlay } from "./gestionCitas";
 import { safeParseJSON } from "./storageSafe";
 
-const KEY = "qxflow_demo_gestion_citas_v1";
+export const DEMO_GESTION_CITAS_STORAGE_KEY = "qxflow_demo_gestion_citas_v1";
 
 export type DemoGestionCitasState = Record<string, GestionCitasOverlay>;
 
 export function getDemoGestionCitasState(): DemoGestionCitasState {
   if (typeof window === "undefined") return {};
-  const parsed = safeParseJSON<unknown>(window.localStorage.getItem(KEY), {});
+  const parsed = safeParseJSON<unknown>(window.localStorage.getItem(DEMO_GESTION_CITAS_STORAGE_KEY), {});
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
   return parsed as DemoGestionCitasState;
+}
+
+export function setDemoGestionCitasState(state: DemoGestionCitasState): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DEMO_GESTION_CITAS_STORAGE_KEY, JSON.stringify(state));
 }
 
 export function updateDemoGestionCitasPatient(patientId: string, patch: GestionCitasOverlay): DemoGestionCitasState {
@@ -23,7 +28,7 @@ export function updateDemoGestionCitasPatient(patientId: string, patch: GestionC
       ...patch,
     },
   };
-  window.localStorage.setItem(KEY, JSON.stringify(next));
+  setDemoGestionCitasState(next);
   return next;
 }
 
@@ -39,5 +44,5 @@ export function registerDemoGestionCitasAttempt(patientId: string, status: Gesti
 
 export function clearDemoGestionCitasState(): void {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(KEY);
+  window.localStorage.removeItem(DEMO_GESTION_CITAS_STORAGE_KEY);
 }
