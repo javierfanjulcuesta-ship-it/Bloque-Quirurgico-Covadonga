@@ -29,6 +29,17 @@ export interface GestionCitasOverlay {
   attemptCount?: number;
   lastAttemptAt?: string;
   note?: string;
+  updatedAt?: string;
+  reviewedAt?: string;
+}
+
+export function isGestionCitasPendingReview(overlay?: GestionCitasOverlay): boolean {
+  if (!overlay?.reviewedAt) return true;
+  if (!overlay.updatedAt) return false;
+  const reviewedAt = Date.parse(overlay.reviewedAt);
+  const updatedAt = Date.parse(overlay.updatedAt);
+  if (!Number.isFinite(reviewedAt) || !Number.isFinite(updatedAt)) return true;
+  return updatedAt > reviewedAt;
 }
 
 export interface GestionCitasRow {
