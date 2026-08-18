@@ -16,6 +16,7 @@ import {
   buildGestionCitasRows,
   deriveAuthorizationOperationalStatus,
   derivePreanesthesiaOperationalStatus,
+  isGestionCitasPendingReview,
   nextWorkingWeekBounds,
 } from "../src/lib/gestionCitas";
 
@@ -179,4 +180,20 @@ test("missing phone or email is a top-priority preparation incident", () => {
 test("next-week worklist covers Monday through Friday with no invented proximity threshold", () => {
   const bounds = nextWorkingWeekBounds(new Date("2026-08-18T12:00:00.000Z"));
   assert.deepEqual(bounds, { from: "2026-08-24", to: "2026-08-28" });
+});
+
+test("appointment worklist remains pending until edits are explicitly confirmed", () => {
+  assert.equal(isGestionCitasPendingReview(undefined), true);
+  assert.equal(isGestionCitasPendingReview({ updatedAt: "2026-08-18T20:00:00.000Z" }), true);
+  assert.equal(isGestionCitasPendingReview({
+    updatedAt: "2026-08-18T20:00:00.000Z",
+    reviewedAt: "2026-08-18T20:01:00.000Z",
+  }), false);
+});
+
+test("a new edit after confirmation returns the patient to Pending", () => {
+  assert.equal(isGestionCitasPendingReview({
+    reviewedAt: "2026-08-18T20:01:00.000Z",
+    updatedAt: "2026-08-18T20:02:00.000Z",
+  }), true);
 });
