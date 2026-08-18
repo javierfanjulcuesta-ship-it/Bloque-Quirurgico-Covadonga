@@ -10,6 +10,7 @@ import type { Reservation } from "@/lib/types";
 import { hasGestionCitasAccess } from "@/lib/types";
 import {
   buildGestionCitasRows,
+  isGestionCitasPendingReview,
   nextWorkingWeekBounds,
   type AuthorizationOperationalStatus,
   type ConfirmationOperationalStatus,
@@ -31,6 +32,8 @@ const CONFIRMATION_OPTIONS: Array<{ value: ConfirmationOperationalStatus; label:
 ];
 
 const AUTH_OPTIONS: Array<Exclude<AuthorizationOperationalStatus, "NO_PRECISA">> = ["PENDIENTE", "APROBADA", "DENEGADA"];
+
+type WorklistTab = "pending" | "next" | "all";
 
 function formatDate(ymd: string): string {
   const d = new Date(`${ymd}T12:00:00`);
@@ -72,9 +75,10 @@ export default function GestionCitasPage() {
   const { user, hydrated, logout } = useAuth();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [overlays, setOverlays] = useState<DemoGestionCitasState>({});
-  const [tab, setTab] = useState<"next" | "all">("next");
+  const [tab, setTab] = useState<WorklistTab>("pending");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [editingContact, setEditingContact] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -107,20 +111,30 @@ export default function GestionCitasPage() {
     () => allRows.filter((row) => row.surgeryDate >= bounds.from && row.surgeryDate <= bounds.to),
     [allRows, bounds],
   );
-  const rows = tab === "next" ? nextRows : allRows;
+  const pendingRows = useMemo(
+    () => nextRows.filter((row) => isGestionCitasPendingReview(overlays[row.patientId])),
+    [nextRows, overlays],
+  );
+  const rows = tab === "pending" ? pendingRows : tab === "next" ? nextRows : allRows;
   const users = getUsers();
   const surgeonName = (id: string) => users.find((u) => u.id === id)?.name ?? "Profesional responsable";
 
   const summary = useMemo(() => ({
     total: nextRows.length,
+    pendingReview: pendingRows.length,
     attention: nextRows.filter((r) => r.globalStatus === "REQUIERE_ATENCION").length,
     callPending: nextRows.filter((r) => r.confirmationStatus !== "CONFIRMADO_CON_PACIENTE").length,
-    prePending: nextRows.filter((r) => r.preanesthesiaStatus === "PENDIENTE_CON_CITA" || r.preanesthesiaStatus === "PENDIENTE_SIN_CITA").length,
     authPending: nextRows.filter((r) => r.authorizationStatus === "PENDIENTE" || r.authorizationStatus === "DENEGADA").length,
     ready: nextRows.filter((r) => r.globalStatus === "LISTO").length,
-  }), [nextRows]);
+  }), [nextRows, pendingRows]);
 
   const reloadReservations = async () => setReservations(await getReservations());
+
+  const markChanged = (patientId: string, patch: Parameters<typeof updateDemoGestionCitasPatient>[1] = {}) => {
+    const next = updateDemoGestionCitasPatient(patientId, { ...patch, updatedAt: new Date().toISOString() });
+    setOverlays(next);
+    setNotice("");
+  };
 
   const startContactEdit = (patientId: string, patientPhone?: string, patientEmail?: string) => {
     setEditingContact(patientId);
@@ -130,9 +144,11 @@ export default function GestionCitasPage() {
 
   const saveContact = async (reservationId: string, patientId: string) => {
     setError("");
+    setNotice("");
     try {
       await updateReservationPatientEntry({ reservationId, patientId, patientPhone: phone, patientEmail: email });
       await reloadReservations();
+      markChanged(patientId);
       setEditingContact(null);
     } catch {
       setError("No se pudo guardar el teléfono/email en la DEMO.");
@@ -140,14 +156,29 @@ export default function GestionCitasPage() {
   };
 
   const changeConfirmation = (patientId: string, status: ConfirmationOperationalStatus) => {
+    const changedAt = new Date().toISOString();
     const next = status === "PENDIENTE"
-      ? updateDemoGestionCitasPatient(patientId, { confirmationStatus: status })
+      ? updateDemoGestionCitasPatient(patientId, { confirmationStatus: status, updatedAt: changedAt })
       : registerDemoGestionCitasAttempt(patientId, status);
-    setOverlays(next);
+    const withTimestamp = status === "PENDIENTE"
+      ? next
+      : updateDemoGestionCitasPatient(patientId, { updatedAt: changedAt });
+    setOverlays(withTimestamp);
+    setNotice("");
   };
 
   const changeAuthorization = (patientId: string, status: Exclude<AuthorizationOperationalStatus, "NO_PRECISA">) => {
-    setOverlays(updateDemoGestionCitasPatient(patientId, { authorizationStatus: status }));
+    markChanged(patientId, { authorizationStatus: status });
+  };
+
+  const confirmChanges = (patientId: string) => {
+    const overlay = overlays[patientId];
+    if (!overlay?.updatedAt || (overlay.reviewedAt && Date.parse(overlay.updatedAt) <= Date.parse(overlay.reviewedAt))) return;
+    const next = updateDemoGestionCitasPatient(patientId, { reviewedAt: new Date().toISOString() });
+    setOverlays(next);
+    setEditingContact((current) => current === patientId ? null : current);
+    setError("");
+    setNotice("Cambios confirmados. El paciente se ha retirado de Pendientes y continúa disponible en Todos los pacientes.");
   };
 
   if (!hydrated || loading) {
@@ -172,7 +203,7 @@ export default function GestionCitasPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Gestión de citas · DEMO</p>
           <h1 className="mt-1 text-2xl font-bold text-[var(--ribera-navy)]">Preparación de pacientes</h1>
-          <p className="mt-1 text-sm text-slate-600">Espacio operativo independiente. Sin funciones clínicas, de anestesia ni de reserva de quirófano.</p>
+          <p className="mt-1 text-sm text-slate-600">Los cambios se guardan como trabajo en curso. El paciente solo sale de Pendientes cuando pulsa “Confirmar cambios”.</p>
         </div>
         <button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cerrar sesión</button>
       </div>
@@ -183,7 +214,8 @@ export default function GestionCitasPage() {
             <h2 className="font-semibold text-slate-900">Semana siguiente · Preparación de pacientes</h2>
             <p className="text-sm text-slate-500">Lunes {formatDate(bounds.from)} → viernes {formatDate(bounds.to)}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setTab("pending")} className={`rounded-lg px-3 py-2 text-sm font-medium ${tab === "pending" ? "bg-[var(--ribera-navy)] text-white" : "bg-slate-100 text-slate-700"}`}>Pendientes ({pendingRows.length})</button>
             <button type="button" onClick={() => setTab("next")} className={`rounded-lg px-3 py-2 text-sm font-medium ${tab === "next" ? "bg-[var(--ribera-navy)] text-white" : "bg-slate-100 text-slate-700"}`}>Semana siguiente</button>
             <button type="button" onClick={() => setTab("all")} className={`rounded-lg px-3 py-2 text-sm font-medium ${tab === "all" ? "bg-[var(--ribera-navy)] text-white" : "bg-slate-100 text-slate-700"}`}>Todos los pacientes</button>
           </div>
@@ -192,9 +224,9 @@ export default function GestionCitasPage() {
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-6">
           {[
             ["Total", summary.total],
+            ["Pendientes de gestión", summary.pendingReview],
             ["Atención prioritaria", summary.attention],
             ["Llamada pendiente", summary.callPending],
-            ["Preanestesia pendiente", summary.prePending],
             ["Autorización", summary.authPending],
             ["Listos", summary.ready],
           ].map(([label, value]) => (
@@ -207,16 +239,20 @@ export default function GestionCitasPage() {
       </section>
 
       {error && <InlineNotice variant="error" className="mb-4">{error}</InlineNotice>}
+      {notice && <InlineNotice variant="success" className="mb-4">{notice}</InlineNotice>}
 
       {rows.length === 0 ? (
         <InlineNotice variant="info">
-          No hay pacientes en esta vista. En la pantalla de acceso puede usar “Cargar datos de ejemplo”; la siguiente iteración ampliará el seed con una semana siguiente completa.
+          {tab === "pending" ? "No quedan pacientes pendientes de gestión en esta vista." : "No hay pacientes en esta vista."}
         </InlineNotice>
       ) : (
         <div className="space-y-3">
           {rows.map((row) => {
             const editing = editingContact === row.patientId;
             const d = daysUntil(row.surgeryDate);
+            const overlay = overlays[row.patientId];
+            const hasUnconfirmedChanges = !!overlay?.updatedAt && (!overlay.reviewedAt || Date.parse(overlay.updatedAt) > Date.parse(overlay.reviewedAt));
+            const pendingReview = isGestionCitasPendingReview(overlay);
             return (
               <article key={row.patientId} className={`rounded-xl border bg-white p-4 shadow-sm ${row.globalStatus === "REQUIERE_ATENCION" ? "border-red-300" : "border-slate-200"}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -224,6 +260,7 @@ export default function GestionCitasPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold text-slate-900">{row.patientName}</h3>
                       <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusClass(row.globalStatus)}`}>{row.globalStatus === "REQUIERE_ATENCION" ? "REQUIERE ATENCIÓN" : row.globalStatus}</span>
+                      {!pendingReview && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">GESTIÓN CONFIRMADA</span>}
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{d >= 0 ? `${d} días` : "Intervención pasada"}</span>
                     </div>
                     <p className="mt-1 text-sm text-slate-600">{formatDate(row.surgeryDate)} · {row.surgeryTime} · {row.resourceId} · {surgeonName(row.surgeonId)}</p>
@@ -276,7 +313,21 @@ export default function GestionCitasPage() {
                   </div>
                 </div>
 
-                {row.reasons.length > 0 && <p className="mt-3 text-xs text-slate-500">Pendiente: {row.reasons.join(" · ")}</p>}
+                {row.reasons.length > 0 && <p className="mt-3 text-xs text-slate-500">Situación operativa: {row.reasons.join(" · ")}</p>}
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                  <p className={`text-xs ${hasUnconfirmedChanges ? "font-medium text-amber-700" : "text-slate-500"}`}>
+                    {hasUnconfirmedChanges ? "Hay cambios guardados pendientes de confirmar." : pendingReview ? "Modifique algún dato para habilitar la confirmación." : "La gestión de este paciente ya está confirmada."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!hasUnconfirmedChanges}
+                    onClick={() => confirmChanges(row.patientId)}
+                    className="rounded-lg bg-[var(--ribera-red)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Confirmar cambios
+                  </button>
+                </div>
               </article>
             );
           })}
