@@ -18,6 +18,7 @@ enum UserRole {
   CIRUJANO
   ENDOSCOPISTA
   GESTOR_ANESTESISTA
+  GESTION_CITAS
 }
 
 enum Shift {
