@@ -43,27 +43,27 @@
     "@azure/msal-node": "^3.8.10",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@tailwindcss/postcss": "^4",
-    "bcryptjs": "^2.4.3",
-    "jose": "^5.9.6",
-    "next": "16.1.6",
-    "nodemailer": "^8.0.3",
-    "pdfjs-dist": "^5.6.205",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "bcryptjs": "^2.4.3",
+    "jose": "^5.9.6",
+    "next": "16.1.6",
+    "nodemailer": "^8.0.3",
+    "pdfjs-dist": "^5.6.205",
+    "prisma": "^6.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "prisma": "^6.0.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.19.2",
-    "typescript": "^5"
+    "tsx": "^4.19.2"
   }
 }
