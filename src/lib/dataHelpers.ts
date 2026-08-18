@@ -269,6 +269,7 @@ export function buildSlotViews(
 export const MOCK_USERS: User[] = [
   { id: "demo-gestor-anestesista", name: "Gestor Anestesista Demo", email: "gestor-anestesista@demo", role: "gestor-anestesista", approved: true, canSespa: true },
   { id: "demo-gestor", name: "Gestor Demo", email: "gestor@demo", role: "gestor", approved: true },
+  { id: "demo-gestion-citas", name: "Gestión de Citas Demo", email: "gestion-citas@demo", role: "gestion-citas", approved: true },
   { id: "demo-anestesista", name: "Anestesista Demo", email: "anestesista@demo", role: "anestesista", approved: true, canSespa: true },
   { id: "demo-cirujano", name: "Cirujano Demo", email: "cirujano@demo", role: "cirujano", approved: true },
   { id: "demo-endoscopista", name: "Endoscopista Demo", email: "endoscopista@demo", role: "endoscopista", approved: true },
