@@ -1,12 +1,16 @@
-export function shouldForceEmailMock(vercelEnv: string | undefined): boolean {
-  return vercelEnv === "preview";
+export function shouldForceEmailMock(
+  vercelEnv: string | undefined,
+  deploymentMode: string | undefined = process.env.NEXT_PUBLIC_DEPLOYMENT_MODE,
+): boolean {
+  return vercelEnv === "preview" || deploymentMode === "isolated-demo";
 }
 
 export function isEmailMockAllowed(
   nodeEnv: string | undefined,
   vercelEnv: string | undefined = process.env.VERCEL_ENV,
+  deploymentMode: string | undefined = process.env.NEXT_PUBLIC_DEPLOYMENT_MODE,
 ): boolean {
-  return shouldForceEmailMock(vercelEnv) || nodeEnv !== "production";
+  return shouldForceEmailMock(vercelEnv, deploymentMode) || nodeEnv !== "production";
 }
 
 export function emailProviderUnavailableMessage(provider?: "smtp" | "graph"): string {
