@@ -1,5 +1,6 @@
 import { DEMO_AUDIT_STORAGE_KEY } from "./demoAudit";
 import { DEMO_SLOT_CLOSURES_STORAGE_KEY } from "./demoBlockClosures";
+import { DEMO_GESTION_CITAS_STORAGE_KEY } from "./demoGestionCitasState";
 
 /**
  * Restablecer la demo: limpia sesión y todos los datos persistidos por la app
@@ -13,6 +14,7 @@ const SESSION_KEY = "bloque_quirurgico_v2_session_user";
 export const DEMO_LOCAL_STORAGE_KEYS = [
   DEMO_AUDIT_STORAGE_KEY,
   DEMO_SLOT_CLOSURES_STORAGE_KEY,
+  DEMO_GESTION_CITAS_STORAGE_KEY,
   "bloque_quirurgico_mensajes_gestor",
   "bloque_quirurgico_notificaciones",
   "bloque_quirurgico_pacientes_no_apto",
@@ -28,8 +30,8 @@ export const DEMO_LOCAL_STORAGE_KEYS = [
 /**
  * Limpia la sesión actual (sessionStorage) y todos los datos de la demo en localStorage.
  * No restaura datos iniciales: deja reservas, mensajes, notificaciones, perfiles,
- * asignaciones de anestesistas, no disponibilidad, cierres de slots y auditoría DEMO
- * en estado vacío. La app queda usable: el usuario debe volver a la pantalla de
+ * asignaciones de anestesistas, no disponibilidad, cierres de slots, estado de Gestión de citas
+ * y auditoría DEMO en estado vacío. La app queda usable: el usuario debe volver a la pantalla de
  * selección de usuario y elegir un usuario para entrar de nuevo.
  */
 export function resetDemoStorage(): void {
