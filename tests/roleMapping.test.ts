@@ -8,6 +8,7 @@ test("roleToFrontend maps every known role", () => {
   assert.equal(roleToFrontend("ANESTESISTA"), "anestesista");
   assert.equal(roleToFrontend("CIRUJANO"), "cirujano");
   assert.equal(roleToFrontend("ENDOSCOPISTA"), "endoscopista");
+  assert.equal(roleToFrontend("GESTION_CITAS"), "gestion-citas");
 });
 
 test("roleToFrontend fails closed for unknown or malformed roles", () => {

@@ -12,7 +12,7 @@ import type { UserRole } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { useUsers } from "@/context/UsersContext";
 
-const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "gestor-anestesista", "cirujano", "endoscopista"];
+const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "gestor-anestesista", "cirujano", "endoscopista", "gestion-citas"];
 
 const SESPA_ROLES: UserRole[] = ["anestesista", "gestor-anestesista"];
 

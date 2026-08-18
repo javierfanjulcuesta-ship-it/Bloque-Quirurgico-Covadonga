@@ -13,12 +13,18 @@ import { getUsers } from "@/lib/dataHelpers";
 import { resetDemoStorage } from "@/lib/demoReset";
 import { loadDemoSeed } from "@/lib/demoSeed";
 import { addMessageToGestor, addNotification } from "@/lib/storageMensajesYNotificaciones";
-import { hasGestorAccess } from "@/lib/types";
+import { hasGestorAccess, hasGestionCitasAccess } from "@/lib/types";
 import { roleLabel } from "@/lib/types";
 import type { User } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { modoDemo } from "@/lib/config";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+
+function workspaceForRole(role: User["role"]): string {
+  if (hasGestionCitasAccess(role)) return "/gestion-citas";
+  if (role === "cirujano" || role === "endoscopista") return "/cirujano";
+  return "/calendario";
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -42,30 +48,28 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!authUser || !router) return;
-    const r = authUser.role;
-    if (r === "cirujano" || r === "endoscopista") router.replace("/cirujano");
-    else router.replace("/calendario");
+    router.replace(workspaceForRole(authUser.role));
   }, [authUser, router]);
 
   const goToPanel = () => {
     if (!authUser) return;
-    if (authUser.role === "cirujano" || authUser.role === "endoscopista") router.replace("/cirujano");
-    else router.replace("/calendario");
+    router.replace(workspaceForRole(authUser.role));
   };
 
   const roleWorkspaceHint = authUser
-    ? authUser.role === "cirujano" || authUser.role === "endoscopista"
-      ? "Entrará en su espacio de programación quirúrgica."
-      : hasGestorAccess(authUser.role)
-        ? "Entrará en el espacio de coordinación del bloque (calendario global)."
-        : "Entrará en su espacio de programación y consulta anestésica."
+    ? hasGestionCitasAccess(authUser.role)
+      ? "Entrará en su lista operativa de preparación y confirmación de pacientes."
+      : authUser.role === "cirujano" || authUser.role === "endoscopista"
+        ? "Entrará en su espacio de programación quirúrgica."
+        : hasGestorAccess(authUser.role)
+          ? "Entrará en el espacio de coordinación del bloque (calendario global)."
+          : "Entrará en su espacio de programación y consulta anestésica."
     : "";
 
   const handleEnterDemo = () => {
     if (!selectedUser) return;
     login(selectedUser);
-    if (selectedUser.role === "cirujano" || selectedUser.role === "endoscopista") router.replace("/cirujano");
-    else router.replace("/calendario");
+    router.replace(workspaceForRole(selectedUser.role));
   };
 
   const handleRestablecerDemo = () => {
@@ -83,8 +87,7 @@ export default function HomePage() {
     const result = await loginWithPassword(loginEmail.trim(), loginPassword);
     setLoginLoading(false);
     if (result.ok && result.user) {
-      const dest = result.user.role === "cirujano" || result.user.role === "endoscopista" ? "/cirujano" : "/calendario";
-      router.replace(dest);
+      router.replace(workspaceForRole(result.user.role));
     } else {
       setLoginError(result.error ?? "Error al iniciar sesión");
     }

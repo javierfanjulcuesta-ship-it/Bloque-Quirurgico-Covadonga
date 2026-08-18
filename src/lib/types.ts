@@ -2,8 +2,8 @@
  * Tipos del Bloque Quirúrgico - Hospital Covadonga
  */
 
-/** Perfiles de usuario del sistema (gestor-anestesista = visión gestor y anestesista; endoscopista = reserva solo procedimientos menores / técnicas del dolor) */
-export type UserRole = "cirujano" | "anestesista" | "gestor" | "gestor-anestesista" | "endoscopista";
+/** Perfiles de usuario del sistema. Gestión de citas es un perfil operativo independiente, sin privilegios clínicos ni de gestor. */
+export type UserRole = "cirujano" | "anestesista" | "gestor" | "gestor-anestesista" | "endoscopista" | "gestion-citas";
 
 /** Estado del plan de apertura de un recurso/turno */
 export type BlockOpeningStatus = "OPEN" | "CLOSED" | "URGENT_RESERVED";
@@ -29,6 +29,12 @@ export function hasGestorAccess(role: UserRole | string): boolean {
   return r === "gestor" || r === "gestor-anestesista";
 }
 
+/** Indica si el rol pertenece al espacio operativo de Gestión de citas. */
+export function hasGestionCitasAccess(role: UserRole | string): boolean {
+  const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
+  return r === "gestion-citas";
+}
+
 /** Indica si el rol tiene acceso al área de anestesista. Acepta variaciones de formato. */
 export function hasAnesthetistAccess(role: UserRole | string): boolean {
   const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
@@ -39,13 +45,14 @@ export function hasAnesthetistAccess(role: UserRole | string): boolean {
 export function roleLabel(role: UserRole | string): string {
   const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
   if (r === "gestor-anestesista") return "Gestor/Anestesista";
+  if (r === "gestion-citas") return "Gestión de citas";
   if (r === "endoscopista") return "Endoscopista/otros";
   if (r === "cirujano") return "Cirujano";
   if (r === "anestesista") return "Anestesista";
   return "Gestor";
 }
 
-/** Roles que usan la pantalla de programación (calendario, reservas, etc.). Acepta variaciones de formato. */
+/** Roles que usan la pantalla de programación (calendario, reservas, etc.). Gestión de citas queda explícitamente fuera. */
 export function hasProgrammingAccess(role: UserRole | string): boolean {
   const r = typeof role === "string" ? role.trim().toLowerCase().replace(/_/g, "-") : "";
   return r === "cirujano" || r === "endoscopista" || r === "gestor-anestesista" || r === "gestor";
