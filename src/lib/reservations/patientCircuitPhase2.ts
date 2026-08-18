@@ -24,10 +24,12 @@ import {
   loadPreanesthesiaOccupiedKeys,
   todayYmdMadrid,
 } from "@/lib/reservations/preanesthesiaAutoAssign";
+import { isLocalWithoutAnesthetist } from "@/lib/reservations/anesthesiaCircuitPolicy";
 import { enqueueProgrammedPatientsAfterScheduling } from "@/lib/email/enqueueProgrammedPatientAfterScheduling";
 
 export const WORKFLOW_MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED";
 export const PREANESTHESIA_SCHEDULED = "SCHEDULED";
+export const PREANESTHESIA_NOT_REQUIRED = "NOT_REQUIRED";
 const PREANESTHESIA_ASSIGNMENT_LOCK_KEY = "qxflow:preanesthesia:autoassign:v1";
 
 export interface Phase2PatientInput {
@@ -161,6 +163,86 @@ async function writeAdminDryRun(
   }
 }
 
+async function readPatientAnesthesiaType(
+  tx: Prisma.TransactionClient,
+  patientId: string,
+): Promise<string> {
+  const current = await tx.patientInBlock.findUnique({
+    where: { id: patientId },
+    select: { anesthesiaType: true },
+  });
+  if (!current) throw new Error("Paciente no encontrado al resolver circuito anestésico");
+  return current.anesthesiaType;
+}
+
+async function applyNoPreanesthesiaRequired(
+  tx: Prisma.TransactionClient,
+  params: {
+    reservationId: string;
+    patient: Phase2PatientInput;
+    actorUserId: string;
+    origin: ReservationEventOrigin;
+    base: Record<string, unknown>;
+    adminEmail: string | null;
+  },
+): Promise<void> {
+  const p = params.patient;
+  const workflowStatus = p.isDeferredUrgency
+    ? WORKFLOW_MANUAL_REVIEW_REQUIRED
+    : DEFAULT_WORKFLOW_STATUS;
+
+  await tx.patientInBlock.update({
+    where: { id: p.patientId },
+    data: {
+      workflowStatus,
+      isDeferredUrgency: p.isDeferredUrgency,
+      specialCircuitReason: p.isDeferredUrgency ? (p.specialCircuitReason?.trim() || null) : null,
+      preanesthesiaStatus: PREANESTHESIA_NOT_REQUIRED,
+      preanesthesiaAppointmentAt: null,
+      ...(p.isDeferredUrgency ? { financingStatus: DEFAULT_FINANCING_STATUS } : {}),
+    },
+  });
+
+  await writeReservationEvent(tx, {
+    eventType: "PATIENT_WORKFLOW_STARTED",
+    reservationId: params.reservationId,
+    actorUserId: params.actorUserId,
+    origin: params.origin,
+    detailsJson: {
+      ...params.base,
+      workflowStatus,
+      preanesthesiaStatus: PREANESTHESIA_NOT_REQUIRED,
+      anesthesiaCircuit: "local_without_anesthetist",
+    },
+  });
+
+  if (p.isDeferredUrgency) {
+    await writeReservationEvent(tx, {
+      eventType: "DEFERRED_URGENCY_CREATED",
+      reservationId: params.reservationId,
+      actorUserId: params.actorUserId,
+      origin: params.origin,
+      detailsJson: {
+        ...params.base,
+        specialCircuitReason: p.specialCircuitReason?.trim() || null,
+        preanesthesiaStatus: PREANESTHESIA_NOT_REQUIRED,
+      },
+    });
+    await writeAdminDryRun(tx, params.adminEmail, {
+      reservationId: params.reservationId,
+      patientId: p.patientId,
+      actorUserId: params.actorUserId,
+      origin: params.origin,
+      base: params.base,
+      purpose: "deferred_urgency_gestor_review",
+      extra: {
+        specialCircuitReason: p.specialCircuitReason?.trim() || null,
+        preanesthesiaStatus: PREANESTHESIA_NOT_REQUIRED,
+      },
+    });
+  }
+}
+
 /**
  * Variante estricta para flujos que ya están dentro de una transacción de negocio.
  * Estado clínico y eventos se confirman juntos; cualquier fallo de auditoría provoca
@@ -181,6 +263,21 @@ export async function applyAndLogPatientCircuitPhase2InTransaction(
       patientEmail: p.patientEmail ?? null,
       patientPhone: p.patientPhone ?? null,
     };
+
+    // La decisión se toma sobre el tipo de anestesia ya persistido dentro de la
+    // misma transacción. No se confía en un valor enviado solo por el cliente.
+    const anesthesiaType = await readPatientAnesthesiaType(tx, p.patientId);
+    if (isLocalWithoutAnesthetist(anesthesiaType)) {
+      await applyNoPreanesthesiaRequired(tx, {
+        reservationId: params.reservationId,
+        patient: p,
+        actorUserId: params.actorUserId,
+        origin: params.origin,
+        base,
+        adminEmail,
+      });
+      continue;
+    }
 
     if (p.isDeferredUrgency) {
       await tx.patientInBlock.update({

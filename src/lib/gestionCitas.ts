@@ -1,8 +1,12 @@
 import type { PatientInBlock, Reservation } from "./types";
 import { isPrivateFunding } from "./patientInsurance";
 import { getSlots, getWeekStart, toISODate } from "./utils";
+import {
+  LOCAL_NO_ANESTHETIST,
+  isLocalWithoutAnesthetist,
+} from "./reservations/anesthesiaCircuitPolicy";
 
-export const LOCAL_NO_ANESTHETIST = "Local (no precisa anestesista)";
+export { LOCAL_NO_ANESTHETIST } from "./reservations/anesthesiaCircuitPolicy";
 
 export type PreanesthesiaOperationalStatus =
   | "APTO"
@@ -58,10 +62,6 @@ function normalize(value: string | undefined): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
-}
-
-export function isLocalWithoutAnesthetist(anesthesiaType: string | undefined): boolean {
-  return normalize(anesthesiaType) === normalize(LOCAL_NO_ANESTHETIST);
 }
 
 export function derivePreanesthesiaOperationalStatus(
