@@ -36,3 +36,24 @@ test("logout clears client session before any real logout network wait", () => {
   assert.ok(clearStorage < logoutFetch, "sessionStorage must clear before waiting for real logout");
   assert.ok(clearState < logoutFetch, "React auth state must clear before waiting for real logout");
 });
+
+test("logout centrally returns non-root workspaces to the access screen", () => {
+  const source = readFileSync("src/context/AuthContext.tsx", "utf8");
+  const logoutStart = source.indexOf("const logout = useCallback(async () => {");
+  const navigation = source.indexOf('window.location.replace("/")', logoutStart);
+  const pathnameGuard = source.indexOf('window.location.pathname !== "/"', logoutStart);
+
+  assert.ok(pathnameGuard > logoutStart, "logout must avoid an unnecessary reload while already on access screen");
+  assert.ok(navigation > pathnameGuard, "logout must own the final return to the access screen");
+});
+
+test("known authenticated workspaces all use the shared AuthContext logout", () => {
+  const calendar = readFileSync("src/app/calendario/page.tsx", "utf8");
+  const surgeon = readFileSync("src/app/cirujano/page.tsx", "utf8");
+  const home = readFileSync("src/app/page.tsx", "utf8");
+
+  for (const [name, source] of [["calendar", calendar], ["surgeon", surgeon], ["home", home]] as const) {
+    assert.match(source, /useAuth\(\)/, `${name} must use the shared auth context`);
+    assert.match(source, /logout/, `${name} must expose the shared logout action`);
+  }
+});
