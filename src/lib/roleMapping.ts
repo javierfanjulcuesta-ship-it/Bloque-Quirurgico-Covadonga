@@ -7,7 +7,7 @@
 
 import type { UserRole } from "@prisma/client";
 
-export type FrontendRole = "gestor" | "anestesista" | "cirujano" | "endoscopista" | "gestor-anestesista";
+export type FrontendRole = "gestor" | "anestesista" | "cirujano" | "endoscopista" | "gestor-anestesista" | "gestion-citas";
 
 const TO_FRONTEND: Record<UserRole, FrontendRole> = {
   GESTOR: "gestor",
@@ -15,6 +15,7 @@ const TO_FRONTEND: Record<UserRole, FrontendRole> = {
   CIRUJANO: "cirujano",
   ENDOSCOPISTA: "endoscopista",
   GESTOR_ANESTESISTA: "gestor-anestesista",
+  GESTION_CITAS: "gestion-citas",
 };
 
 const TO_PRISMA: Record<string, UserRole> = {
@@ -23,6 +24,7 @@ const TO_PRISMA: Record<string, UserRole> = {
   cirujano: "CIRUJANO",
   endoscopista: "ENDOSCOPISTA",
   "gestor-anestesista": "GESTOR_ANESTESISTA",
+  "gestion-citas": "GESTION_CITAS",
 };
 
 export function roleToFrontend(role: UserRole | string): FrontendRole {
@@ -35,6 +37,7 @@ export function roleToPrisma(role: string): UserRole | null {
   const r = role.trim().toLowerCase();
   if (r in TO_PRISMA) return TO_PRISMA[r];
   if (r === "gestor_anestesista" || r === "gestor-anestesista") return "GESTOR_ANESTESISTA";
+  if (r === "gestion_citas" || r === "gestion-citas") return "GESTION_CITAS";
   return null;
 }
 

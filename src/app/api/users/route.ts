@@ -15,7 +15,7 @@ import type { UserRole } from "@/lib/types";
 import { createUserWithAudit } from "@/lib/users/userCreationService";
 import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
-const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista", "gestion-citas"];
 const SESPA_ROLES = new Set<UserRole>(["anestesista", "gestor-anestesista"]);
 const USER_CREATE_BODY_MAX_BYTES = 16 * 1024;
 

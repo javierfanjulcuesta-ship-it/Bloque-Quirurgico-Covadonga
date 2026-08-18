@@ -13,7 +13,7 @@ import { safeParseJSON } from "@/lib/storageSafe";
 import { modoDemo } from "@/lib/config";
 
 const SESSION_STORAGE_KEY = "bloque_quirurgico_v2_session_user";
-const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista", "gestion-citas"];
 
 function getStoredUser(): User | null {
   if (typeof window === "undefined") return null;

@@ -17,7 +17,7 @@ import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { getAppUrl } from "@/lib/appUrl";
 import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 
-const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista"];
+const VALID_ROLES: UserRole[] = ["cirujano", "anestesista", "gestor", "gestor-anestesista", "endoscopista", "gestion-citas"];
 const SEND_INVITATION_BODY_MAX_BYTES = 16 * 1024;
 
 export async function POST(request: Request) {
