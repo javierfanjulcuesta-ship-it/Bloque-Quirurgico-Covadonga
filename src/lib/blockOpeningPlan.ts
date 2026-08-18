@@ -1,6 +1,6 @@
 /**
  * Lógica de apertura del bloque quirúrgico.
- * - Verifica si un slot puede reservarse según BlockOpeningPlan
+ * - Verifica si un slot puede reservarse según BlockOpeningPlan y overrides por slot
  * - Calcula minutos programados por recurso/turno
  * - Determina si la apertura es "justificable" (minutos >= umbral)
  */
@@ -27,7 +27,6 @@ export interface BlockOpeningPlanView {
   updatedAt: string;
 }
 
-/** Resultado de comprobación: ¿puede un usuario reservar en este (date, resourceId, shift)? */
 export type CanReserveResult =
   | { ok: true }
   | { ok: false; reason: "block_closed"; message: string }
@@ -35,6 +34,26 @@ export type CanReserveResult =
 
 function shiftToDb(shift: Shift): "MORNING" | "AFTERNOON" {
   return shift === "morning" ? "MORNING" : "AFTERNOON";
+}
+
+function statusResult(status: BlockOpeningStatus, scope: "slot" | "shift"): CanReserveResult {
+  if (status === "OPEN") return { ok: true };
+  if (status === "CLOSED") {
+    return {
+      ok: false,
+      reason: "block_closed",
+      message: scope === "slot"
+        ? "Este tramo horario está cerrado para reservas."
+        : "El bloque está cerrado para reservas en ese recurso y turno.",
+    };
+  }
+  return {
+    ok: false,
+    reason: "block_urgent_reserved",
+    message: scope === "slot"
+      ? "Este tramo horario está reservado para urgencias."
+      : "El bloque está reservado para urgencias en ese recurso y turno.",
+  };
 }
 
 function toView(plan: {
@@ -66,49 +85,38 @@ function toView(plan: {
 }
 
 /**
- * Comprueba el estado persistido del bloque. Los gestores pueden hacer override
- * deliberado; cirujanos/endoscopistas no pueden reservar CLOSED/URGENT_RESERVED.
- * La ausencia de plan mantiene compatibilidad: se interpreta como OPEN.
+ * Comprueba primero un override exacto por slot y, si no existe, el plan grueso
+ * del turno. Gestor conserva override deliberado. La ausencia de ambos = OPEN.
  */
 export async function canReserveSlot(
   dateStr: string,
   resourceId: string,
   shift: Shift,
+  slotIndex: number,
   isGestor: boolean,
   db: DbClient = prisma,
 ): Promise<CanReserveResult> {
   if (isGestor) return { ok: true };
+  const date = new Date(`${dateStr}T00:00:00.000Z`);
+  const shiftDb = shiftToDb(shift);
 
-  const plan = await db.blockOpeningPlan.findUnique({
+  const slotPlan = await db.blockSlotOpeningPlan.findUnique({
     where: {
-      date_resourceId_shift: {
-        date: new Date(`${dateStr}T00:00:00.000Z`),
-        resourceId,
-        shift: shiftToDb(shift),
-      },
+      date_resourceId_shift_slotIndex: { date, resourceId, shift: shiftDb, slotIndex },
     },
     select: { status: true },
   });
+  if (slotPlan) return statusResult(slotPlan.status, "slot");
 
-  if (!plan || plan.status === "OPEN") return { ok: true };
-  if (plan.status === "CLOSED") {
-    return {
-      ok: false,
-      reason: "block_closed",
-      message: "El bloque está cerrado para reservas en ese recurso y turno.",
-    };
-  }
-  return {
-    ok: false,
-    reason: "block_urgent_reserved",
-    message: "El bloque está reservado para urgencias en ese recurso y turno.",
-  };
+  const plan = await db.blockOpeningPlan.findUnique({
+    where: {
+      date_resourceId_shift: { date, resourceId, shift: shiftDb },
+    },
+    select: { status: true },
+  });
+  return plan ? statusResult(plan.status, "shift") : { ok: true };
 }
 
-/**
- * Calcula los minutos programados en un (date, shift, resource).
- * Suma: estimatedDurationMinutes + TRANSITION_MINUTES_PER_PROCEDURE por cada paciente.
- */
 export async function getProgrammedMinutes(
   dateStr: string,
   resourceId: string,
@@ -125,29 +133,18 @@ export async function getProgrammedMinutes(
     },
     include: { patients: true },
   });
-
   let total = 0;
   for (const r of reservations) {
-    for (const p of r.patients) {
-      total += (p.estimatedDurationMinutes || 0) + TRANSITION_MINUTES_PER_PROCEDURE;
-    }
+    for (const p of r.patients) total += (p.estimatedDurationMinutes || 0) + TRANSITION_MINUTES_PER_PROCEDURE;
   }
   return total;
 }
 
-/**
- * Indica si un recurso es "no justificable": minutos programados < minRequiredMinutes.
- * Solo tiene sentido cuando status=OPEN y minRequiredMinutes > 0.
- */
-export function isBelowJustificationThreshold(
-  programmedMinutes: number,
-  minRequiredMinutes: number,
-): boolean {
+export function isBelowJustificationThreshold(programmedMinutes: number, minRequiredMinutes: number): boolean {
   if (minRequiredMinutes <= 0) return false;
   return programmedMinutes < minRequiredMinutes;
 }
 
-/** Obtiene el plan persistido para un (date, resourceId, shift). */
 export async function getBlockOpeningPlan(
   dateStr: string,
   resourceId: string,
@@ -166,7 +163,6 @@ export async function getBlockOpeningPlan(
   return plan ? toView(plan as Parameters<typeof toView>[0]) : null;
 }
 
-/** Serializa un registro Prisma BlockOpeningPlan para la API. */
 export function toBlockOpeningPlanView(plan: Parameters<typeof toView>[0]): BlockOpeningPlanView {
   return toView(plan);
 }
