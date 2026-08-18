@@ -33,23 +33,23 @@ enum ReservationStatus {
 }
 
 model User {
-  id                         String                   @id @default(cuid())
-  email                      String                   @unique
-  passwordHash               String
-  name                       String
-  role                       UserRole
-  approved                   Boolean                  @default(false)
-  canSespa                   Boolean                  @default(false)
-  deletedAt                  DateTime?
-  deletedByUserId            String?
-  deletionReason             String?                  @db.Text
-  createdAt                  DateTime                 @default(now())
-  updatedAt                  DateTime                 @updatedAt
-  reservations               Reservation[]            @relation("SurgeonReservations")
-  anesthetistAssignments     AnesthetistAssignment[]
-  anesthetistUnavailability  AnesthetistUnavailability[]
-  blockOpeningPlansApproved  BlockOpeningPlan[]
-  blockSlotPlansApproved     BlockSlotOpeningPlan[]
+  id                       String                      @id @default(cuid())
+  email                    String                      @unique
+  passwordHash             String
+  name                     String
+  role                     UserRole
+  approved                 Boolean                     @default(false)
+  canSespa                 Boolean                     @default(false)
+  deletedAt                DateTime?
+  deletedByUserId          String?
+  deletionReason           String?                     @db.Text
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+  reservations             Reservation[]               @relation("SurgeonReservations")
+  anesthetistAssignments   AnesthetistAssignment[]
+  anesthetistUnavailability AnesthetistUnavailability[]
+  blockOpeningPlansApproved BlockOpeningPlan[]
+  blockSlotPlansApproved   BlockSlotOpeningPlan[]
 }
 
 enum ReservationOrigin {
@@ -59,7 +59,7 @@ enum ReservationOrigin {
 }
 
 model Reservation {
-  id                 String             @id @default(cuid())
+  id                 String              @id @default(cuid())
   date               DateTime
   resourceId         String
   shift              Shift
@@ -67,19 +67,19 @@ model Reservation {
   surgeonId          String
   status             ReservationStatus  @default(PENDING)
   anesthetistId      String?
-  origin             ReservationOrigin  @default(APP)
+  origin             ReservationOrigin   @default(APP)
   createdByUserId    String?
   updatedByUserId    String?
   releasedAt         DateTime?
   cancelledAt        DateTime?
   releaseReason      String?
   cancellationReason String?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
-  surgeon  User               @relation("SurgeonReservations", fields: [surgeonId], references: [id])
-  patients PatientInBlock[]
-  events   ReservationEvent[]
+  surgeon           User               @relation("SurgeonReservations", fields: [surgeonId], references: [id])
+  patients          PatientInBlock[]
+  events            ReservationEvent[]
 
   @@unique([date, resourceId, shift, slotIndex])
 }
@@ -107,15 +107,15 @@ enum ReservationEventType {
 }
 
 model ReservationEvent {
-  id            String               @id @default(cuid())
+  id            String              @id @default(cuid())
   reservationId String?
   eventType     ReservationEventType
   actorUserId   String?
   origin        String?
   detailsJson   String?
-  createdAt     DateTime             @default(now())
+  createdAt     DateTime            @default(now())
 
-  reservation Reservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  reservation   Reservation?        @relation(fields: [reservationId], references: [id], onDelete: SetNull)
 
   @@index([reservationId])
   @@index([eventType])
@@ -128,30 +128,31 @@ enum AssignmentType {
 }
 
 model AnesthetistAssignment {
-  id             String         @id @default(cuid())
-  date           String
-  shift          Shift
-  assignmentType AssignmentType @default(OR)
-  resourceId     String
-  anesthetistId  String
+  id              String         @id @default(cuid())
+  date            String
+  shift           Shift
+  assignmentType  AssignmentType @default(OR)
+  resourceId      String
+  anesthetistId   String
 
-  anesthetist User @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
+  anesthetist     User           @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
 
   @@unique([date, shift, assignmentType, resourceId])
   @@index([anesthetistId])
   @@index([date])
 }
 
+/** No disponibilidad compartida del anestesista. Sustituye localStorage en modo real. */
 model AnesthetistUnavailability {
   id            String   @id @default(cuid())
   anesthetistId String
-  date          String
+  date          String   // YYYY-MM-DD
   shift         Shift
   reason        String?  @db.Text
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  anesthetist User @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
+  anesthetist   User     @relation(fields: [anesthetistId], references: [id], onDelete: Cascade)
 
   @@unique([anesthetistId, date, shift])
   @@index([anesthetistId])
@@ -180,7 +181,7 @@ model PatientInBlock {
   isDeferredUrgency        Boolean     @default(false)
   specialCircuitReason     String?     @db.Text
 
-  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
   @@index([preanesthesiaAppointmentAt])
 }
@@ -229,24 +230,24 @@ model ProgrammedPatientNotificationOutbox {
 }
 
 model EmailMessage {
-  id               String                @id @default(cuid())
-  externalId       String                @unique
-  fromEmail        String
-  fromName         String?
-  subject          String
-  bodyPlain        String?
-  bodySummary      String?
-  bodyHtml         String?
-  receivedAt       DateTime
-  classification   EmailClassification   @default(UNKNOWN)
-  processingStatus EmailProcessingStatus @default(PENDING)
-  resultMessage    String?
-  senderUserId     String?
-  reservationId    String?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  id                String              @id @default(cuid())
+  externalId        String              @unique
+  fromEmail         String
+  fromName          String?
+  subject           String
+  bodyPlain         String?
+  bodySummary       String?
+  bodyHtml          String?
+  receivedAt        DateTime
+  classification    EmailClassification @default(UNKNOWN)
+  processingStatus  EmailProcessingStatus @default(PENDING)
+  resultMessage     String?
+  senderUserId      String?
+  reservationId     String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
-  processingLogs EmailProcessingLog[]
+  processingLogs    EmailProcessingLog[]
 }
 
 model ContactMessage {
@@ -281,7 +282,7 @@ model EmailProcessingLog {
   errorMessage   String?
   createdAt      DateTime @default(now())
 
-  emailMessage EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+  emailMessage   EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
 
   @@index([emailMessageId])
 }
@@ -293,39 +294,39 @@ enum BlockOpeningStatus {
 }
 
 model BlockOpeningPlan {
-  id                    String             @id @default(cuid())
+  id                    String              @id @default(cuid())
   date                  DateTime
   shift                 Shift
   resourceId            String
-  status                BlockOpeningStatus @default(OPEN)
-  minRequiredMinutes    Int                @default(0)
-  reservedUrgentMinutes Int                @default(0)
-  notes                 String?            @db.Text
+  status                BlockOpeningStatus  @default(OPEN)
+  minRequiredMinutes    Int                 @default(0)
+  reservedUrgentMinutes Int                 @default(0)
+  notes                 String?             @db.Text
   approvedByUserId      String?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
-  approvedByUser User? @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedByUser        User?               @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([date, resourceId, shift])
   @@index([date])
   @@index([resourceId])
 }
 
-/** Override exacto para un tramo horario concreto. Si no existe, hereda BlockOpeningPlan del turno. */
+/** Override exacto de apertura/cierre para un tramo horario; si falta, hereda BlockOpeningPlan del turno. */
 model BlockSlotOpeningPlan {
-  id               String             @id @default(cuid())
+  id               String              @id @default(cuid())
   date             DateTime
   shift            Shift
   resourceId       String
   slotIndex        Int
-  status           BlockOpeningStatus @default(OPEN)
-  notes            String?            @db.Text
+  status           BlockOpeningStatus  @default(OPEN)
+  notes            String?             @db.Text
   approvedByUserId String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  approvedByUser User? @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedByUser   User?               @relation(fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([date, resourceId, shift, slotIndex])
   @@index([date])
@@ -334,14 +335,14 @@ model BlockSlotOpeningPlan {
 }
 
 model ProgrammingRule {
-  id              String   @id @default(cuid())
-  key             String   @unique
+  id              String    @id @default(cuid())
+  key             String    @unique
   name            String
-  description     String?  @db.Text
-  category        String   @default("scheduling")
-  valueJson       String?  @db.Text
-  isActive        Boolean  @default(true)
-  updatedAt       DateTime @updatedAt
+  description     String?   @db.Text
+  category        String    @default("scheduling")
+  valueJson       String?   @db.Text
+  isActive        Boolean   @default(true)
+  updatedAt       DateTime  @updatedAt
   updatedByUserId String?
 
   @@index([category])
