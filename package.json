@@ -18,7 +18,7 @@
     "test:user-creation-integration": "node --import tsx --test tests/userCreationConcurrency.integration.test.ts",
     "test:invitation-credential-integration": "node --import tsx --test tests/invitationCredentialRotation.integration.test.ts",
     "test:password-change-integration": "node --import tsx --test tests/passwordChangeConcurrency.integration.test.ts",
-    "test:admin-credential-integration": "node --import tsx --test tests/administrativeCredentialRotation.integration.test.ts",
+    "test:admin-credential-integration": "node --import tsx scripts/administrativeCredentialRotation.integration.test.ts",
     "db:generate": "prisma generate",
     "db:push": "npx tsx scripts/db/guarded-db-push.ts",
     "db:migrate:status": "prisma migrate status",
@@ -42,28 +42,29 @@
   "dependencies": {
     "@azure/msal-node": "^3.8.10",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@prisma/client": "^6.0.0",
+    "bcryptjs": "^2.4.3",
+    "jose": "^5.9.6",
+    "next": "16.1.6",
+    "nodemailer": "^8.0.3",
+    "pdfjs-dist": "^5.6.205",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "bcryptjs": "^2.4.3",
-    "jose": "^5.9.6",
-    "next": "16.1.6",
-    "nodemailer": "^8.0.3",
-    "pdfjs-dist": "^5.6.205",
-    "prisma": "^6.0.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "tailwindcss": "^4",
-    "typescript": "^5",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "tsx": "^4.19.2"
+    "prisma": "^6.0.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
   }
 }
