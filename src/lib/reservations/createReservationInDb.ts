@@ -121,10 +121,14 @@ export async function createReservationInDb(
   const actorUserId = options?.actorUserId ?? surgeonId;
   const hasPatients = patients.length > 0;
 
+  // Se resuelve antes de abrir la transacción para no hacer una consulta global
+  // desde dentro de una transacción que ya retiene locks de programación.
   const adminEmail = hasPatients ? await getAdminNotificationEmail() : null;
 
   try {
     return await withSchedulingContextLock({ date, resourceId, shift }, async (tx) => {
+      // El plan de apertura se lee DESPUÉS del lock. Su PUT usa el mismo lock,
+      // por lo que cerrar el bloque y crear una reserva no pueden cruzarse por TOCTOU.
       const opening = await canReserveSlot(date, resourceId, shift, slotIndex, origin === "GESTOR", tx);
       if (!opening.ok) {
         return {
@@ -135,6 +139,7 @@ export async function createReservationInDb(
         } as CreateReservationResult;
       }
 
+      // Todas las lecturas que deciden ocupación ocurren DESPUÉS del lock.
       const contextReservations = await getActiveReservationsInContext(tx, { date, resourceId, shift });
       const invader = findOverflowInvaderForTargetSlot({
         reservations: contextReservations,
@@ -152,8 +157,12 @@ export async function createReservationInDb(
 
       if (existing && (existing.status === "PENDING" || existing.status === "CONFIRMED")) {
         const patientCount = await tx.patientInBlock.count({ where: { reservationId: existing.id } });
+
+        // Completar un hold vacío del mismo titular. POST sin pacientes es idempotente.
         if (patientCount === 0 && existing.surgeonId === surgeonId) {
-          if (!hasPatients) return { ok: true, reservationId: existing.id } as const;
+          if (!hasPatients) {
+            return { ok: true, reservationId: existing.id } as const;
+          }
 
           const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(patients));
           const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
@@ -163,18 +172,32 @@ export async function createReservationInDb(
             ownerSlotIndex: slotIndex,
             ownerUsedMinutes: usedMinutesCandidate,
           });
-          if (overflowConflict) return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+          if (overflowConflict) {
+            return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+          }
 
           const createdRows: Array<{ id: string; orderIndex: number }> = [];
           for (let i = 0; i < patients.length; i++) {
             const p = patients[i]!;
-            const row = await tx.patientInBlock.create({ data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) } });
+            const row = await tx.patientInBlock.create({
+              data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) },
+            });
             createdRows.push({ id: row.id, orderIndex: row.orderIndex });
           }
-          await tx.reservation.update({ where: { id: existing.id }, data: { status: "CONFIRMED", updatedByUserId: actorUserId } });
+          await tx.reservation.update({
+            where: { id: existing.id },
+            data: { status: "CONFIRMED", updatedByUserId: actorUserId },
+          });
+
           await applyAndLogPatientCircuitPhase2InTransaction(
             tx,
-            { reservationId: existing.id, surgeryYmd: date, actorUserId, origin: originLower, patients: alignPatientsForPhase2(createdRows, patients) },
+            {
+              reservationId: existing.id,
+              surgeryYmd: date,
+              actorUserId,
+              origin: originLower,
+              patients: alignPatientsForPhase2(createdRows, patients),
+            },
             adminEmail,
           );
           await writeReservationEvent(tx, {
@@ -182,16 +205,31 @@ export async function createReservationInDb(
             reservationId: existing.id,
             actorUserId,
             origin: originLower,
-            detailsJson: { action: "add_patients_to_empty_hold", date, resourceId, shift, slotIndex, patientCount: patients.length },
+            detailsJson: {
+              action: "add_patients_to_empty_hold",
+              date,
+              resourceId,
+              shift,
+              slotIndex,
+              patientCount: patients.length,
+            },
           });
+
           return { ok: true, reservationId: existing.id } as const;
         }
-        return { ok: false, error: "slot_occupied", code: "slot_occupied", message: "Hueco ocupado" } as const;
+
+        return {
+          ok: false,
+          error: "slot_occupied",
+          code: "slot_occupied",
+          message: "Hueco ocupado",
+        } as const;
       }
 
       if (existing && (existing.status === "CANCELLED" || existing.status === "RELEASED")) {
         const reusedFrom = existing.status;
         const createdRows: Array<{ id: string; orderIndex: number }> = [];
+
         if (hasPatients) {
           const usedMinutesCandidate = Math.max(0, getEffectiveTotalMinutes(patients));
           const overflowConflict = findOverflowConflictAgainstOccupiedSlots({
@@ -200,8 +238,12 @@ export async function createReservationInDb(
             ownerSlotIndex: slotIndex,
             ownerUsedMinutes: usedMinutesCandidate,
           });
-          if (overflowConflict) return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+          if (overflowConflict) {
+            return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+          }
         }
+
+        // Mantiene el comportamiento legacy de reutilización, ahora serializado para evitar carreras.
         await tx.patientInBlock.deleteMany({ where: { reservationId: existing.id } });
         await tx.reservation.update({
           where: { id: existing.id },
@@ -219,13 +261,22 @@ export async function createReservationInDb(
         });
         for (let i = 0; i < patients.length; i++) {
           const p = patients[i]!;
-          const row = await tx.patientInBlock.create({ data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) } });
+          const row = await tx.patientInBlock.create({
+            data: { reservationId: existing.id, ...patientFieldsForCreate(p, i) },
+          });
           createdRows.push({ id: row.id, orderIndex: row.orderIndex });
         }
+
         if (createdRows.length > 0) {
           await applyAndLogPatientCircuitPhase2InTransaction(
             tx,
-            { reservationId: existing.id, surgeryYmd: date, actorUserId, origin: originLower, patients: alignPatientsForPhase2(createdRows, patients) },
+            {
+              reservationId: existing.id,
+              surgeryYmd: date,
+              actorUserId,
+              origin: originLower,
+              patients: alignPatientsForPhase2(createdRows, patients),
+            },
             adminEmail,
           );
         }
@@ -236,6 +287,7 @@ export async function createReservationInDb(
           origin: originLower,
           detailsJson: { date, resourceId, shift, slotIndex, reusedFrom },
         });
+
         return { ok: true, reservationId: existing.id } as const;
       }
 
@@ -247,7 +299,9 @@ export async function createReservationInDb(
           ownerSlotIndex: slotIndex,
           ownerUsedMinutes: usedMinutesCandidate,
         });
-        if (overflowConflict) return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+        if (overflowConflict) {
+          return overflowFailure("La duración total invade un tramo ya ocupado por otra reserva con pacientes");
+        }
       }
 
       const reservation = await tx.reservation.create({
@@ -273,7 +327,10 @@ export async function createReservationInDb(
             surgeryYmd: date,
             actorUserId,
             origin: originLower,
-            patients: alignPatientsForPhase2(reservation.patients.map((row) => ({ id: row.id, orderIndex: row.orderIndex })), patients),
+            patients: alignPatientsForPhase2(
+              reservation.patients.map((row) => ({ id: row.id, orderIndex: row.orderIndex })),
+              patients,
+            ),
           },
           adminEmail,
         );
@@ -285,11 +342,18 @@ export async function createReservationInDb(
         origin: originLower,
         detailsJson: { date, resourceId, shift, slotIndex },
       });
+
       return { ok: true, reservationId: reservation.id } as const;
     });
   } catch (e) {
+    // Defensa adicional frente a escritores antiguos/no cooperativos que no usen el advisory lock.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return { ok: false, error: "slot_occupied", code: "slot_occupied", message: "Hueco ocupado" };
+      return {
+        ok: false,
+        error: "slot_occupied",
+        code: "slot_occupied",
+        message: "Hueco ocupado",
+      };
     }
     throw e;
   }
