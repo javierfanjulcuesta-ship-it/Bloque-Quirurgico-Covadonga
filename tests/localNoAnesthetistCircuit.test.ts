@@ -57,7 +57,7 @@ test("special local option is exact and normal Local still requires the anesthes
 
 test("surgeon programming exposes the exact local-without-anesthetist choice alongside normal Local", () => {
   const source = readFileSync("src/components/cirujano/ProgramarPacientesModal.tsx", "utf8");
-  assert.match(source, /ANESTHESIA_OPTIONS\s*=\s*\[[^\]]*"Local"[^\]]*"Local \(no precisa anestesista\)"[^\]]*\]/s);
+  assert.match(source, /ANESTHESIA_OPTIONS\s*=\s*\[[^\]]*"Local"[^\]]*"Local \(no precisa anestesista\)"[^\]]*\]/);
 });
 
 test("changing a normal anesthesia to local-without-anesthetist clears preanesthesia without consuming capacity", async () => {
@@ -133,6 +133,6 @@ test("contact-only patient edits no longer reset preanesthesia/financing workflo
   const source = readFileSync("src/app/api/reservations/[id]/patient/route.ts", "utf8");
   assert.match(source, /const contactOnlyUpdate\s*=/);
   assert.doesNotMatch(source, /Object\.assign\(data,\s*defaultPatientCircuitColumns\(\)\)/);
-  assert.doesNotMatch(source, /import\s*\{[^}]*defaultPatientCircuitColumns[^}]*\}\s*from\s*["']@\/lib\/reservations\/surgicalPatientCircuit["']/s);
+  assert.doesNotMatch(source, /import\s*\{[\s\S]*defaultPatientCircuitColumns[\s\S]*\}\s*from\s*["']@\/lib\/reservations\/surgicalPatientCircuit["']/);
   assert.match(source, /updates\.anesthesiaType\s*!==\s*undefined[\s\S]*reconcilePreanesthesiaAfterAnesthesiaTypeChangeInTransaction/);
 });
