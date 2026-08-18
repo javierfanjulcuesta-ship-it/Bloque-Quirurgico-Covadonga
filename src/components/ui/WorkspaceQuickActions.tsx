@@ -19,6 +19,8 @@ export function WorkspaceQuickActions({
   actions: WorkspaceAction[];
   rightContent?: ReactNode;
 }) {
+  const showManagerSlotClosures = title === "Espacio gestor" || title === "Espacio gestor-anestesista";
+
   return (
     <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -46,6 +48,14 @@ export function WorkspaceQuickActions({
             {a.label}
           </button>
         ))}
+        {showManagerSlotClosures ? (
+          <a
+            href="/gestor/cierres"
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cerrar / reabrir tramos
+          </a>
+        ) : null}
       </div>
     </section>
   );
