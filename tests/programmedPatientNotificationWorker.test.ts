@@ -89,7 +89,7 @@ test("cron handler keeps isolated-demo and bearer-secret guards before worker ex
     "utf8",
   );
   const isolatedGuard = route.indexOf('process.env.NEXT_PUBLIC_DEPLOYMENT_MODE === "isolated-demo"');
-  const secretGuard = route.indexOf("CRON_SECRET");
+  const secretGuard = route.indexOf("const secret = process.env.CRON_SECRET");
   const workerCall = route.indexOf("runProgrammedPatientNotificationWorker({");
   assert.ok(isolatedGuard >= 0);
   assert.ok(secretGuard > isolatedGuard);
