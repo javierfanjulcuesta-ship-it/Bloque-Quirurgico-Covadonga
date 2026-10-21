@@ -1,3 +1,5 @@
+> **Documento histórico, no vigente.** Describe localStorage o el checkpoint `main` (`c905836`). La rama de trabajo es `hardening/integration`. El estado actual, la política de datos de paciente y cómo probar están en [ESTADO_ACTUAL.md](ESTADO_ACTUAL.md). No usar este archivo para decidir qué se persiste ni para desplegar.
+
 # Auditoría del rol Gestor – Bloque Quirúrgico
 
 ## 1. Auditoría del rol (código real)
