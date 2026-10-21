@@ -1,0 +1,141 @@
+name: PR checks
+
+# Corre en cualquier pull request, también cuando la base es otra rama cursor/*
+# y el workflow p0-hardening-ci no se dispara. No usa secretos ni la base de Vercel.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - hardening/integration
+
+jobs:
+  unit:
+    name: Typecheck, unit tests and build
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://user:pass@127.0.0.1:5432/bloque?schema=public
+      DIRECT_URL: postgresql://user:pass@127.0.0.1:5432/bloque?schema=public
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  lint:
+    name: Lint against the known error budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # El informe JSON se genera aunque eslint salga con 1 por la deuda previa.
+      # El paso siguiente falla solo si un archivo supera el tope commiteado.
+      - name: Collect eslint JSON
+        run: npx eslint . -f json -o eslint-report.json || true
+
+      - name: Fail on new errors
+        run: node scripts/ci/eslint-budget.mjs eslint-report.json
+
+  postgres:
+    name: Empty database migrate deploy and integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: qxflow_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qxflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/qxflow_ci
+      JWT_SECRET: ci-only-secret-ci-only-secret-1234567890
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_USE_REAL_API: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Rebuild an empty database from the migration chain
+        run: npx prisma migrate deploy
+
+      - name: Migration status
+        run: npx prisma migrate status
+
+      - name: Schema matches the migrations
+        run: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Identifying intake tables stay dropped
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='IntakeFingerprint');" | grep -qx t
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='IntakeRow');" | grep -qx f
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='PatientIdentity');" | grep -qx f
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='AnesthetistUnavailability');" | grep -qx t
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Integration tests
+        run: |
+          npm run test:booking-integration
+          npm run test:preanesthesia-integration
+          npm run test:cron-integration
+          npm run test:assignments-integration
+          npm run test:shared-state-integration
+          npm run test:user-lifecycle-integration
+          npm run test:email-idempotency-integration
+          npm run test:user-creation-integration
+          npm run test:invitation-credential-integration
+          npm run test:password-change-integration
+          npm run test:admin-credential-integration
