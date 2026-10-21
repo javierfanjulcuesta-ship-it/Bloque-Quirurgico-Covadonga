@@ -9,10 +9,10 @@ import { isCirujanoOrEndoscopista } from "@/lib/roleMapping";
 import { evaluateBasicBookingPolicy } from "@/lib/reservations/bookingPolicy";
 import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
-import { createReservationInDb } from "@/lib/reservations/createReservationInDb";
-import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
-import { sendReplyToReservationEmail } from "./outlookService";
-import { getReservationReplyContent } from "./reservationReplyTemplates";
+import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/program/recognizeResource";
+import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } from "@/lib/surgeons/habits";
+import { patientInitials } from "@/lib/drafts/parteTemplate";
+import { stripSensitiveKeys } from "@/lib/agent/minimize";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
@@ -40,9 +40,11 @@ function toCreateReservationInput(parsed: ParsedReservationEmail) {
     isDeferredUrgency: false,
   }));
 
+  const resource = decideIncomingResource(parsed.resourceId);
+  if (resource.action !== "use") return null;
   return {
     date: parsed.date,
-    resourceId: parsed.resourceId as "Q1" | "Q2" | "Q3" | "procedimientos-menores" | "tecnicas-dolor",
+    resourceId: resource.resourceId,
     shift: parsed.shift,
     slotIndex: parsed.slotIndex,
     patients,
@@ -106,38 +108,6 @@ async function claimIncomingEmail(params: {
   }
 }
 
-async function sendReplyWithAudit(params: {
-  emailMessageId: string;
-  toEmail: string;
-  subject: string;
-  body: string;
-}): Promise<boolean> {
-  try {
-    await sendReplyToReservationEmail({
-      toEmail: params.toEmail,
-      subject: params.subject,
-      body: params.body,
-    });
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: params.emailMessageId,
-        action: "reply_sent",
-        details: "Respuesta automática enviada",
-      },
-    });
-    return true;
-  } catch (err) {
-    await prisma.emailProcessingLog.create({
-      data: {
-        emailMessageId: params.emailMessageId,
-        action: "reply_failed",
-        errorMessage: err instanceof Error ? err.message.slice(0, 1000) : "Error de envío",
-      },
-    }).catch(() => {});
-    return false;
-  }
-}
-
 async function recordFailure(params: {
   emailMessageId: string;
   classification: string;
@@ -146,15 +116,6 @@ async function recordFailure(params: {
   details?: Record<string, unknown>;
   replyKind?: "format_not_recognized" | "sender_not_registered" | "role_not_authorized" | "slot_occupied";
 }): Promise<ProcessEmailResult> {
-  if (params.replyKind) {
-    const reply = getReservationReplyContent(params.replyKind, { errorDetail: params.error });
-    await sendReplyWithAudit({
-      emailMessageId: params.emailMessageId,
-      toEmail: params.fromEmail,
-      subject: reply.subject,
-      body: reply.body,
-    });
-  }
   await prisma.emailProcessingLog.create({
     data: {
       emailMessageId: params.emailMessageId,
@@ -171,6 +132,32 @@ async function recordFailure(params: {
     emailMessageId: params.emailMessageId,
     classification: params.classification,
     processingStatus: STATUS_FAILED,
+    error: params.error,
+  };
+}
+
+/** Sala no reconocida: no crea reserva, no contesta como confirmada y no inventa Q1. */
+async function leaveRoomPending(params: {
+  emailMessageId: string;
+  classification: string;
+  error: string;
+}): Promise<ProcessEmailResult> {
+  await prisma.emailProcessingLog.create({
+    data: {
+      emailMessageId: params.emailMessageId,
+      action: "room_pending",
+      errorMessage: params.error,
+      details: JSON.stringify({ resourceId: null, fallback: null }),
+    },
+  });
+  await prisma.emailMessage.update({
+    where: { id: params.emailMessageId },
+    data: { processingStatus: "PENDING", resultMessage: params.error },
+  });
+  return {
+    emailMessageId: params.emailMessageId,
+    classification: params.classification,
+    processingStatus: "PENDING",
     error: params.error,
   };
 }
@@ -217,6 +204,42 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
 
   const parseResult = parseReservationEmail({ subject: message.subject, bodyPlain });
   if (!parseResult.ok) {
+    if (missingFieldsLeaveRoomPending(parseResult.missingFields)) {
+      return leaveRoomPending({
+        emailMessageId: emailMessage.id,
+        classification,
+        error: "Sala no reconocida. La solicitud queda pendiente y no se asigna Q1.",
+      });
+    }
+    if (missingFieldsLeaveShiftPending(parseResult.missingFields)) {
+      const sender = await prisma.user.findFirst({
+        where: { email: fromEmail, approved: true, deletedAt: null },
+        select: { name: true, surgeonDefault: { select: { defaultShift: true, preferredResourceId: true, active: true } } },
+      });
+      const saved = sender?.surgeonDefault
+        ? {
+            defaultShift: sender.surgeonDefault.defaultShift === "MORNING"
+              ? "morning" as const
+              : sender.surgeonDefault.defaultShift === "AFTERNOON"
+                ? "afternoon" as const
+                : null,
+            preferredResourceId: sender.surgeonDefault.preferredResourceId,
+            active: sender.surgeonDefault.active,
+          }
+        : null;
+      const suggestion = suggestSurgeonHabit({
+        explicitShift: null,
+        surgeonName: sender?.name || message.fromName || "",
+        saved,
+      });
+      if (suggestion.flags.includes(TURNO_INFERIDO)) {
+        return leaveRoomPending({
+          emailMessageId: emailMessage.id,
+          classification,
+          error: `Turno sugerido ${suggestion.shift === "afternoon" ? "tarde" : "mañana"} marcado ${TURNO_INFERIDO}. No se ha grabado la reserva.`,
+        });
+      }
+    }
     return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
@@ -269,6 +292,13 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
   }
 
   const input = toCreateReservationInput(parsed);
+  if (!input) {
+    return leaveRoomPending({
+      emailMessageId: emailMessage.id,
+      classification,
+      error: "Sala no reconocida. La solicitud queda pendiente y no se asigna Q1.",
+    });
+  }
   const policy = evaluateBasicBookingPolicy({
     date: input.date,
     resourceId: input.resourceId,
@@ -287,71 +317,48 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     });
   }
 
-  const result = await createReservationInDb(input, user.id, {
-    origin: "EMAIL",
-    actorUserId: user.id,
-  });
-
-  if (!result.ok) {
-    if (result.error === "slot_occupied" || result.error === "overflow_conflict") {
-      await logReservationEvent({
-        eventType: "RESERVATION_REJECTED_CONFLICT",
-        actorUserId: user.id,
-        origin: "email",
-        detailsJson: {
-          date: parsed.date,
-          resourceId: parsed.resourceId,
-          shift: parsed.shift,
-          slotIndex: parsed.slotIndex,
-          reason: result.error,
-        },
-      });
-    }
-    await prisma.emailMessage.update({ where: { id: emailMessage.id }, data: { senderUserId: user.id } });
-    return recordFailure({
-      emailMessageId: emailMessage.id,
-      classification,
-      fromEmail,
-      error: result.message,
-      details: { error: result.error },
-      replyKind: result.error === "slot_occupied" || result.error === "overflow_conflict" ? "slot_occupied" : "format_not_recognized",
-    });
-  }
-
-  const reply = getReservationReplyContent("reservation_created", {
-    reservationId: result.reservationId,
-    date: parsed.date,
-    resourceId: parsed.resourceId,
-  });
-  await sendReplyWithAudit({
-    emailMessageId: emailMessage.id,
-    toEmail: fromEmail,
-    subject: reply.subject,
-    body: reply.body,
+  const proposal = await prisma.proposal.create({
+    data: {
+      weekStart: input.date,
+      type: "INTAKE_EMAIL",
+      status: "PENDING",
+      summary: (message.subject ?? "Correo de reserva").slice(0, 240),
+      payloadJson: JSON.stringify(stripSensitiveKeys({
+        date: input.date,
+        resourceId: input.resourceId,
+        shift: input.shift,
+        slotIndex: input.slotIndex,
+        surgeonUserId: user.id,
+        policyOk: policy.ok,
+        patients: (parsed.patients ?? []).map((patient) => ({
+          historyNumber: patient.numeroHistoria,
+          initials: patientInitials(patient.name),
+          procedure: patient.procedure,
+          minutes: patient.estimatedDurationMinutes,
+        })),
+      })),
+    },
+    select: { id: true },
   });
 
   await prisma.emailProcessingLog.create({
     data: {
       emailMessageId: emailMessage.id,
-      action: "reservation_created",
-      details: JSON.stringify({ reservationId: result.reservationId }),
+      action: "proposal_pending",
+      details: JSON.stringify({ proposalId: proposal.id }),
     },
   });
-
   await prisma.emailMessage.update({
     where: { id: emailMessage.id },
     data: {
       senderUserId: user.id,
-      reservationId: result.reservationId,
-      processingStatus: STATUS_PROCESSED,
-      resultMessage: `Reserva creada: ${result.reservationId}`,
-    } as Record<string, unknown>,
+      processingStatus: "PENDING",
+      resultMessage: `Propuesta pendiente de aprobación humana: ${proposal.id}`,
+    },
   });
-
   return {
     emailMessageId: emailMessage.id,
     classification,
-    processingStatus: STATUS_PROCESSED,
-    reservationId: result.reservationId,
+    processingStatus: "PENDING",
   };
 }

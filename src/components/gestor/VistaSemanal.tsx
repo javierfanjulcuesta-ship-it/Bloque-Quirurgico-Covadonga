@@ -9,6 +9,10 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { getWeekStart, getWeekDays, toISODate } from "@/lib/utils";
 import { getReservationsInPeriod, getUsers } from "@/lib/dataHelpers";
+import { getAssignments } from "@/lib/anesthetistAssignments";
+import { buildProgramAlerts, type PendingRoomCase } from "@/lib/program/programAlerts";
+import { ProgramAlertsPanel } from "@/components/gestor/ProgramAlertsPanel";
+import { modoDemo } from "@/lib/config";
 import { RESOURCES, LARGE_BLOCK_REMAINDER_MINUTES } from "@/lib/constants";
 import { WeekNavigation } from "@/components/calendar/WeekNavigation";
 import type { Reservation, User } from "@/lib/types";
@@ -82,6 +86,55 @@ export function VistaSemanal({
     [from, to, storedReservations]
   );
   const users = useMemo(() => getUsers(addedUsers), [addedUsers]);
+  const [assignments, setAssignments] = useState<Array<{ date: string; shift: string; assignmentType: string; resourceId: string; anesthetistId: string }>>([]);
+  const [pendingRooms, setPendingRooms] = useState<PendingRoomCase[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAssignments({ dateFrom: from, dateTo: to })
+      .then((list) => {
+        if (!cancelled) {
+          setAssignments(list.map((item) => ({
+            date: item.date,
+            shift: item.shift,
+            assignmentType: item.assignmentType,
+            resourceId: item.resourceId,
+            anesthetistId: item.anesthetistId,
+          })));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAssignments([]);
+      });
+    if (modoDemo) {
+      setPendingRooms([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetch("/api/program/room-pending", { credentials: "same-origin" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const items = (payload as { pending?: PendingRoomCase[] }).pending ?? [];
+        setPendingRooms(items);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingRooms([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [from, to]);
+
+  const programAlerts = useMemo(
+    () => buildProgramAlerts({ reservations, assignments, pendingRooms }),
+    [reservations, assignments, pendingRooms],
+  );
+  const nameOf = useCallback(
+    (id: string) => users.find((user) => user.id === id)?.name ?? id,
+    [users],
+  );
 
   const underutilHints = useMemo(
     () => buildUnderutilizationHintsByReservationId(reservations),
@@ -113,6 +166,7 @@ export function VistaSemanal({
       />
       <CalendarStateLegend variant="compact" className="max-w-3xl" />
       <WeekNavigation weekStart={weekStart} onWeekChange={setWeekStart} canGoNext={true} />
+      <ProgramAlertsPanel result={programAlerts} nameOf={nameOf} />
       {reservations.length > 0 && (
         <UnderutilizedWeekPanel
           blocks={underutilizedBlocks}
