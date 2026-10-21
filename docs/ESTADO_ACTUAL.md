@@ -62,7 +62,7 @@ Ese job de Postgres no se ejecutó en la máquina donde se escribió el workflow
 
 ## Orden de revisión
 
-Los PR están encadenados. Conviene mirarlos en este orden, cada uno contra su base, sin mezclarlos en `main`:
+El detalle, con enlaces y riesgos, está en `docs/REVISION_PRS.md`. Los PR están encadenados. Conviene mirarlos en este orden, cada uno contra su base, sin mezclarlos en `main`:
 
 1. Alertas de programa, sin caer a Q1.
 2. Cupo de anestesia en servidor y ausencias en Postgres.
