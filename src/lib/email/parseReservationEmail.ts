@@ -4,6 +4,7 @@
  * Devuelve errores claros si faltan campos obligatorios.
  */
 
+import { getSlots } from "@/lib/utils";
 import type { ParsedReservationEmail } from "./types";
 
 export type ParseReservationResult =
@@ -11,19 +12,29 @@ export type ParseReservationResult =
   | { ok: false; error: string; missingFields?: string[] };
 
 // --- Fecha ---
+function isCalendarDate(iso: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 function parseDate(text: string): string | null {
   const iso = text.match(/\b(20\d{2})[\/\-](\d{1,2})[\/\-](\d{1,2})\b/);
+  const dmy = text.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2}|\d{2})\b/);
+  let candidate: string | null = null;
   if (iso) {
     const [, y, m, d] = iso;
-    return `${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
-  }
-  const dmy = text.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2}|\d{2})\b/);
-  if (dmy) {
+    candidate = `${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
+  } else if (dmy) {
     const [, d, m, y] = dmy;
     const year = y!.length === 2 ? `20${y}` : y!;
-    return `${year}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
+    candidate = `${year}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
   }
-  return null;
+  return candidate && isCalendarDate(candidate) ? candidate : null;
 }
 
 // --- Recurso: Quirófano / Quirofano / Recurso / Q1, Q2, Q3, procedimientos menores, técnicas dolor ---
@@ -33,8 +44,8 @@ function parseResourceId(text: string): string | null {
   if (/\bQ2\b/.test(upper) || /quir[oó]fano\s*2|recurso\s*Q2/i.test(text)) return "Q2";
   if (/\bQ3\b/.test(upper) || /quir[oó]fano\s*3|recurso\s*Q3/i.test(text)) return "Q3";
   if (/\bendo\b|endoscop/i.test(text)) return "ENDO";
-  if (/procedimientos?\s*menores|menores/i.test(text)) return "procedimientos-menores";
-  if (/tecnicas?\s*(del)?\s*dolor|dolor/i.test(text)) return "tecnicas-dolor";
+  if (/procedimientos?\s*menores/i.test(text)) return "procedimientos-menores";
+  if (/t[eé]cnicas?\s*(del\s*)?dolor/i.test(text)) return "tecnicas-dolor";
   return null;
 }
 
@@ -141,7 +152,9 @@ export function parseReservationEmail(message: { subject: string; bodyPlain: str
   if (!shift) missingFields.push("Turno (mañana/morning o tarde/afternoon)");
 
   const slotIndex = parseSlotIndex(text);
-  if (slotIndex === null) missingFields.push("Slot/Tramo (0 a 5)");
+  if (slotIndex === null || (shift !== null && !getSlots(shift)[slotIndex])) {
+    missingFields.push("Slot/Tramo (0 a 5)");
+  }
 
   if (missingFields.length > 0) {
     return {
@@ -173,7 +186,6 @@ export function parseReservationEmail(message: { subject: string; bodyPlain: str
       shift: shift!,
       slotIndex: slotIndex!,
       patients,
-      rawText: text.slice(0, 500),
     },
   };
 }
