@@ -192,7 +192,10 @@ export function getStoredReservations(): Reservation[] {
   const raw = window.localStorage.getItem(KEY_RESERVATIONS);
   const parsed = safeParseJSON<unknown>(raw, []);
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isValidReservation).map(sanitizeStoredReservation);
+  const valid = parsed.filter(isValidReservation).map(sanitizeStoredReservation);
+  const sanitized = JSON.stringify(valid);
+  if (raw !== sanitized) window.localStorage.setItem(KEY_RESERVATIONS, sanitized);
+  return valid;
 }
 
 function sanitizeStoredReservation(reservation: Reservation): Reservation {
