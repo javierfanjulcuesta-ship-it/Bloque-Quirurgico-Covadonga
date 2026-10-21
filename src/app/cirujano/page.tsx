@@ -27,6 +27,7 @@ import {
 import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
+import { describeRoomClash, findRoomClashes } from "@/lib/program/roomClash";
 import { modoDemo } from "@/lib/config";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
 import { getDisplaySurgeonName } from "@/lib/surgeonTitular";
@@ -501,6 +502,14 @@ export default function CirujanoPage() {
   }, [selectedKeys]);
 
   const totalReservedMinutes = selectedSlots.reduce((s, x) => s + x.durationMinutes, 0);
+  const clashSurgeonId = isGestorScheduler ? gestorSurgeonSoloId.trim() : (user?.id ?? "");
+  const roomClashText = useMemo(
+    () => findRoomClashes({
+      proposals: selectedSlots.map((slot) => ({ ...slot, surgeonId: clashSurgeonId })),
+      reservations,
+    }).map(describeRoomClash),
+    [selectedSlots, clashSurgeonId, reservations],
+  );
 
   const canCancelPatient = !modoDemo && user && hasPermission(user.role, "patient:cancel");
   const canCancelReservation = !modoDemo && user && hasPermission(user.role, "booking:cancel");
@@ -1148,6 +1157,11 @@ export default function CirujanoPage() {
                         <span className="text-sm font-medium text-gray-800">
                           {selectedKeys.size} hueco(s) · {totalReservedMinutes} min
                         </span>
+                        {roomClashText.map((text) => (
+                          <InlineNotice key={text} variant="warning" className="w-full">
+                            {text} El aviso no impide guardar.
+                          </InlineNotice>
+                        ))}
                         {isGestorScheduler && (
                           <label className="min-w-[220px] flex-1">
                             <span className="block text-xs font-medium text-gray-700">Cirujano responsable (solo reservar vacío) *</span>
