@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { modoDemo } from "@/lib/config";
 import { getUsers } from "@/lib/dataHelpers";
-import { getReservations, updateReservationPatientEntry } from "@/lib/reservations";
+import { getReservations } from "@/lib/reservations";
 import type { Reservation } from "@/lib/types";
 import { hasGestionCitasAccess } from "@/lib/types";
 import {
@@ -79,9 +79,6 @@ export default function GestionCitasPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [editingContact, setEditingContact] = useState<string | null>(null);
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
 
   useEffect(() => {
     if (!hydrated) return;
@@ -128,31 +125,10 @@ export default function GestionCitasPage() {
     ready: nextRows.filter((r) => r.globalStatus === "LISTO").length,
   }), [nextRows, pendingRows]);
 
-  const reloadReservations = async () => setReservations(await getReservations());
-
   const markChanged = (patientId: string, patch: Parameters<typeof updateDemoGestionCitasPatient>[1] = {}) => {
     const next = updateDemoGestionCitasPatient(patientId, { ...patch, updatedAt: new Date().toISOString() });
     setOverlays(next);
     setNotice("");
-  };
-
-  const startContactEdit = (patientId: string, patientPhone?: string, patientEmail?: string) => {
-    setEditingContact(patientId);
-    setPhone(patientPhone ?? "");
-    setEmail(patientEmail ?? "");
-  };
-
-  const saveContact = async (reservationId: string, patientId: string) => {
-    setError("");
-    setNotice("");
-    try {
-      await updateReservationPatientEntry({ reservationId, patientId, patientPhone: phone, patientEmail: email });
-      await reloadReservations();
-      markChanged(patientId);
-      setEditingContact(null);
-    } catch {
-      setError("No se pudo guardar el teléfono/email en la DEMO.");
-    }
   };
 
   const changeConfirmation = (patientId: string, status: ConfirmationOperationalStatus) => {
@@ -176,7 +152,6 @@ export default function GestionCitasPage() {
     if (!overlay?.updatedAt || (overlay.reviewedAt && Date.parse(overlay.updatedAt) <= Date.parse(overlay.reviewedAt))) return;
     const next = updateDemoGestionCitasPatient(patientId, { reviewedAt: new Date().toISOString() });
     setOverlays(next);
-    setEditingContact((current) => current === patientId ? null : current);
     setError("");
     setNotice("Cambios confirmados. El paciente se ha retirado de Pendientes y continúa disponible en Todos los pacientes.");
   };
@@ -248,7 +223,6 @@ export default function GestionCitasPage() {
       ) : (
         <div className="space-y-3">
           {rows.map((row) => {
-            const editing = editingContact === row.patientId;
             const d = daysUntil(row.surgeryDate);
             const overlay = overlays[row.patientId];
             const hasUnconfirmedChanges = !!overlay?.updatedAt && (!overlay.reviewedAt || Date.parse(overlay.updatedAt) > Date.parse(overlay.reviewedAt));
@@ -272,19 +246,7 @@ export default function GestionCitasPage() {
                 <div className="mt-4 grid gap-3 lg:grid-cols-4">
                   <div className="rounded-lg border border-slate-200 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contacto</p>
-                    {editing ? (
-                      <div className="mt-2 space-y-2">
-                        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Teléfono" className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
-                        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
-                        <div className="flex gap-2"><button type="button" onClick={() => void saveContact(row.reservationId, row.patientId)} className="rounded bg-[var(--ribera-navy)] px-2 py-1 text-xs font-medium text-white">Guardar</button><button type="button" onClick={() => setEditingContact(null)} className="rounded border border-slate-300 px-2 py-1 text-xs">Cancelar</button></div>
-                      </div>
-                    ) : (
-                      <div className="mt-2 text-sm text-slate-700">
-                        <p>{row.patientPhone || <span className="font-medium text-red-700">Sin teléfono</span>}</p>
-                        <p>{row.patientEmail || <span className="font-medium text-amber-700">Sin email</span>}</p>
-                        <button type="button" onClick={() => startContactEdit(row.patientId, row.patientPhone, row.patientEmail)} className="mt-2 text-xs font-medium text-[var(--ribera-red)] hover:underline">Editar teléfono/email</button>
-                      </div>
-                    )}
+                    <p className="mt-2 text-sm text-slate-600">El teléfono y el email del paciente están en el Excel maestro. Esta pantalla no los guarda.</p>
                   </div>
 
                   <div className="rounded-lg border border-slate-200 p-3">

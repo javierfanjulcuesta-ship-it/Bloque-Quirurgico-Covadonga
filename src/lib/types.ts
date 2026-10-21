@@ -124,6 +124,8 @@ export type SolicitudRecursosId = "rayo" | "mesa-mano" | "posicionamiento-cadera
 /** Paciente dentro de un bloque reservado */
 export interface PatientInBlock {
   id: string;
+  /** Etiqueta no identificativa, por ejemplo "Caso 1". */
+  caseLabel?: string;
   name?: string;
   numeroHistoria: string;
   procedure: string;

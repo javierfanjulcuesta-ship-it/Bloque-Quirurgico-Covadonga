@@ -255,15 +255,13 @@ export default function CirujanoPage() {
   const [editingPatient, setEditingPatient] = useState<{
     reservationId: string;
     patientId: string;
-    numeroHistoria: string;
+    caseLabel: string;
     procedure: string;
     estimatedDurationMinutes: number;
     anesthesiaType: string;
     entidadFinanciadora: string;
     admissionType: "ingreso" | "ambulatorio";
     notes: string;
-    patientEmail: string;
-    patientPhone: string;
   } | null>(null);
   const [savingEditedPatient, setSavingEditedPatient] = useState(false);
   const [gestorSurgeonSoloId, setGestorSurgeonSoloId] = useState("");
@@ -563,7 +561,7 @@ export default function CirujanoPage() {
 
   const handleSaveEditedPatient = async () => {
     if (!editingPatient || savingEditedPatient) return;
-    if (!editingPatient.numeroHistoria.trim() || !editingPatient.procedure.trim() || !editingPatient.anesthesiaType.trim() || !editingPatient.entidadFinanciadora.trim()) {
+    if (!editingPatient.procedure.trim() || !editingPatient.anesthesiaType.trim() || !editingPatient.entidadFinanciadora.trim()) {
       setErrorNotification("Complete los campos obligatorios del paciente.");
       setTimeout(() => setErrorNotification(null), 6000);
       return;
@@ -579,15 +577,12 @@ export default function CirujanoPage() {
       await updateReservationPatientEntry({
         reservationId: editingPatient.reservationId,
         patientId: editingPatient.patientId,
-        numeroHistoria: editingPatient.numeroHistoria.trim(),
         procedure: editingPatient.procedure.trim(),
         estimatedDurationMinutes: editingPatient.estimatedDurationMinutes,
         anesthesiaType: editingPatient.anesthesiaType.trim(),
         entidadFinanciadora: editingPatient.entidadFinanciadora.trim(),
         admissionType: editingPatient.admissionType,
         notes: editingPatient.notes,
-        patientEmail: editingPatient.patientEmail.trim() || undefined,
-        patientPhone: editingPatient.patientPhone.trim() || undefined,
       });
       setEditingPatient(null);
       await refreshReservations();
@@ -1037,7 +1032,7 @@ export default function CirujanoPage() {
                       {isGestorScheduler && (
                         <th className="px-3 py-2 text-left font-semibold text-gray-700">Cirujano titular</th>
                       )}
-                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Paciente / Nº historia</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-700">Caso</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Procedimiento</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Duración</th>
                       <th className="px-3 py-2 text-left font-semibold text-gray-700">Anestesia</th>
@@ -1061,8 +1056,7 @@ export default function CirujanoPage() {
                           </td>
                           {isGestorScheduler && <td className="px-3 py-2 text-gray-800">{surgeonName}</td>}
                           <td className="px-3 py-2">
-                            <span className="font-medium text-gray-800">{patient.name || "—"}</span>
-                            <span className="ml-1 text-gray-500">{patient.numeroHistoria}</span>
+                            <span className="font-medium text-gray-800">{patient.caseLabel || patient.numeroHistoria || "Caso"}</span>
                           </td>
                           <td className="px-3 py-2 text-gray-700">{patient.procedure}</td>
                           <td className="px-3 py-2 text-gray-700">{patient.estimatedDurationMinutes} min</td>
@@ -1077,15 +1071,13 @@ export default function CirujanoPage() {
                                   setEditingPatient({
                                     reservationId,
                                     patientId: patient.id,
-                                    numeroHistoria: patient.numeroHistoria ?? "",
+                                    caseLabel: patient.caseLabel || patient.numeroHistoria || "Caso",
                                     procedure: patient.procedure ?? "",
                                     estimatedDurationMinutes: patient.estimatedDurationMinutes ?? 0,
                                     anesthesiaType: patient.anesthesiaType ?? "",
                                     entidadFinanciadora: patient.entidadFinanciadora ?? "",
                                     admissionType: patient.admissionType ?? "ambulatorio",
                                     notes: patient.notes ?? "",
-                                    patientEmail: patient.patientEmail ?? "",
-                                    patientPhone: patient.patientPhone ?? "",
                                   })
                                 }
                                 className="min-h-10 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-100"
@@ -1098,7 +1090,7 @@ export default function CirujanoPage() {
                                   setCancelConfirm({
                                     reservationId,
                                     patientId: patient.id,
-                                    patientLabel: `${patient.name || patient.numeroHistoria || "Paciente"} (${patient.numeroHistoria || "—"})`,
+                                    patientLabel: patient.caseLabel || patient.numeroHistoria || "Caso",
                                     date,
                                     isLastPatient,
                                     retentionAllowed,
@@ -1345,10 +1337,9 @@ export default function CirujanoPage() {
           <div className="w-full max-w-xl rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
             <h3 className="mb-4 text-lg font-semibold text-gray-800">Editar paciente en su reserva</h3>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label>
-                <span className="block text-sm font-medium text-gray-700">Nº historia *</span>
-                <input className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={editingPatient.numeroHistoria} onChange={(e) => setEditingPatient((prev) => prev ? { ...prev, numeroHistoria: e.target.value } : prev)} />
-              </label>
+              <p className="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {editingPatient.caseLabel}. El nombre y la historia no se editan aquí.
+              </p>
               <label>
                 <span className="block text-sm font-medium text-gray-700">Entidad *</span>
                 <input className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={editingPatient.entidadFinanciadora} onChange={(e) => setEditingPatient((prev) => prev ? { ...prev, entidadFinanciadora: e.target.value } : prev)} />
@@ -1375,26 +1366,6 @@ export default function CirujanoPage() {
               <label className="sm:col-span-2">
                 <span className="block text-sm font-medium text-gray-700">Notas</span>
                 <input className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={editingPatient.notes} onChange={(e) => setEditingPatient((prev) => prev ? { ...prev, notes: e.target.value } : prev)} />
-              </label>
-              <label>
-                <span className="block text-sm font-medium text-gray-700">Email del paciente (opcional)</span>
-                <input
-                  type="email"
-                  autoComplete="off"
-                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  value={editingPatient.patientEmail}
-                  onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, patientEmail: e.target.value } : prev))}
-                />
-              </label>
-              <label>
-                <span className="block text-sm font-medium text-gray-700">Teléfono (opcional)</span>
-                <input
-                  type="tel"
-                  autoComplete="off"
-                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  value={editingPatient.patientPhone}
-                  onChange={(e) => setEditingPatient((prev) => (prev ? { ...prev, patientPhone: e.target.value } : prev))}
-                />
               </label>
             </div>
             <div className="mt-5 flex justify-end gap-2">

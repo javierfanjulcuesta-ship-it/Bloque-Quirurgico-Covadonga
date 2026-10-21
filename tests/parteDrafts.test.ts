@@ -86,12 +86,9 @@ test("agent week minimization drops phone, email and hashes", () => {
     slotIndex: 1,
     surgeonName: "Corona",
     patients: [{
-      historyNumber: "TEST-0002",
-      fullName: "Paciente Prueba 02",
+      caseLabel: "Caso 1",
       procedure: "Procedimiento prueba",
       estimatedDurationMinutes: 40,
-      patientPhone: "CONTACTO-FICTICIO",
-      patientEmail: "CORREO-FICTICIO",
     }],
   });
   const stripped = stripSensitiveKeys({
@@ -99,14 +96,15 @@ test("agent week minimization drops phone, email and hashes", () => {
     patientPhone: "CONTACTO-FICTICIO",
     patientEmail: "CORREO-FICTICIO",
     passwordHash: "SECRETO-FICTICIO",
-    nested: { dni: "DOCUMENTO-FICTICIO" },
+    nested: { dni: "DOCUMENTO-FICTICIO", historyNumber: "TEST-0002" },
   });
   const serialized = JSON.stringify({ minimized, stripped });
   assert.equal(serialized.includes("CONTACTO-FICTICIO"), false);
   assert.equal(serialized.includes("CORREO-FICTICIO"), false);
   assert.equal(serialized.includes("SECRETO-FICTICIO"), false);
   assert.equal(serialized.includes("DOCUMENTO-FICTICIO"), false);
-  assert.equal(minimized.patients[0]?.initials, "P.P.0.");
+  assert.equal(serialized.includes("TEST-0002"), false);
+  assert.equal(minimized.patients[0]?.caseLabel, "Caso 1");
   assert.equal(minimized.surgeonInitials, "C.");
 });
 

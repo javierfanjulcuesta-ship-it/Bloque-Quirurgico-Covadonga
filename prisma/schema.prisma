@@ -189,8 +189,7 @@ model AnesthetistUnavailability {
 model PatientInBlock {
   id                       String      @id @default(cuid())
   reservationId            String
-  historyNumber            String
-  fullName                 String?
+  caseLabel                String
   procedure                String
   estimatedDurationMinutes Int
   anesthesiaType           String
@@ -199,8 +198,6 @@ model PatientInBlock {
   orderIndex               Int
   notes                    String?
   solicitudRecursos        String?
-  patientEmail             String?
-  patientPhone             String?
   workflowStatus           String      @default("ACTIVE")
   preanesthesiaStatus      String      @default("PENDING")
   financingStatus          String      @default("PENDING")
@@ -397,8 +394,6 @@ model ScheduleChange {
   reservationId  String?
   patientId      String?
   changeType     String
-  beforeJson     String   @db.Text
-  afterJson      String   @db.Text
   reasonCode     String?
   reasonText     String?  @db.Text
   actorUserId    String?
@@ -443,6 +438,7 @@ model OutboundDraft {
   createdByUserId String?
   sentByUserId    String?
   sentAt          DateTime?
+  expiresAt       DateTime
   createdAt       DateTime                 @default(now())
   recipients      OutboundDraftRecipient[]
 

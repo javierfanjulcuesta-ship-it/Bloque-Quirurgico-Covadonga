@@ -1,17 +1,18 @@
 /**
  * Hoja «Semana para imprimir».
- * Calcula iniciales al leer. No escribe reservas ni guarda nombre, historia,
- * teléfono o email. Esos campos, si siguen en PatientInBlock, no salen en la fila.
+ * Muestra la etiqueta Caso N. Las iniciales solo salen del Excel de la sesión,
+ * en el parte, y no se leen de la reserva. No escribe ni guarda identificadores.
  */
 
 import { RESOURCES } from "@/lib/constants";
-import { patientInitials, slotClock } from "@/lib/drafts/parteTemplate";
+import { slotClock } from "@/lib/drafts/parteTemplate";
+import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import { isActiveProgramPatient } from "@/lib/program/programAlerts";
 import { getDisplaySurgeonName } from "@/lib/surgeonTitular";
 import { ASSIGNMENT_FULL_SHIFT, type PatientInBlock, type Shift } from "@/lib/types";
 
 export interface PrintablePatient {
-  name?: string | null;
+  caseLabel?: string | null;
   procedure?: string | null;
   order?: number;
   notes?: string;
@@ -46,7 +47,7 @@ export interface PrintableWeekRow {
   resourceId: string;
   resourceLabel: string;
   surgeon: string;
-  initials: string;
+  caseLabel: string;
   procedure: string;
   time: string;
   anesthetist: string;
@@ -134,7 +135,7 @@ export function buildPrintableWeek(input: {
         resourceId,
         resourceLabel: resourceLabel(resourceId),
         surgeon,
-        initials: patientInitials(patient.name),
+        caseLabel: patient.caseLabel?.trim() || caseLabelFromOrder(patient.order ?? 0),
         procedure: patient.procedure?.trim() || "—",
         time: slotClock(shift, reservation.slotIndex) ?? "—",
         anesthetist: anesthetistName(assignments, users, reservation.date, shift, resourceId),
@@ -150,7 +151,7 @@ export function buildPrintableWeek(input: {
       - (RESOURCE_ORDER.get(b.resourceId as (typeof RESOURCES)[number]["id"]) ?? 99)
     || a.time.localeCompare(b.time)
     || a.surgeon.localeCompare(b.surgeon, "es")
-    || a.initials.localeCompare(b.initials, "es")
+    || a.caseLabel.localeCompare(b.caseLabel, "es")
     || a.procedure.localeCompare(b.procedure, "es"),
   );
   return rows;

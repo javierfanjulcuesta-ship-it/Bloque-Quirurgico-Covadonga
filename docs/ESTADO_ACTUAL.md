@@ -22,20 +22,21 @@ La respuesta al gestor que acaba de subir el fichero tampoco devuelve nombre ni 
 
 Los partes de cirujano que ya estaban en bandeja se generan desde la reserva existente y solo se envían si un gestor pulsa enviar en un borrador concreto. El webhook de correo crea una propuesta, no una reserva ni un envío.
 
-## Modelos que todavía guardan datos de paciente
+## Modelos y datos de paciente
 
-Estas tablas ya existían para la reserva por tramo. Este corte no las vacía: dejar de escribirlas de golpe rompería el calendario actual. La dirección propuesta es dejar de aceptar altas con identificadores y, en una migración posterior, separar el dato clínico del dato operativo.
+La migración `20261021160000_patient_case_label` aplica el límite a las tablas de programación. El calendario sigue con la etiqueta `Caso N`, calculada del orden del caso y no del nombre ni de la historia.
 
-| Modelo | Qué guarda hoy | Límite propuesto |
+| Modelo | Qué guarda | Límite aplicado |
 | --- | --- | --- |
-| `PatientInBlock` | historia, nombre, procedimiento, teléfono, email, notas | Dejar de escribir historia, nombre, teléfono y email. Conservar solo duración, estado de circuito y un identificador interno. El nombre vive en el Excel de la sesión. |
-| `EmailMessage` | remitente y cuerpo del correo, que puede incluir pacientes | No crear reservas desde el webhook. El cuerpo ya recibido sigue en la tabla; no indexar ni reexportar historia o teléfono. |
-| `OutboundDraft` | texto del parte, con iniciales, y email del destinatario profesional | El parte del maestro ya no se guarda. Los borradores antiguos deberían caducar sin copiarse a nuevos listados. |
-| `Proposal.payloadJson` | iniciales, historia y procedimiento si el correo los traía | El agente ya elimina teléfono y email. Quitar también la historia del payload y guardar solo el id de la propuesta. |
-| `ScheduleChange` | JSON de antes/después; una suspensión puede incluir la historia | Guardar solo tipo, motivo y ids internos. La exportación semanal ya no vuelca ese JSON. |
-| `ContactMessage` | nombre y email de quien escribe a la pantalla de acceso | Es contacto profesional o de acceso, no un paciente. No mezclarlo con el Excel clínico. |
+| `PatientInBlock` | `caseLabel` (`Caso 1`), procedimiento, duración, anestesia, seguro, admisión, notas operativas y estado de circuito | Ya no tiene historia, nombre, teléfono ni email. Las iniciales no se calculan desde esta fila. |
+| `Proposal.payloadJson` | tipo, procedimiento y etiqueta de caso | La migración y `stripSensitiveKeys` quitan historia, nombre, iniciales de paciente, DNI, teléfono y email. Las iniciales del cirujano se conservan. |
+| `ScheduleChange` | tipo, motivo e ids internos | Sin JSON de antes/después. |
+| `OutboundDraft` | texto del parte y `expiresAt` a los 7 días | El listado oculta lo caducado, borra el cuerpo y el envío responde 409. El parte del Excel de sesión no se guarda. |
+| `EmailMessage` | remitente y cuerpo del correo, que puede incluir pacientes | Sigue existiendo. El webhook no crea reservas. No se reexporta historia ni teléfono. |
+| `ContactMessage` | nombre y email de quien escribe a la pantalla de acceso | Contacto profesional o de acceso, no un paciente del Excel clínico. |
+| `ReservationEvent` y avisos al buzón de gestión | ids, etiqueta de caso y el email de administración configurado | No llevan historia, nombre, teléfono ni email del paciente. |
 
-La hoja **Semana para imprimir** lee `PatientInBlock` que ya está en la reserva, calcula las iniciales en ese momento y no las guarda. No imprime historia, teléfono ni email. Hasta aplicar la migración de la tabla, ese cálculo sigue dependiendo de que el nombre esté en la reserva. No es un almacén nuevo.
+La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del Excel subido en esa sesión, en el parte de la respuesta, y no se leen de la reserva.
 
 `scripts/lib/seedShowcaseImplementation.ts` es anterior a estos PR y aún inserta nombres de demostración que parecen personas. No debe ejecutarse contra una base real. Conviene sustituirlos por `Paciente Prueba NN` y `TEST-00NN` antes de cualquier semilla de prueba. No lanzar `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel.
 

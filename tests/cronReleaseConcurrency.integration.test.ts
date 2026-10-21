@@ -68,7 +68,7 @@ async function addPatientIfReservationStillActive(reservationId: string): Promis
       await tx.patientInBlock.create({
         data: {
           reservationId,
-          historyNumber: `TEST-${reservationId}`,
+          caseLabel: "Caso 1",
           procedure: "Procedimiento ficticio",
           estimatedDurationMinutes: 30,
           anesthesiaType: "General",

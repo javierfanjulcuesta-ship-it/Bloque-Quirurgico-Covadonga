@@ -59,7 +59,7 @@ before(async () => {
     data: {
       id: PATIENT,
       reservationId: RESERVATION,
-      historyNumber: "TEST-SHARED-STATE",
+      caseLabel: "Caso 1",
       procedure: "Procedimiento ficticio",
       estimatedDurationMinutes: 30,
       anesthesiaType: "General",

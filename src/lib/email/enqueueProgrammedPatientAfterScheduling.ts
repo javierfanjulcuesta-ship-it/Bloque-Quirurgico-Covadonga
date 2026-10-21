@@ -59,8 +59,7 @@ export async function enqueueProgrammedPatientsAfterScheduling(
       where: { id: { in: params.patientIds }, reservationId: params.reservationId },
       select: {
         id: true,
-        historyNumber: true,
-        fullName: true,
+        caseLabel: true,
         procedure: true,
         estimatedDurationMinutes: true,
         anesthesiaType: true,
@@ -68,8 +67,6 @@ export async function enqueueProgrammedPatientsAfterScheduling(
         admissionType: true,
         solicitudRecursos: true,
         notes: true,
-        patientEmail: true,
-        patientPhone: true,
         preanesthesiaStatus: true,
         preanesthesiaAppointmentAt: true,
       },
@@ -85,8 +82,7 @@ export async function enqueueProgrammedPatientsAfterScheduling(
   for (const patient of patients) {
     const email = buildProgrammedPatientNotificationEmail({
       patient: {
-        fullName: patient.fullName,
-        historyNumber: patient.historyNumber,
+        caseLabel: patient.caseLabel,
         procedure: patient.procedure,
         estimatedDurationMinutes: patient.estimatedDurationMinutes,
         anesthesiaType: patient.anesthesiaType,
@@ -94,8 +90,6 @@ export async function enqueueProgrammedPatientsAfterScheduling(
         admissionType: patient.admissionType,
         solicitudRecursos: patient.solicitudRecursos,
         notes: patient.notes,
-        patientEmail: patient.patientEmail,
-        patientPhone: patient.patientPhone,
       },
       surgery: {
         date: surgeryDate,

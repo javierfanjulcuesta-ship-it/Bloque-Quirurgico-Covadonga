@@ -129,9 +129,10 @@ test("changes between two anesthesia-requiring types do not disturb an existing 
   assert.equal(f.lockCount, 0);
 });
 
-test("contact-only patient edits no longer reset preanesthesia/financing workflow statuses", () => {
+test("patient edits do not accept contact fields or reset the circuit", () => {
   const source = readFileSync("src/app/api/reservations/[id]/patient/route.ts", "utf8");
-  assert.match(source, /const contactOnlyUpdate\s*=/);
+  assert.doesNotMatch(source, /const contactOnlyUpdate\s*=/);
+  assert.doesNotMatch(source, /patientEmail|patientPhone|historyNumber|fullName/);
   assert.doesNotMatch(source, /Object\.assign\(data,\s*defaultPatientCircuitColumns\(\)\)/);
   assert.doesNotMatch(source, /import\s*\{[\s\S]*defaultPatientCircuitColumns[\s\S]*\}\s*from\s*["']@\/lib\/reservations\/surgicalPatientCircuit["']/);
   assert.match(source, /updates\.anesthesiaType\s*!==\s*undefined[\s\S]*reconcilePreanesthesiaAfterAnesthesiaTypeChangeInTransaction/);

@@ -9,7 +9,6 @@ import { toAuthSession, requireAuth, requireAnyPermission } from "@/lib/auth";
 import { canModifyPatientInBooking } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
-import { logPatientContactDryRunEvents } from "@/lib/reservations/surgicalPatientCircuit";
 import { fetchReservationForAccess, toApiReservation, toBookingLike } from "@/lib/reservations/reservationApiHelpers";
 import { updatePatientSchema } from "@/lib/validations/reservation";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
@@ -67,22 +66,8 @@ export async function PATCH(
     }
 
     const { patientId, ...updates } = parsed.data;
-    const contactOnlyUpdate =
-      (updates.patientEmail !== undefined || updates.patientPhone !== undefined) &&
-      updates.historyNumber === undefined &&
-      updates.fullName === undefined &&
-      updates.procedure === undefined &&
-      updates.estimatedDurationMinutes === undefined &&
-      updates.anesthesiaType === undefined &&
-      updates.insuranceType === undefined &&
-      updates.admissionType === undefined &&
-      updates.orderIndex === undefined &&
-      updates.notes === undefined &&
-      updates.solicitudRecursos === undefined;
 
     const data: Record<string, unknown> = {};
-    if (updates.historyNumber !== undefined) data.historyNumber = updates.historyNumber;
-    if (updates.fullName !== undefined) data.fullName = updates.fullName;
     if (updates.procedure !== undefined) data.procedure = updates.procedure;
     if (updates.estimatedDurationMinutes !== undefined) data.estimatedDurationMinutes = updates.estimatedDurationMinutes;
     if (updates.anesthesiaType !== undefined) data.anesthesiaType = updates.anesthesiaType;
@@ -91,8 +76,6 @@ export async function PATCH(
     if (updates.orderIndex !== undefined) data.orderIndex = updates.orderIndex;
     if (updates.notes !== undefined) data.notes = updates.notes;
     if (updates.solicitudRecursos !== undefined) data.solicitudRecursos = updates.solicitudRecursos;
-    if (updates.patientEmail !== undefined) data.patientEmail = updates.patientEmail ?? null;
-    if (updates.patientPhone !== undefined) data.patientPhone = updates.patientPhone ?? null;
 
     const dateStr = reservation.date instanceof Date
       ? reservation.date.toISOString().slice(0, 10)
@@ -169,8 +152,6 @@ export async function PATCH(
 
         return {
           kind: "updated" as const,
-          oldEmail: livePatient.patientEmail,
-          oldPhone: livePatient.patientPhone,
           preanesthesiaTransition,
         };
       },
@@ -206,23 +187,9 @@ export async function PATCH(
       detailsJson: {
         patientId,
         fields: Object.keys(updates),
-        contactOnlyUpdate,
         preanesthesiaTransition: lockedResult.preanesthesiaTransition.kind,
       },
     });
-
-    if (updates.patientEmail !== undefined || updates.patientPhone !== undefined) {
-      const emailAfter = updates.patientEmail !== undefined ? updates.patientEmail ?? null : lockedResult.oldEmail;
-      const phoneAfter = updates.patientPhone !== undefined ? updates.patientPhone ?? null : lockedResult.oldPhone;
-      await logPatientContactDryRunEvents({
-        reservationId: id,
-        patientId,
-        actorUserId: session!.userId,
-        origin: "app",
-        patientEmail: emailAfter,
-        patientPhone: phoneAfter,
-      });
-    }
 
     const updated = await fetchReservationForAccess(id);
     if (!updated) return NextResponse.json({ error: "Reserva actualizada pero no encontrada" }, { status: 500 });

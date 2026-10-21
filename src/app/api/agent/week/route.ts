@@ -33,8 +33,7 @@ export async function GET(request: Request) {
       surgeon: { select: { name: true } },
       patients: {
         select: {
-          historyNumber: true,
-          fullName: true,
+          caseLabel: true,
           procedure: true,
           estimatedDurationMinutes: true,
           workflowStatus: true,

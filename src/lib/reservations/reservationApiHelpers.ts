@@ -22,8 +22,7 @@ export interface ReservationWithPatients {
   createdAt: Date;
   patients: Array<{
     id: string;
-    historyNumber: string;
-    fullName: string | null;
+    caseLabel: string;
     procedure: string;
     estimatedDurationMinutes: number;
     anesthesiaType: string;
@@ -32,8 +31,6 @@ export interface ReservationWithPatients {
     orderIndex: number;
     notes: string | null;
     solicitudRecursos: string | null;
-    patientEmail: string | null;
-    patientPhone: string | null;
     workflowStatus: string;
     preanesthesiaStatus: string;
     financingStatus: string;
@@ -57,8 +54,7 @@ export function toApiReservation(r: ReservationWithPatients) {
     createdAt: r.createdAt.toISOString(),
     patients: r.patients.map((p) => ({
       id: p.id,
-      historyNumber: p.historyNumber,
-      fullName: p.fullName ?? undefined,
+      caseLabel: p.caseLabel,
       procedure: p.procedure,
       estimatedDurationMinutes: p.estimatedDurationMinutes,
       anesthesiaType: p.anesthesiaType,
@@ -67,8 +63,6 @@ export function toApiReservation(r: ReservationWithPatients) {
       orderIndex: p.orderIndex,
       notes: p.notes ?? undefined,
       solicitudRecursos: p.solicitudRecursos ?? undefined,
-      patientEmail: p.patientEmail ?? undefined,
-      patientPhone: p.patientPhone ?? undefined,
       workflowStatus: p.workflowStatus,
       preanesthesiaStatus: p.preanesthesiaStatus,
       financingStatus: p.financingStatus,
@@ -95,8 +89,7 @@ const RESERVATION_SELECT = {
   patients: {
     select: {
       id: true,
-      historyNumber: true,
-      fullName: true,
+      caseLabel: true,
       procedure: true,
       estimatedDurationMinutes: true,
       anesthesiaType: true,
@@ -105,8 +98,6 @@ const RESERVATION_SELECT = {
       orderIndex: true,
       notes: true,
       solicitudRecursos: true,
-      patientEmail: true,
-      patientPhone: true,
       workflowStatus: true,
       preanesthesiaStatus: true,
       financingStatus: true,

@@ -197,8 +197,6 @@ export async function PATCH(
                 patientId: row.id,
                 isDeferredUrgency: !!src.isDeferredUrgency,
                 specialCircuitReason: src.isDeferredUrgency ? (src.specialCircuitReason?.trim() || null) : null,
-                patientEmail: src.patientEmail,
-                patientPhone: src.patientPhone,
               };
             }),
           },

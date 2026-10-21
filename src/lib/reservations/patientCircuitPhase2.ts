@@ -36,8 +36,6 @@ export interface Phase2PatientInput {
   patientId: string;
   isDeferredUrgency: boolean;
   specialCircuitReason: string | null;
-  patientEmail: string | null | undefined;
-  patientPhone: string | null | undefined;
 }
 
 export interface ApplyPatientCircuitPhase2Params {
@@ -260,8 +258,6 @@ export async function applyAndLogPatientCircuitPhase2InTransaction(
     const base = {
       dryRun: true,
       patientId: p.patientId,
-      patientEmail: p.patientEmail ?? null,
-      patientPhone: p.patientPhone ?? null,
     };
 
     // La decisión se toma sobre el tipo de anestesia ya persistido dentro de la
@@ -382,7 +378,6 @@ export async function applyAndLogPatientCircuitPhase2InTransaction(
       detailsJson: {
         ...base,
         channel: "email",
-        wouldSendTo: p.patientEmail?.trim() || null,
         context: "preanesthesia_appointment",
         preanesthesiaAppointmentAt: preanesthesiaAtIso,
       },

@@ -21,7 +21,7 @@ function reservation(overrides: Partial<PrintableReservation> = {}): PrintableRe
     status: "confirmed",
     patients: [
       {
-        name: "Paciente Prueba 01",
+        caseLabel: "Caso 2",
         procedure: "Procedimiento de prueba",
         order: 1,
         notes: "historia TEST-0001 contacto CONTACTO-FICTICIO CORREO-FICTICIO",
@@ -47,7 +47,7 @@ test("the printable week shows initials, ENDO and the room anesthetist", () => {
         id: "reserva-endo",
         resourceId: "ENDO",
         slotIndex: 1,
-        patients: [{ name: "Paciente Prueba 02", procedure: "Exploración de prueba", order: 0 }],
+        patients: [{ caseLabel: "Caso 1", procedure: "Exploración de prueba", order: 0 }],
       }),
       reservation({
         id: "fuera",
@@ -56,7 +56,7 @@ test("the printable week shows initials, ENDO and the room anesthetist", () => {
       reservation({
         id: "cancelada",
         status: "cancelled",
-        patients: [{ name: "Paciente Prueba 03", procedure: "No debe salir" }],
+        patients: [{ caseLabel: "Caso 1", procedure: "No debe salir" }],
       }),
       reservation({
         id: "tarde",
@@ -64,17 +64,17 @@ test("the printable week shows initials, ENDO and the room anesthetist", () => {
         slotIndex: 0,
         resourceId: "Q2",
         patients: [
-          { name: "Paciente Prueba 04", procedure: "Segundo", order: 2, scheduleStatus: "CANCELLED" },
-          { name: "Paciente Prueba 05", procedure: "Primero", order: 0 },
+          { caseLabel: "Caso 3", procedure: "Segundo", order: 2, scheduleStatus: "CANCELLED" },
+          { caseLabel: "Caso 1", procedure: "Primero", order: 0 },
         ],
       }),
     ],
   });
 
-  assert.deepEqual(rows.map((row) => `${row.resourceId} ${row.time} ${row.initials} ${row.anesthetist}`), [
-    "Q1 08:00 P.P.0. Anestesista Demo",
-    "ENDO 09:30 P.P.0. Endoscopista Demo",
-    "Q2 15:00 P.P.0. ",
+  assert.deepEqual(rows.map((row) => `${row.resourceId} ${row.time} ${row.caseLabel} ${row.anesthetist}`), [
+    "Q1 08:00 Caso 2 Anestesista Demo",
+    "ENDO 09:30 Caso 1 Endoscopista Demo",
+    "Q2 15:00 Caso 1 ",
   ]);
   assert.equal(rows[1]?.resourceLabel, "Endoscopias");
   assert.equal(rows[1]?.shiftLabel, "MAÑANA");

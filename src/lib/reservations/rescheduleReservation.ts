@@ -120,8 +120,6 @@ export async function rescheduleReservation(input: RescheduleInput, db: PrismaCl
       data: {
         reservationId: live.id,
         changeType: "RESCHEDULE",
-        beforeJson: JSON.stringify(before),
-        afterJson: JSON.stringify(after),
         actorUserId: input.actorUserId,
       },
     });

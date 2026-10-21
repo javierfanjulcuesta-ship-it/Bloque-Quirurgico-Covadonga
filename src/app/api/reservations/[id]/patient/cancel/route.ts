@@ -113,7 +113,7 @@ export async function PATCH(
 
         const cancellationDetails = {
           patientId,
-          historyNumber: patient.historyNumber,
+          caseLabel: patient.caseLabel,
           procedure: patient.procedure,
           reason: reasonTrimmed,
           slotOutcome,
@@ -145,7 +145,7 @@ export async function PATCH(
             origin: "app",
             detailsJson: JSON.stringify({
               patientId,
-              historyNumber: patient.historyNumber,
+              caseLabel: patient.caseLabel,
               dryRun: true,
               reason: reasonTrimmed ?? null,
             }),
@@ -155,7 +155,7 @@ export async function PATCH(
         return {
           kind: "cancelled" as const,
           slotOutcome,
-          historyNumber: patient.historyNumber,
+          caseLabel: patient.caseLabel,
           procedure: patient.procedure,
         };
       },

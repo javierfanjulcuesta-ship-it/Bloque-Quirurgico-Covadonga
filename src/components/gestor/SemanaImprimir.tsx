@@ -77,9 +77,9 @@ export function SemanaImprimir({
         <div>
           <h2 className="text-xl font-bold text-[var(--ribera-navy)]">Semana para imprimir</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Día, turno, quirófano, cirujano, iniciales, procedimiento, hora y anestesista.
-            Las iniciales se calculan al mostrar esta hoja y no se guardan.
-            No se imprimen historia, teléfono ni email.
+            Día, turno, quirófano, cirujano, caso, procedimiento, hora y anestesista.
+            La etiqueta del caso no identifica al paciente.
+            Las iniciales solo salen del Excel subido en esa sesión, en el parte de esa respuesta.
           </p>
         </div>
         <button
@@ -109,7 +109,7 @@ export function SemanaImprimir({
                 <th className="border border-slate-300 px-2 py-1">Turno</th>
                 <th className="border border-slate-300 px-2 py-1">Quirófano</th>
                 <th className="border border-slate-300 px-2 py-1">Cirujano</th>
-                <th className="border border-slate-300 px-2 py-1">Iniciales</th>
+                <th className="border border-slate-300 px-2 py-1">Caso</th>
                 <th className="border border-slate-300 px-2 py-1">Procedimiento</th>
                 <th className="border border-slate-300 px-2 py-1">Hora</th>
                 <th className="border border-slate-300 px-2 py-1">Anestesista</th>
@@ -117,12 +117,12 @@ export function SemanaImprimir({
             </thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={`${row.date}-${row.resourceId}-${row.time}-${row.initials}-${index}`}>
+                <tr key={`${row.date}-${row.resourceId}-${row.time}-${row.caseLabel}-${index}`}>
                   <td className="border border-slate-300 px-2 py-1 capitalize">{row.day}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.shiftLabel}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.resourceLabel}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.surgeon}</td>
-                  <td className="border border-slate-300 px-2 py-1">{row.initials}</td>
+                  <td className="border border-slate-300 px-2 py-1">{row.caseLabel}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.procedure}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.time}</td>
                   <td className="border border-slate-300 px-2 py-1">{row.anesthetist || "—"}</td>

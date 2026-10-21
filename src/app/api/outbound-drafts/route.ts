@@ -14,7 +14,17 @@ export async function GET() {
   const deny = requirePermission(session!, "booking:view:all");
   if (deny) return deny;
 
+  const now = new Date();
+  await prisma.outboundDraft.updateMany({
+    where: { expiresAt: { lte: now }, bodyText: { not: "" } },
+    data: { bodyText: "" },
+  });
+  await prisma.outboundDraft.updateMany({
+    where: { expiresAt: { lte: now }, status: "PENDING_APPROVAL" },
+    data: { status: "EXPIRED" },
+  });
   const drafts = await prisma.outboundDraft.findMany({
+    where: { expiresAt: { gt: now } },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: { recipients: { select: { displayName: true, email: true } } },

@@ -39,8 +39,7 @@ const RESERVATION_SELECT = {
   patients: {
     select: {
       id: true,
-      historyNumber: true,
-      fullName: true,
+      caseLabel: true,
       procedure: true,
       estimatedDurationMinutes: true,
       anesthesiaType: true,
@@ -49,8 +48,6 @@ const RESERVATION_SELECT = {
       orderIndex: true,
       notes: true,
       solicitudRecursos: true,
-      patientEmail: true,
-      patientPhone: true,
       workflowStatus: true,
       preanesthesiaStatus: true,
       financingStatus: true,

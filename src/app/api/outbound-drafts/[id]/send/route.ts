@@ -7,6 +7,7 @@ import { getSessionFromCookie } from "@/lib/auth/session";
 import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { sendEmail } from "@/lib/email/outlookService";
+import { isOutboundDraftExpired } from "@/lib/drafts/draftExpiry";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     where: { id },
     include: { recipients: true },
   });
-  if (!draft || draft.status !== "PENDING_APPROVAL") {
+  if (!draft || draft.status !== "PENDING_APPROVAL" || isOutboundDraftExpired(draft.expiresAt)) {
     return NextResponse.json({ error: "El borrador no está pendiente de envío" }, { status: 409 });
   }
   if (draft.recipients.length === 0) {

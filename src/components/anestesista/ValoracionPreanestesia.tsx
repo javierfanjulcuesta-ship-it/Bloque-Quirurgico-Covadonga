@@ -159,7 +159,7 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
               <tr className="border-b border-gray-200 bg-gray-100">
                 <th className="p-2 font-semibold text-gray-700">Fecha</th>
                 <th className="p-2 font-semibold text-gray-700">Recurso</th>
-                <th className="p-2 font-semibold text-gray-700">Paciente / Nº historia</th>
+                <th className="p-2 font-semibold text-gray-700">Caso</th>
                 <th className="p-2 font-semibold text-gray-700">Procedimiento</th>
                 <th className="p-2 font-semibold text-gray-700">Cirujano</th>
                 <th className="p-2 font-semibold text-gray-700">Estado</th>
@@ -173,8 +173,7 @@ export function ValoracionPreanestesia({ reservations: propReservations }: Valor
                   </td>
                   <td className="p-2 text-gray-800">{row.resourceLabel}</td>
                   <td className="p-2">
-                    <span className="font-medium text-gray-800">{row.patient.name || "—"}</span>
-                    <span className="ml-1 text-gray-500">{row.patient.numeroHistoria}</span>
+                    <span className="font-medium text-gray-800">{row.patient.caseLabel || row.patient.numeroHistoria || "Caso"}</span>
                   </td>
                   <td className="p-2 text-gray-700">{row.patient.procedure}</td>
                   <td className="p-2 text-gray-700">{row.surgeonName}</td>

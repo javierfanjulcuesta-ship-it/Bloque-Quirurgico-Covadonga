@@ -58,14 +58,16 @@ export interface LogPatientContactDryRunParams {
 export async function logPatientContactDryRunEvents(params: LogPatientContactDryRunParams): Promise<void> {
   const { reservationId, patientId, actorUserId, origin, patientEmail, patientPhone } = params;
   const adminEmail = await getAdminNotificationEmail();
-  const base = { dryRun: true, patientId, patientEmail: patientEmail ?? null, patientPhone: patientPhone ?? null };
+  const base = { dryRun: true, patientId };
+  void patientEmail;
+  void patientPhone;
 
   await logReservationEvent({
     eventType: "PATIENT_NOTIFICATION_DRY_RUN_CREATED",
     reservationId,
     actorUserId,
     origin: origin ?? "app",
-    detailsJson: { ...base, channel: "email", wouldSendTo: patientEmail?.trim() || null, context: "patient_updated" },
+    detailsJson: { ...base, channel: "email", context: "patient_updated" },
   });
   if (adminEmail) {
     await logReservationEvent({

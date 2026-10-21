@@ -3,6 +3,7 @@
  */
 
 import type { Reservation, PatientInBlock } from "@/lib/types";
+import { caseLabelFromOrder, operationalPatient } from "@/lib/patients/caseLabel";
 import type { ResourceId, Shift } from "@/lib/types";
 import { deriveReservationBlockState } from "@/lib/reservationState";
 import { ApiError, apiFetch } from "@/lib/api/client";
@@ -22,8 +23,7 @@ export interface ApiReservation {
 
 export interface ApiPatient {
   id: string;
-  historyNumber: string;
-  fullName?: string;
+  caseLabel: string;
   procedure: string;
   estimatedDurationMinutes: number;
   anesthesiaType: string;
@@ -32,8 +32,6 @@ export interface ApiPatient {
   orderIndex: number;
   notes?: string;
   solicitudRecursos?: string;
-  patientEmail?: string;
-  patientPhone?: string;
   workflowStatus?: string;
   preanesthesiaStatus?: string;
   financingStatus?: string;
@@ -53,8 +51,7 @@ export interface CreateReservationPayload {
 }
 
 export interface ApiPatientInput {
-  historyNumber: string;
-  fullName?: string;
+  caseLabel?: string;
   procedure: string;
   estimatedDurationMinutes: number;
   anesthesiaType: string;
@@ -63,8 +60,6 @@ export interface ApiPatientInput {
   orderIndex: number;
   notes?: string;
   solicitudRecursos?: string;
-  patientEmail?: string;
-  patientPhone?: string;
   isDeferredUrgency?: boolean;
   specialCircuitReason?: string;
 }
@@ -101,10 +96,10 @@ export function mapReservationFromApi(api: ApiReservation): Reservation {
 
 /** Convierte paciente de API al formato del frontend */
 export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
-  return {
+  return operationalPatient({
     id: api.id,
-    name: api.fullName,
-    numeroHistoria: api.historyNumber,
+    caseLabel: api.caseLabel,
+    numeroHistoria: api.caseLabel,
     procedure: api.procedure,
     estimatedDurationMinutes: api.estimatedDurationMinutes,
     anesthesiaType: api.anesthesiaType,
@@ -113,16 +108,14 @@ export function mapPatientFromApi(api: ApiPatient): PatientInBlock {
     notes: api.notes ?? "",
     order: api.orderIndex,
     solicitudRecursos: api.solicitudRecursos as PatientInBlock["solicitudRecursos"],
-    scheduleStatus: "SCHEDULED",
-    patientEmail: api.patientEmail,
-    patientPhone: api.patientPhone,
+    scheduleStatus: "SCHEDULED" as const,
     workflowStatus: api.workflowStatus,
     preanesthesiaStatus: api.preanesthesiaStatus,
     financingStatus: api.financingStatus,
     preanesthesiaAppointmentAt: api.preanesthesiaAppointmentAt,
     isDeferredUrgency: api.isDeferredUrgency,
     specialCircuitReason: api.specialCircuitReason,
-  };
+  }, api.orderIndex);
 }
 
 /** Convierte reserva del frontend al payload de la API (para crear) */
@@ -145,8 +138,7 @@ export function mapReservationToApi(r: {
 /** Convierte paciente del frontend al formato de la API */
 export function mapPatientToApi(p: Omit<PatientInBlock, "id" | "order"> & { order?: number }): ApiPatientInput {
   return {
-    historyNumber: p.numeroHistoria,
-    fullName: p.name,
+    caseLabel: p.caseLabel || caseLabelFromOrder(p.order ?? 0),
     procedure: p.procedure,
     estimatedDurationMinutes: p.estimatedDurationMinutes,
     anesthesiaType: p.anesthesiaType,
@@ -155,8 +147,6 @@ export function mapPatientToApi(p: Omit<PatientInBlock, "id" | "order"> & { orde
     orderIndex: p.order ?? 0,
     notes: p.notes ?? "",
     solicitudRecursos: p.solicitudRecursos,
-    patientEmail: p.patientEmail?.trim() || undefined,
-    patientPhone: p.patientPhone?.trim() || undefined,
     isDeferredUrgency: p.isDeferredUrgency === true ? true : undefined,
     specialCircuitReason: p.isDeferredUrgency && p.specialCircuitReason?.trim()
       ? p.specialCircuitReason.trim()
