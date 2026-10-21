@@ -72,8 +72,7 @@ model Reservation {
 model PatientInBlock {
   id                       String      @id @default(cuid())
   reservationId            String
-  historyNumber            String
-  fullName                 String?
+  caseLabel                String
   procedure                String
   estimatedDurationMinutes Int
   anesthesiaType           String
@@ -106,8 +105,7 @@ Crea una reserva. **Solo cirujanos y endoscopistas pueden crear.** El `surgeonId
   "slotIndex": 0,
   "patients": [
     {
-      "historyNumber": "HC-001",
-      "fullName": "Juan Pérez",
+      "caseLabel": "Caso 1",
       "procedure": "Artroscopia rodilla",
       "estimatedDurationMinutes": 60,
       "anesthesiaType": "Regional",
@@ -147,8 +145,7 @@ Crea una reserva. **Solo cirujanos y endoscopistas pueden crear.** El `surgeonId
     "patients": [
       {
         "id": "clxxx...",
-        "historyNumber": "HC-001",
-        "fullName": "Juan Pérez",
+        "caseLabel": "Caso 1",
         "procedure": "Artroscopia rodilla",
         "estimatedDurationMinutes": 60,
         "anesthesiaType": "Regional",
@@ -232,7 +229,7 @@ Lista reservas con filtros. Requiere sesión.
    - etc.
 
 4. **Mapear campos** entre API y tipos del frontend:
-   - API: `historyNumber`, `fullName`, `insuranceType`, `orderIndex`
-   - Frontend: `numeroHistoria`, `name`, `entidadFinanciadora`, `order`
+   - API: `caseLabel`, `insuranceType`, `orderIndex`
+   - Frontend: `numeroHistoria` (la etiqueta Caso N), `caseLabel`, `entidadFinanciadora`, `order`
 
 5. **Feature flag:** Usar `modoDemo` para elegir entre localStorage y API.

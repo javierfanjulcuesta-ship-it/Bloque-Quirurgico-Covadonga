@@ -38,6 +38,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Reject DNI and phone columns in fixtures
+        run: node scripts/ci/no-identifying-fixture-columns.mjs
+
       - name: Unit tests
         run: npm test
 

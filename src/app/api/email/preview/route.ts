@@ -13,8 +13,8 @@ import type { UserRole } from "@/lib/types";
 const PREVIEW_ROLES: UserRole[] = ["anestesista", "gestor", "gestor-anestesista"];
 
 const EXAMPLE = {
-  name: "María García",
-  email: "maria.garcia@hospital.local",
+  name: "Usuario Prueba",
+  email: "usuario.prueba@example.test",
   invitedByName: "Coordinación QxFlow",
   appUrl: "https://mi-app.vercel.app",
   temporaryPassword: "Ejemplo-Temporal-2026",

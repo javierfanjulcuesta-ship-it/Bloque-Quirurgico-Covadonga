@@ -54,6 +54,7 @@ test("pull requests run unit checks and an empty-database migrate deploy", () =>
   const workflow = readFileSync(".github/workflows/pr-checks.yml", "utf8");
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /npm test/);
+  assert.match(workflow, /no-identifying-fixture-columns\.mjs/);
   assert.match(workflow, /npm run build/);
   assert.match(workflow, /eslint-budget\.mjs/);
   assert.match(workflow, /prisma migrate deploy/);

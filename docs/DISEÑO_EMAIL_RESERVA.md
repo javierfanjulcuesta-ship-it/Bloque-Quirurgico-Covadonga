@@ -51,7 +51,7 @@ Procedimiento: ( )
 
 **Ejemplo cumplimentado:**
 ```
-Correo: ( juan.garcia@hospital.es )
+Correo: ( cirujano.demo@example.test )
 Turno: Mañana / Tarde ( Mañana )
 Recurso: Q1 / Q2 / Q3 / Procedimientos menores / Técnicas del dolor ( Q1 )
 Tipo anestesia: Local / Regional / General / Sedación ( General )
@@ -62,13 +62,13 @@ Solicitud recursos: Rayo / Mesa de mano / Posicionamiento de cadera / Caja instr
 
 | Campo | Valores válidos | Ejemplo |
 |-------|-----------------|---------|
-| Correo | Email del cirujano registrado | juan.garcia@hospital.es |
-| Nombre | Texto | Dr. Juan García |
+| Correo | Email del cirujano registrado | cirujano.demo@example.test |
+| Nombre | Texto | Cirujano Demo |
 | Fecha preferida | YYYY-MM-DD o DD/MM/YYYY | 2025-03-25 |
 | Turno | Mañana, Tarde | Mañana |
 | Sala | Q1, Q2, Q3, Procedimientos menores, Técnicas del dolor, Cualquier quirófano | Q1 |
 | ¿Solo reservar? | Sí, No | No |
-| NHC | Texto | HC-2025-00123 |
+| NHC | Texto | TEST-0001 |
 | Procedimiento | Texto | Colecistectomía |
 | Entidad gestora | Texto | SAS, Mutua, Privado... |
 | Tipo anestesia | Local, Regional, General, Sedación | General |
@@ -203,7 +203,7 @@ POST /api/email-reserva
 Content-Type: application/json
 
 {
-  "from": "juan.garcia@hospital.es",
+  "from": "cirujano.demo@example.test",
   "subject": "Solicitud reserva quirófano",
   "text": "... cuerpo del correo ...",
   "html": "..." // opcional, priorizar text para parseo

@@ -38,7 +38,7 @@ La migración `20261021160000_patient_case_label` aplica el límite a las tablas
 
 La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del Excel subido en esa sesión, en el parte de la respuesta, y no se leen de la reserva.
 
-`scripts/lib/seedShowcaseImplementation.ts` es anterior a estos PR y aún inserta nombres de demostración que parecen personas. No debe ejecutarse contra una base real. Conviene sustituirlos por `Paciente Prueba NN` y `TEST-00NN` antes de cualquier semilla de prueba. No lanzar `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel.
+`scripts/lib/seedShowcaseImplementation.ts` y la demo local usan `Paciente Prueba NN` y `TEST-00NN`. Esas etiquetas no se escriben en Postgres: el alta guarda `Caso N`. No lanzar `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel. El chequeo `scripts/ci/no-identifying-fixture-columns.mjs` falla si un fixture trae una columna DNI, NIE, NIF o teléfono.
 
 ## Endoscopias
 

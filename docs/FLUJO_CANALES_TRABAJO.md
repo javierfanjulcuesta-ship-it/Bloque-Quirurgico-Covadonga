@@ -84,4 +84,4 @@ Cualquier correo en la lista = usuario aprobado con acceso inmediato.
 
 - Los usuarios pueden **cambiar la contraseña** desde la aplicación en "Mi perfil".
 - Si un correo ya existe en la BD, el script lo omite (no sobrescribe).
-- El nombre inicial se genera a partir del correo (ej. `juan.garcia` → "Juan Garcia"). El usuario puede completar su perfil después.
+- El nombre inicial se genera a partir del correo (ej. `usuario.prueba` → "Usuario Prueba"). El usuario puede completar su perfil después.

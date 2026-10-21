@@ -5,7 +5,7 @@ import { readTextBodyWithLimit } from "../src/lib/http/requestBody";
 
 test("valid contact payload is normalized without truncation", () => {
   const result = parseContactInput(JSON.stringify({
-    fromName: "  Ana García  ",
+    fromName: "  Usuario Prueba  ",
     fromEmail: "  ANA@EXAMPLE.COM ",
     subject: "  Consulta  ",
     body: "  Necesito ayuda  ",
@@ -13,7 +13,7 @@ test("valid contact payload is normalized without truncation", () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.data, {
-    fromName: "Ana García",
+    fromName: "Usuario Prueba",
     fromEmail: "ana@example.com",
     subject: "Consulta",
     body: "Necesito ayuda",

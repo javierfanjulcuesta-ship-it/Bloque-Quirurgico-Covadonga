@@ -19,9 +19,9 @@ Tras **Restablecer demo** y **Cargar datos de ejemplo**, al entrar con cualquier
 
 - **Quirófano libre:** Hay huecos sin reserva (por ejemplo otros días o tramos de la semana).
 - **Reserva sin pacientes (parcial):** Q1 el lunes por la mañana, primer tramo — reservado por Cirujano Demo, sin pacientes programados (aparece como reservado/amarillo).
-- **Reserva con un paciente:** Q2 el lunes por la mañana, segundo tramo — un paciente ficticio (HC-DEMO-001, cirugía menor ejemplo).
+- **Reserva con un paciente:** Q2 el lunes por la mañana, segundo tramo — un paciente ficticio (TEST-0001, cirugía menor ejemplo).
 - **Reserva con varios pacientes y uno privado:** Q3 el martes por la mañana — dos pacientes; uno con financiación **Privado** para ver el resaltado en naranja en calendario y en asignar anestesistas.
-- **Endoscopista:** Procedimientos menores el miércoles con un paciente de ejemplo (HC-DEMO-004).
+- **Endoscopista:** Procedimientos menores el miércoles con un paciente de ejemplo (TEST-0004).
 
 ### 2. Asignar anestesistas (gestor)
 
@@ -49,7 +49,7 @@ Tras **Restablecer demo** y **Cargar datos de ejemplo**, al entrar con cualquier
 
 ## Nombres y datos ficticios
 
-- **Pacientes:** HC-DEMO-001 a HC-DEMO-004; nombres "Paciente ejemplo 1", etc.; procedimientos "Cirugía menor ejemplo", "Procedimiento ejemplo A/B", "Endoscopia ejemplo".
+- **Pacientes:** TEST-0001 a TEST-0004; nombres "Paciente Prueba 01", etc.; procedimientos "Cirugía menor ejemplo", "Procedimiento ejemplo A/B", "Endoscopia ejemplo".
 - **Entidad financiadora:** "SNS" o "Privado" (solo para resaltar en naranja).
 - **Mensajes:** Asuntos y cuerpos genéricos ("Consulta de disponibilidad (ejemplo)", "Solicitud de acceso (ejemplo)").
 

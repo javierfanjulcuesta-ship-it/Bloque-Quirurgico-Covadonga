@@ -77,7 +77,7 @@ export function getRecordatorioMiercolesBody(apellido: string): string {
   return CUERPO_RECORDATORIO(apellido);
 }
 
-/** Apellido del usuario (última palabra del nombre, ej. "Dra. María García" → "García") */
+/** Apellido del usuario (última palabra del nombre, ej. "Usuario Prueba" → "Prueba") */
 export function getApellidoFromName(name: string): string {
   const parts = name.trim().split(/\s+/);
   return parts.length > 1 ? parts[parts.length - 1]! : name || "Dr./Dra.";

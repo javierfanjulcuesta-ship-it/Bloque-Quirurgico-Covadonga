@@ -38,9 +38,9 @@ En desarrollo sin secret configurado, se acepta el valor fijo `dev-local-testing
 ### Pacientes (opcional)
 
 Formato por línea:
-- `HC-001234: Juan Pérez, Artroscopia rodilla, 60 min`
-- `Historia: HC-001234, Procedimiento: Meniscectomía, 45 min`
-- `nº hist. 001234 - Artroscopia - 60 min`
+- `TEST-0001: Paciente Prueba 01, Artroscopia rodilla, 60 min`
+- `Historia: TEST-0001, Procedimiento: Meniscectomía, 45 min`
+- `nº hist. 0001 - Artroscopia - 60 min`
 
 Campos por paciente:
 - **numeroHistoria** (obligatorio si hay pacientes)
@@ -70,7 +70,7 @@ Turno: tarde
 Tramo: 1
 
 Pacientes:
-- HC-001234: Juan Pérez, Artroscopia rodilla, 60 min, General, SNS
+- TEST-0001: Paciente Prueba 01, Artroscopia rodilla, 60 min, General, SNS
 ```
 
 ### Con varios pacientes
@@ -81,9 +81,9 @@ Turno: morning
 Slot: 0
 
 Pacientes:
-HC-001234: María García, Artroscopia, 60 min, General, SNS, ambulatorio
-HC-001235: Pedro López, Meniscectomía, 45 min, Regional, Privado
-HC-001236: Ana Ruiz, Cirugía menor, 30 min, Local, SNS
+TEST-0001: Paciente Prueba 02, Artroscopia, 60 min, General, SNS, ambulatorio
+TEST-0002: Paciente Prueba 04, Meniscectomía, 45 min, Regional, Privado
+TEST-0003: Paciente Prueba 05, Cirugía menor, 30 min, Local, SNS
 ```
 
 ### Variantes de formato
@@ -169,7 +169,7 @@ curl -X POST http://localhost:3000/api/email/webhook \
     "id": "test-3",
     "fromEmail": "cirujano@ejemplo.com",
     "subject": "Reserva con pacientes",
-    "bodyPlain": "Fecha: 2025-03-26\nQ2\nTurno: tarde\nTramo: 0\n\nPacientes:\nHC-001: Ana García, Artroscopia, 60 min\nHC-002: Pedro López, Meniscectomía, 45 min"
+    "bodyPlain": "Fecha: 2025-03-26\nQ2\nTurno: tarde\nTramo: 0\n\nPacientes:\nTEST-0001: Paciente Prueba 06, Artroscopia, 60 min\nTEST-0002: Paciente Prueba 04, Meniscectomía, 45 min"
   }'
 ```
 

@@ -8,7 +8,7 @@ import type { InboxMessage } from "./types";
 export const MOCK_RESERVATION_EMAIL: InboxMessage = {
   id: "mock-res-1",
   fromEmail: "cirujano@hospital.com",
-  fromName: "Dr. García",
+  fromName: "Cirujano Demo",
   subject: "Reserva quirófano Q1",
   bodyPlain: `Buenos días,
 
@@ -20,8 +20,8 @@ Turno: Mañana
 Slot: 0
 
 Pacientes:
-- HC-001234: Juan Pérez, Artroscopia rodilla, 60 min
-- HC-001235: María López, Meniscectomía, 45 min
+- TEST-0001: Paciente Prueba 01, Procedimiento de prueba, 60 min
+- TEST-0002: Paciente Prueba 02, Procedimiento de prueba, 45 min
 
 Gracias.`,
   receivedAt: new Date().toISOString(),
@@ -30,7 +30,7 @@ Gracias.`,
 export const MOCK_GENERAL_EMAIL: InboxMessage = {
   id: "mock-gen-1",
   fromEmail: "consulta@hospital.com",
-  fromName: "Ana Martínez",
+  fromName: "Coordinación Demo",
   subject: "Consulta sobre coordinación",
   bodyPlain: `Hola,
 
@@ -44,7 +44,7 @@ Gracias.`,
 export const MOCK_ACCESS_REQUEST_EMAIL: InboxMessage = {
   id: "mock-acc-1",
   fromEmail: "nuevo@hospital.com",
-  fromName: "Carlos Ruiz",
+  fromName: "Usuario Prueba",
   subject: "Solicitud de acceso al sistema",
   bodyPlain: `Estimados,
 
