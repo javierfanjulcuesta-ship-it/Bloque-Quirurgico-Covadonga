@@ -27,6 +27,8 @@ export interface PlanningPreviewBlock {
   /** Valores detectados automáticos (trazabilidad). */
   detectedSurgeon?: string;
   detectedFunding?: "SESPA" | "Privado" | "Mutua" | "Mixto" | "Desconocido";
+  inferences?: Array<"TURNO_INFERIDO" | "QUIROFANO_INFERIDO">;
+  suggestionNote?: string;
   /** Correcciones manuales (si existen) */
   correctedDay?: string;
   correctedShift?: "morning" | "afternoon" | "unknown";

@@ -79,3 +79,43 @@ export async function replaceAssignmentSnapshot(
     { maxWait: 5_000, timeout: 15_000 },
   );
 }
+
+/**
+ * Sustituye solo las filas del rango indicado. Las semanas que no están en
+ * pantalla no se borran. La revisión comparada es la de ese rango, no la de toda la tabla.
+ */
+export async function replaceAssignmentWeek(
+  prisma: PrismaClient,
+  expectedRevision: string,
+  range: { dateFrom: string; dateTo: string },
+  nextRows: AssignmentSnapshotRow[],
+): Promise<ReplaceAssignmentSnapshotResult> {
+  return prisma.$transaction(
+    async (tx) => {
+      await acquireSnapshotLock(tx);
+      const currentRows = await tx.anesthetistAssignment.findMany({
+        where: { date: { gte: range.dateFrom, lte: range.dateTo } },
+        select: {
+          date: true,
+          shift: true,
+          assignmentType: true,
+          resourceId: true,
+          anesthetistId: true,
+        },
+      });
+      const currentRevision = assignmentSnapshotRevision(currentRows as AssignmentSnapshotRow[]);
+      if (currentRevision !== expectedRevision) {
+        return { ok: false, reason: "stale_revision", currentRevision } as const;
+      }
+
+      await tx.anesthetistAssignment.deleteMany({
+        where: { date: { gte: range.dateFrom, lte: range.dateTo } },
+      });
+      if (nextRows.length > 0) {
+        await tx.anesthetistAssignment.createMany({ data: nextRows });
+      }
+      return { ok: true, revision: assignmentSnapshotRevision(nextRows) } as const;
+    },
+    { maxWait: 5_000, timeout: 15_000 },
+  );
+}
