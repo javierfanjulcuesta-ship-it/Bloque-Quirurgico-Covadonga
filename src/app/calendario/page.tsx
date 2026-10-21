@@ -33,6 +33,7 @@ import { ListaUsuariosGestor } from "@/components/gestor/ListaUsuariosGestor";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
 import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { BandejaGestor } from "@/components/gestor/BandejaGestor";
+import { SemanaImprimir } from "@/components/gestor/SemanaImprimir";
 import { CuadroDeMando } from "@/components/gestor/CuadroDeMando";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
@@ -61,6 +62,7 @@ type CalendarioViewTab =
   | "gestionar-apertura"
   | "normas"
   | "bandeja"
+  | "imprimir"
   | "mensajes"
   | "consulta-preanestesia"
   | "mi-programacion"
@@ -100,6 +102,11 @@ function getCalendarioScreenContext(
       return { title: "Normas", subtitle: "Criterios de programación y uso del bloque quirúrgico." };
     case "bandeja":
       return { title: "Bandeja", subtitle: "Borradores de parte y propuestas. Nada se envía ni se reserva sin pulsarlo." };
+    case "imprimir":
+      return {
+        title: "Semana para imprimir",
+        subtitle: "Hoja de la semana con iniciales calculadas al vuelo. No guarda una copia ni muestra historia, teléfono o email.",
+      };
     case "mensajes":
       return { title: "Mensajes", subtitle: "Bandeja de mensajes desde coordinación y la pantalla de acceso." };
     case "consulta-preanestesia":
@@ -468,6 +475,9 @@ export default function CalendarioPage() {
                       <AppNavTab active={viewTab === "bandeja"} onClick={() => setViewTab("bandeja")}>
                         Bandeja
                       </AppNavTab>
+                      <AppNavTab active={viewTab === "imprimir"} onClick={() => setViewTab("imprimir")}>
+                        Semana para imprimir
+                      </AppNavTab>
                       {canViewCuadroDeMando && (
                         <AppNavTab active={viewTab === "cuadro-de-mando"} onClick={() => setViewTab("cuadro-de-mando")}>
                           Cuadro de Mando
@@ -569,6 +579,10 @@ export default function CalendarioPage() {
 
         {user && isGestor && viewTab === "bandeja" && (
           <BandejaGestor />
+        )}
+
+        {user && isGestor && viewTab === "imprimir" && (
+          <SemanaImprimir reservations={reservations} users={usersDirectory} />
         )}
 
         {user && canViewCuadroDeMando && viewTab === "cuadro-de-mando" && (
