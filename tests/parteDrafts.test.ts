@@ -10,12 +10,12 @@ test("parte uses server initials, the fixed line and signature, and no extra gui
     date: "2031-10-24",
     shift: "morning",
     slotIndex: 2,
-    fullName: "Ana María López",
-    procedure: "artroscopia",
+    fullName: "Paciente Prueba 01",
+    procedure: "Procedimiento prueba",
   }]);
-  assert.equal(patientInitials("Ana María López"), "A.M.L.");
-  assert.equal(rendered.body.includes("Ana María"), false);
-  assert.match(rendered.body, /viernes 24\/10 · 10:30 · MAÑANA · A\.M\.L\. — artroscopia/);
+  assert.equal(patientInitials("Paciente Prueba 01"), "P.P.0.");
+  assert.equal(rendered.body.includes("Paciente Prueba"), false);
+  assert.match(rendered.body, /viernes 24\/10 · 10:30 · MAÑANA · P\.P\.0\. — Procedimiento prueba/);
   assert.match(rendered.body, /Gestor QxFlow · Bloque quirúrgico · Hospital Covadonga\n603 618 877\nquirofano\.covadonga@riberacare\.com$/);
   assert.equal(/orientativ|aplicación|puede consultar/i.test(rendered.body), false);
 });
@@ -30,8 +30,8 @@ test("suspension keeps an enumerated reason on the draft and does not delete the
     date: "2031-10-24",
     shift: "morning",
     slotIndex: 2,
-    fullName: "Ana María López",
-    procedure: "artroscopia",
+    fullName: "Paciente Prueba 01",
+    procedure: "Procedimiento prueba",
   }], "SIN_SEGURO");
   assert.match(rendered.body, /^Motivo: SIN_SEGURO\n/);
   const suspend = readFileSync("src/app/api/reservations/[id]/patient/suspend/route.ts", "utf8");
@@ -85,27 +85,27 @@ test("agent week minimization drops phone, email and hashes", () => {
     slotIndex: 1,
     surgeonName: "Corona",
     patients: [{
-      historyNumber: "HC1",
-      fullName: "Luis Corona",
-      procedure: "hernia",
+      historyNumber: "TEST-0002",
+      fullName: "Paciente Prueba 02",
+      procedure: "Procedimiento prueba",
       estimatedDurationMinutes: 40,
-      patientPhone: "600000000",
-      patientEmail: "paciente@example.test",
+      patientPhone: "CONTACTO-FICTICIO",
+      patientEmail: "CORREO-FICTICIO",
     }],
   });
   const stripped = stripSensitiveKeys({
     summary: "mover",
-    patientPhone: "600000000",
-    patientEmail: "a@b.c",
-    passwordHash: "abc",
-    nested: { dni: "000" },
+    patientPhone: "CONTACTO-FICTICIO",
+    patientEmail: "CORREO-FICTICIO",
+    passwordHash: "SECRETO-FICTICIO",
+    nested: { dni: "DOCUMENTO-FICTICIO" },
   });
   const serialized = JSON.stringify({ minimized, stripped });
-  assert.equal(serialized.includes("600000000"), false);
-  assert.equal(serialized.includes("paciente@example.test"), false);
-  assert.equal(serialized.includes("passwordHash"), false);
-  assert.equal(serialized.includes("000"), false);
-  assert.equal(minimized.patients[0]?.initials, "L.C.");
+  assert.equal(serialized.includes("CONTACTO-FICTICIO"), false);
+  assert.equal(serialized.includes("CORREO-FICTICIO"), false);
+  assert.equal(serialized.includes("SECRETO-FICTICIO"), false);
+  assert.equal(serialized.includes("DOCUMENTO-FICTICIO"), false);
+  assert.equal(minimized.patients[0]?.initials, "P.P.0.");
   assert.equal(minimized.surgeonInitials, "C.");
 });
 

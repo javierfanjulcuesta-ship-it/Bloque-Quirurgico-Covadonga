@@ -59,7 +59,7 @@ test("patients without a recognized room stay pending and are not called Q1", ()
         surgeonId: "muel",
         slotIndex: 0,
         resourceId: null,
-        patients: [{ numeroHistoria: "HC1", estimatedDurationMinutes: 30, procedure: "hernia" }],
+        patients: [{ numeroHistoria: "TEST-0001", estimatedDurationMinutes: 30, procedure: "Procedimiento prueba" }],
       }),
     ],
   });

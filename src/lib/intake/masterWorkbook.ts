@@ -1,7 +1,9 @@
+import { createHmac } from "node:crypto";
 import * as XLSX from "xlsx";
 import { getSlots } from "@/lib/utils";
-import { recognizeResourceId } from "@/lib/program/recognizeResource";
 import { suggestSurgeonHabit, TURNO_INFERIDO, QUIROFANO_INFERIDO } from "@/lib/surgeons/habits";
+import { buildProgramAlerts } from "@/lib/program/programAlerts";
+import { renderParte } from "@/lib/drafts/parteTemplate";
 
 export const MASTER_SHEETS = ["1_PROGRAMA", "DATOS_IQ"] as const;
 export const FUENTE_INCOMPLETA = "FUENTE_INCOMPLETA";
@@ -180,101 +182,147 @@ export function parseMasterWorkbook(bytes: Buffer | Uint8Array): ParseMasterResu
   return { ok: true, rows };
 }
 
-export interface ExistingIntakeRow {
-  dedupKey: string;
-  historyNumber: string;
-  patientName: string;
+export function intakeHmac(salt: string, value: string): string {
+  return createHmac("sha256", salt).update(value).digest("hex");
+}
+
+export interface StoredFingerprint {
   serviceDate: string;
+  caseFingerprint: string;
+  historyFingerprint: string;
+  nameFingerprint: string;
 }
 
-export interface KnownIdentity {
-  historyNumber: string;
-  displayName: string;
-}
-
-export interface PlannedIntakeRow extends ParsedIntakeRow {
-  dedupKey: string;
-  status: "PENDING" | "NOMBRE_DIVERGENTE";
-}
-
-export interface IntakePlan {
-  batchStatus: "REVIEW" | "FUENTE_INCOMPLETA";
-  missingKeys: string[];
-  rowsToInsert: PlannedIntakeRow[];
-  identityCreates: Array<{ historyNumber: string; displayName: string }>;
-}
-
-export function planMasterImport(input: {
-  existing: ExistingIntakeRow[];
-  identities: KnownIdentity[];
-  incoming: ParsedIntakeRow[];
-}): IntakePlan {
-  const dates = new Set(input.incoming.map((row) => row.serviceDate));
-  const existingInScope = input.existing.filter((row) => dates.has(row.serviceDate));
-  const existingKeys = new Set(existingInScope.map((row) => row.dedupKey));
-  const incomingKeys = new Set(input.incoming.map((row) => intakeDedupKey(row.historyNumber, row.serviceDate, row.procedure)));
-  const missingKeys = [...existingKeys].filter((key) => !incomingKeys.has(key)).sort();
-  const namesByHistory = new Map<string, string>();
-  for (const identity of input.identities) {
-    namesByHistory.set(normalizeIntakeText(identity.historyNumber), normalizeIntakeText(identity.displayName));
-  }
-  for (const row of input.existing) {
-    const key = normalizeIntakeText(row.historyNumber);
-    if (!namesByHistory.has(key)) namesByHistory.set(key, normalizeIntakeText(row.patientName));
-  }
-
-  const seen = new Set<string>();
-  const rowsToInsert: PlannedIntakeRow[] = [];
-  const identityCreates: Array<{ historyNumber: string; displayName: string }> = [];
-  for (const row of input.incoming) {
-    const dedupKey = intakeDedupKey(row.historyNumber, row.serviceDate, row.procedure);
-    if (seen.has(dedupKey) || existingKeys.has(dedupKey)) continue;
-    seen.add(dedupKey);
-    const historyKey = normalizeIntakeText(row.historyNumber);
-    const knownName = namesByHistory.get(historyKey);
-    const normalizedName = normalizeIntakeText(row.patientName);
-    const divergent = Boolean(knownName && knownName !== normalizedName);
-    if (divergent) {
-      rowsToInsert.push({
-        ...row,
-        dedupKey,
-        status: "NOMBRE_DIVERGENTE",
-        flags: [...row.flags, NOMBRE_DIVERGENTE],
-      });
-      continue;
-    }
-    if (!knownName) {
-      namesByHistory.set(historyKey, normalizedName);
-      identityCreates.push({ historyNumber: row.historyNumber.trim(), displayName: row.patientName.trim() });
-    }
-    rowsToInsert.push({ ...row, dedupKey, status: "PENDING" });
-  }
-
-  return {
-    batchStatus: missingKeys.length > 0 ? "FUENTE_INCOMPLETA" : "REVIEW",
-    missingKeys,
-    rowsToInsert,
-    identityCreates,
-  };
-}
-
-export function canApproveIntakeRow(row: {
-  status: string;
-  flags: string;
-  shift: string | null;
+export interface PublicReviewRow {
+  rowNumber: number;
+  sheetName: (typeof MASTER_SHEETS)[number];
+  serviceDate: string;
+  shift: "morning" | "afternoon" | null;
   resourceId: string | null;
   slotIndex: number | null;
   surgeonName: string | null;
-}): boolean {
-  if (row.status !== "PENDING") return false;
-  const flags = row.flags.split(",").map((flag) => flag.trim()).filter(Boolean);
-  if (flags.some((flag) => flag === NOMBRE_DIVERGENTE || flag === TURNO_INFERIDO || flag === QUIROFANO_INFERIDO || flag === FUENTE_INCOMPLETA)) {
-    return false;
+  procedure: string;
+  minutes: number;
+  status: "REVIEW" | "NOMBRE_DIVERGENTE" | "DUPLICATE";
+  flags: string[];
+  suggestedShift: "morning" | "afternoon" | null;
+  suggestedResourceId: string | null;
+}
+
+export interface MasterReview {
+  batchStatus: "REVIEW" | "FUENTE_INCOMPLETA";
+  missingCount: number;
+  publicRows: PublicReviewRow[];
+  parte: string;
+  alerts: ReturnType<typeof buildProgramAlerts>["alerts"];
+  fingerprints: StoredFingerprint[];
+}
+
+/** Revisa el fichero en memoria. Lo que se puede guardar son solo huellas HMAC, nunca el texto. */
+export function reviewMasterImport(input: {
+  salt: string;
+  existing: StoredFingerprint[];
+  incoming: ParsedIntakeRow[];
+}): MasterReview {
+  const printed = input.incoming.map((row, index) => {
+    const history = normalizeIntakeText(row.historyNumber);
+    const name = normalizeIntakeText(row.patientName);
+    const material = `${history}|${row.serviceDate}|${normalizeIntakeText(row.procedure)}`;
+    return {
+      row,
+      rowNumber: index + 1,
+      caseFingerprint: intakeHmac(input.salt, material),
+      historyFingerprint: intakeHmac(input.salt, history),
+      nameFingerprint: intakeHmac(input.salt, name),
+    };
+  });
+  const dates = new Set(printed.map((item) => item.row.serviceDate));
+  const existingCases = new Set(
+    input.existing.filter((item) => dates.has(item.serviceDate)).map((item) => item.caseFingerprint),
+  );
+  const incomingCases = new Set(printed.map((item) => item.caseFingerprint));
+  const missingCount = [...existingCases].filter((item) => !incomingCases.has(item)).length;
+  const nameByHistory = new Map<string, string>();
+  for (const item of input.existing) {
+    if (!nameByHistory.has(item.historyFingerprint)) nameByHistory.set(item.historyFingerprint, item.nameFingerprint);
   }
-  if (row.shift !== "morning" && row.shift !== "afternoon") return false;
-  if (!recognizeResourceId(row.resourceId)) return false;
-  if (row.slotIndex == null || !Number.isInteger(row.slotIndex)) return false;
-  return Boolean(row.surgeonName?.trim());
+
+  const seen = new Set<string>();
+  const publicRows: PublicReviewRow[] = [];
+  const fingerprints: StoredFingerprint[] = [];
+  const parteCases = [];
+  for (const item of printed) {
+    const flags = [...item.row.flags];
+    let status: PublicReviewRow["status"] = "REVIEW";
+    const knownName = nameByHistory.get(item.historyFingerprint);
+    if (seen.has(item.caseFingerprint) || existingCases.has(item.caseFingerprint)) {
+      status = "DUPLICATE";
+    } else {
+      seen.add(item.caseFingerprint);
+      if (knownName && knownName !== item.nameFingerprint) {
+        status = "NOMBRE_DIVERGENTE";
+        flags.push(NOMBRE_DIVERGENTE);
+      } else if (!knownName) {
+        nameByHistory.set(item.historyFingerprint, item.nameFingerprint);
+      }
+      fingerprints.push({
+        serviceDate: item.row.serviceDate,
+        caseFingerprint: item.caseFingerprint,
+        historyFingerprint: item.historyFingerprint,
+        nameFingerprint: knownName ?? item.nameFingerprint,
+      });
+    }
+    publicRows.push({
+      rowNumber: item.rowNumber,
+      sheetName: item.row.sheetName,
+      serviceDate: item.row.serviceDate,
+      shift: item.row.shift,
+      resourceId: item.row.resourceId,
+      slotIndex: item.row.slotIndex,
+      surgeonName: item.row.surgeonName,
+      procedure: item.row.procedure,
+      minutes: item.row.minutes,
+      status,
+      flags,
+      suggestedShift: item.row.suggestedShift,
+      suggestedResourceId: item.row.suggestedResourceId,
+    });
+    if (item.row.shift && item.row.slotIndex != null && status !== "DUPLICATE") {
+      parteCases.push({
+        date: item.row.serviceDate,
+        shift: item.row.shift,
+        slotIndex: item.row.slotIndex,
+        fullName: item.row.patientName,
+        procedure: item.row.procedure,
+      });
+    }
+  }
+
+  const alerts = buildProgramAlerts({
+    reservations: publicRows.filter((row) => row.status !== "DUPLICATE").map((row) => ({
+      id: `fila-${row.rowNumber}`,
+      date: row.serviceDate,
+      resourceId: row.resourceId,
+      shift: row.shift ?? "morning",
+      slotIndex: row.slotIndex ?? 0,
+      surgeonId: row.surgeonName ?? "sin-cirujano",
+      status: "confirmed",
+      patients: [{
+        numeroHistoria: `FILA-${row.rowNumber}`,
+        procedure: row.procedure,
+        estimatedDurationMinutes: row.minutes,
+      }],
+    })),
+  }).alerts;
+
+  return {
+    batchStatus: missingCount > 0 ? "FUENTE_INCOMPLETA" : "REVIEW",
+    missingCount,
+    publicRows,
+    parte: renderParte(parteCases).body,
+    alerts,
+    fingerprints,
+  };
 }
 
 export function matchSurgeon(

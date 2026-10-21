@@ -36,14 +36,14 @@ export async function GET(request: Request) {
         surgeon: { select: { name: true } },
         patients: {
           where: { workflowStatus: { not: "SUSPENDED" } },
-          select: { historyNumber: true, fullName: true, procedure: true, estimatedDurationMinutes: true },
+          select: { procedure: true, estimatedDurationMinutes: true },
         },
       },
       orderBy: [{ date: "asc" }, { resourceId: "asc" }, { slotIndex: "asc" }],
     }),
     prisma.scheduleChange.findMany({
       where: { createdAt: { gte: fromDate, lt: new Date(toDate.getTime() + 86_400_000) } },
-      select: { createdAt: true, changeType: true, reasonCode: true, beforeJson: true, afterJson: true },
+      select: { createdAt: true, changeType: true, reasonCode: true },
       orderBy: { createdAt: "asc" },
     }),
   ]);
@@ -54,8 +54,6 @@ export async function GET(request: Request) {
     slotIndex: reservation.slotIndex,
     resourceId: reservation.resourceId,
     surgeonName: reservation.surgeon.name,
-    historyNumber: patient.historyNumber,
-    patientName: patient.fullName,
     procedure: patient.procedure,
     minutes: patient.estimatedDurationMinutes,
   })));
@@ -65,8 +63,6 @@ export async function GET(request: Request) {
       createdAt: change.createdAt.toISOString(),
       changeType: change.changeType,
       reasonCode: change.reasonCode,
-      beforeJson: change.beforeJson,
-      afterJson: change.afterJson,
     })),
   });
   return new NextResponse(new Uint8Array(bytes), {
