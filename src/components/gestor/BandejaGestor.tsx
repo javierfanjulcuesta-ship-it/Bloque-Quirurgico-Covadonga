@@ -45,7 +45,10 @@ export function BandejaGestor() {
   }, []);
 
   useEffect(() => {
-    load().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "No se pudo cargar la bandeja"));
+    const initial = window.setTimeout(() => {
+      load().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "No se pudo cargar la bandeja"));
+    }, 0);
+    return () => window.clearTimeout(initial);
   }, [load]);
 
   const act = async (url: string, body?: unknown) => {

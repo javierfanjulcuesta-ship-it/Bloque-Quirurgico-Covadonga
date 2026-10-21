@@ -163,7 +163,12 @@ async function parsePdf(arrayBuffer: ArrayBuffer, surgeons: Array<{ id: string; 
   const issues: string[] = [];
   const blocks: PlanningPreviewBlock[] = [];
   const data = new Uint8Array(arrayBuffer);
-  const doc = await (getDocument as unknown as (params: { data: Uint8Array; disableWorker: boolean }) => { promise: Promise<any> })({
+  const doc = await (getDocument as unknown as (params: { data: Uint8Array; disableWorker: boolean }) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (pageNumber: number) => Promise<{ getTextContent: () => Promise<{ items: Array<{ str?: unknown }> }> }>;
+    }>;
+  })({
     data,
     disableWorker: true,
   }).promise;

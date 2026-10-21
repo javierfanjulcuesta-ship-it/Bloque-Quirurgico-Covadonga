@@ -31,7 +31,8 @@ export default function DemoAuditoriaPage() {
       router.replace("/");
       return;
     }
-    refresh();
+    const initial = window.setTimeout(refresh, 0);
+    return () => window.clearTimeout(initial);
   }, [hydrated, user, router]);
 
   if (!hydrated || !user) return null;

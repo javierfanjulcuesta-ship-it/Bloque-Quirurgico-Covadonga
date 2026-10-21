@@ -83,7 +83,7 @@ export default function ManagerAppointmentsSummaryPage() {
   const router = useRouter();
   const { user, hydrated } = useAuth();
   const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(modoDemo);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -96,10 +96,7 @@ export default function ManagerAppointmentsSummaryPage() {
       router.replace("/");
       return;
     }
-    if (!modoDemo) {
-      setLoading(false);
-      return;
-    }
+    if (!modoDemo) return;
 
     getReservations()
       .then(setReservations)

@@ -20,21 +20,22 @@ export default function CirujanoLayout({ children }: { children: React.ReactNode
 
   useEffect(() => {
     if (!hydrated || !user || !ownsSurgeonInbox || !modoDemo) {
-      setUnread(0);
-      return;
+      const reset = window.setTimeout(() => setUnread(0), 0);
+      return () => window.clearTimeout(reset);
     }
 
     const refresh = () => {
       const count = getNotificationsForUser(user.id).filter((notification) => !notification.read).length;
       setUnread(count);
     };
-    refresh();
+    const initial = window.setTimeout(refresh, 0);
 
     // storage events do not fire in the same tab. A bounded lightweight poll keeps
     // the badge accurate after a different QxFlow DEMO workflow creates a notice.
     const timer = window.setInterval(refresh, 1500);
     window.addEventListener("focus", refresh);
     return () => {
+      window.clearTimeout(initial);
       window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
     };
