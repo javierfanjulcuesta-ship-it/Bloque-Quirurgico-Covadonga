@@ -89,4 +89,13 @@ test("endoscopist can only reserve procedural/dolor resources", () => {
     now: NOW,
   });
   assert.deepEqual(pain, { ok: true });
+
+  const endo = evaluateBasicBookingPolicy({
+    date: "2031-01-07",
+    resourceId: "ENDO",
+    responsibleRole: "endoscopista",
+    isCoordinator: false,
+    now: NOW,
+  });
+  assert.deepEqual(endo, { ok: true });
 });

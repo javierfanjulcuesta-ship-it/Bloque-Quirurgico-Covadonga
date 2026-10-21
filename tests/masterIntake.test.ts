@@ -33,6 +33,11 @@ test("master review stays in memory and stored fingerprints do not contain the p
   if (!parsed.ok) return;
   assert.equal(parsed.rows[0]?.slotIndex, 2);
   assert.equal(parsed.rows[1]?.resourceId, null);
+  const endo = parseMasterWorkbook(workbook({
+    DATOS_IQ: [HEADERS, ["TEST-0003", "Paciente Prueba 03", "Procedimiento prueba", "2031-10-24", "mañana", "Endoscopias", "Corona", "08:00", 20]],
+  }));
+  assert.equal(endo.ok, true);
+  if (endo.ok) assert.equal(endo.rows[0]?.resourceId, "ENDO");
   const review = reviewMasterImport({ salt: SALT, existing: [], incoming: parsed.rows });
   assert.equal(review.publicRows.length, 3);
   assert.equal(review.publicRows.filter((row) => row.status === "DUPLICATE").length, 1);

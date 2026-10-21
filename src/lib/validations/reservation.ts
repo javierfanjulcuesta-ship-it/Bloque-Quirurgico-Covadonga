@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 
-const RESOURCE_IDS = ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"] as const;
+const RESOURCE_IDS = ["Q1", "Q2", "Q3", "ENDO", "procedimientos-menores", "tecnicas-dolor"] as const;
 const SHIFTS = ["morning", "afternoon"] as const;
 const ADMISSION_TYPES = ["ingreso", "ambulatorio"] as const;
 

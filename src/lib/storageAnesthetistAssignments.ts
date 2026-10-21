@@ -97,7 +97,7 @@ export function addOrUpdateAssignment(
 }
 
 /** Recursos OR que cuentan para la regla "máx 2 a la vez" */
-const RESOURCES_FOR_ALARM = new Set<string>(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"]);
+const RESOURCES_FOR_ALARM = new Set<string>(["Q1", "Q2", "Q3", "ENDO", "endoscopias", "procedimientos-menores", "tecnicas-dolor"]);
 
 /**
  * Agrupa asignaciones OR por (date, shift) y devuelve los anesthetistId que tienen más de maxPerShift.

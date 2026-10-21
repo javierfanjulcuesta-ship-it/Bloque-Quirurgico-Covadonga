@@ -68,7 +68,7 @@ function detectResource(text: string): { id: ResourceId | "unknown"; label: stri
   if (/\bq\s*1\b|\bquirofano\s*1\b/.test(t)) return { id: "Q1", label: "Q1" };
   if (/\bq\s*2\b|\bquirofano\s*2\b/.test(t)) return { id: "Q2", label: "Q2" };
   if (/\bq\s*3\b|\bquirofano\s*3\b/.test(t)) return { id: "Q3", label: "Q3" };
-  if (t.includes("endoscop")) return { id: "procedimientos-menores", label: "Endoscopia (mapeado a Procedimientos menores)" };
+  if (t.includes("endoscop")) return { id: "ENDO", label: "Endoscopias" };
   if (t.includes("proced")) return { id: "procedimientos-menores", label: "Procedimientos menores" };
   if (t.includes("dolor")) return { id: "tecnicas-dolor", label: "Técnicas del dolor" };
   return { id: "unknown", label: "Sin recurso identificado" };

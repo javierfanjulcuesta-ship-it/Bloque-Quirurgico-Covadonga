@@ -104,8 +104,8 @@ function getSlotPatientInfo(
 
 
 /** Recursos OR que cuentan para el cupo por persona. __full_shift__ cuenta como 1. */
-const RESOURCES_FOR_LIMIT = new Set<string>(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor", "endoscopias", ASSIGNMENT_FULL_SHIFT]);
-const ASSIGNMENT_GRID: { id: string; label: string }[] = [...RESOURCES, { id: "endoscopias", label: "Endoscopias" }];
+const RESOURCES_FOR_LIMIT = new Set<string>(["Q1", "Q2", "Q3", "ENDO", "procedimientos-menores", "tecnicas-dolor", "endoscopias", ASSIGNMENT_FULL_SHIFT]);
+const ASSIGNMENT_GRID: { id: string; label: string }[] = RESOURCES;
 
 /** Indica si un slot tiene pacientes SESPA (para recurso, full_shift o consulta). Consulta preanestesia: no aplica. */
 function slotHasSespa(

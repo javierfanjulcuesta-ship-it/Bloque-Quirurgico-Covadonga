@@ -27,7 +27,7 @@ function matchesToken(name: string, token: string): boolean {
 }
 
 export function isEndoscopyCase(resourceId: string | null | undefined, procedure?: string | null): boolean {
-  if (resourceId === "endoscopias") return true;
+  if (resourceId === "endoscopias" || resourceId === "ENDO") return true;
   return /endoscop/i.test(procedure ?? "") || /endoscop/i.test(resourceId ?? "");
 }
 

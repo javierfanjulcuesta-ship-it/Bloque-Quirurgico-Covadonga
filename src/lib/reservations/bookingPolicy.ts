@@ -1,7 +1,7 @@
 import { MAX_DAYS_AHEAD } from "@/lib/utils";
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const ENDOSCOPY_RESOURCES = new Set(["procedimientos-menores", "tecnicas-dolor"]);
+const ENDOSCOPY_RESOURCES = new Set(["ENDO", "procedimientos-menores", "tecnicas-dolor"]);
 
 export type BasicBookingPolicyReason =
   | "invalid_date"

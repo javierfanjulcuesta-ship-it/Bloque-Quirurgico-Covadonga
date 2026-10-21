@@ -58,11 +58,12 @@ export function hasProgrammingAccess(role: UserRole | string): boolean {
   return r === "cirujano" || r === "endoscopista" || r === "gestor-anestesista" || r === "gestor";
 }
 
-/** Recursos del bloque: quirófanos Q1–Q3, sala de procedimientos menores, zona de técnicas del dolor */
+/** Recursos del bloque: quirófanos Q1–Q3, endoscopias, procedimientos menores y técnicas del dolor */
 export type ResourceId =
   | "Q1"
   | "Q2"
   | "Q3"
+  | "ENDO"
   | "procedimientos-menores"
   | "tecnicas-dolor";
 

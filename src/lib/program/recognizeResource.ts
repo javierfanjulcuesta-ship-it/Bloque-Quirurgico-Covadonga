@@ -7,6 +7,7 @@ export const RECOGNIZED_RESOURCE_IDS = [
   "Q1",
   "Q2",
   "Q3",
+  "ENDO",
   "procedimientos-menores",
   "tecnicas-dolor",
 ] as const;
