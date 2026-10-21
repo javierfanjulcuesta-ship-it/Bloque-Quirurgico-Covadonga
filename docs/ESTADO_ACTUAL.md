@@ -56,7 +56,7 @@ La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del 
 - `npm run lint` sin tope: eslint tiene que terminar sin errores;
 - Postgres 16 vacío: `prisma migrate deploy`, `migrate status`, `migrate diff` y las pruebas `test:*integration`. Comprueba que `IntakeFingerprint` existe y que `IntakeRow` y `PatientIdentity` no. La cadena ya tiene `0_baseline_production_20260811`; no hace falta otro baseline si ese job pasa.
 
-Ese job de Postgres no se ejecutó en la máquina donde se escribió el workflow.
+Ese job de Postgres no se ejecutó en la máquina donde se escribió el workflow. Una base de prueba aparte, y el comando que aplica las migraciones solo si la URL está marcada como prueba, están en `docs/ENTORNO_PRUEBAS.md`. No crea nada en la cuenta de Vercel.
 
 ## Orden de revisión
 

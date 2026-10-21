@@ -105,6 +105,7 @@ jobs:
       - name: Validate Prisma schema
         run: npx prisma validate
 
+      # qxflow_ci vive solo en este job. No es la base de producción de Vercel.
       - name: Rebuild an empty database from the migration chain
         run: npx prisma migrate deploy
 
