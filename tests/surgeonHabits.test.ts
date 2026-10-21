@@ -58,13 +58,11 @@ test("preview marks TURNO_INFERIDO and leaves the detected shift untouched", () 
   assert.equal(missingFieldsLeaveShiftPending(["Turno", "Slot/Tramo"]), false);
 });
 
-test("incoming mail with only a missing shift stays pending and a complete mail can still create a reservation", () => {
+test("incoming mail with only a missing shift does not create a reservation", () => {
   const source = readFileSync("src/lib/email/processIncomingEmail.ts", "utf8");
   const marker = source.indexOf("if (missingFieldsLeaveShiftPending");
   assert.ok(marker > 0);
-  const window = source.slice(marker, marker + 1400);
-  assert.match(window, /No se ha grabado la reserva/);
-  const pendingAt = window.indexOf("No se ha grabado la reserva");
-  const createAt = source.indexOf("createReservationInDb", marker);
-  assert.ok(createAt > marker + pendingAt);
+  assert.match(source.slice(marker, marker + 1800), /No se ha grabado la reserva/);
+  assert.equal(source.includes("createReservationInDb"), false);
+  assert.equal(source.includes("sendReply"), false);
 });

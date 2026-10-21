@@ -32,6 +32,7 @@ import { CrearNuevoUsuario } from "@/components/gestor/CrearNuevoUsuario";
 import { ListaUsuariosGestor } from "@/components/gestor/ListaUsuariosGestor";
 import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
 import { NormasGestorView } from "@/components/gestor/NormasGestorView";
+import { BandejaGestor } from "@/components/gestor/BandejaGestor";
 import { CuadroDeMando } from "@/components/gestor/CuadroDeMando";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
@@ -59,6 +60,7 @@ type CalendarioViewTab =
   | "asignar-anestesistas"
   | "gestionar-apertura"
   | "normas"
+  | "bandeja"
   | "mensajes"
   | "consulta-preanestesia"
   | "mi-programacion"
@@ -96,6 +98,8 @@ function getCalendarioScreenContext(
       return { title: "Apertura del bloque", subtitle: "Gestión de planes de apertura y disponibilidad de recursos." };
     case "normas":
       return { title: "Normas", subtitle: "Criterios de programación y uso del bloque quirúrgico." };
+    case "bandeja":
+      return { title: "Bandeja", subtitle: "Borradores de parte y propuestas. Nada se envía ni se reserva sin pulsarlo." };
     case "mensajes":
       return { title: "Mensajes", subtitle: "Bandeja de mensajes desde coordinación y la pantalla de acceso." };
     case "consulta-preanestesia":
@@ -461,6 +465,9 @@ export default function CalendarioPage() {
                       <AppNavTab active={viewTab === "normas"} onClick={() => setViewTab("normas")}>
                         Normas
                       </AppNavTab>
+                      <AppNavTab active={viewTab === "bandeja"} onClick={() => setViewTab("bandeja")}>
+                        Bandeja
+                      </AppNavTab>
                       {canViewCuadroDeMando && (
                         <AppNavTab active={viewTab === "cuadro-de-mando"} onClick={() => setViewTab("cuadro-de-mando")}>
                           Cuadro de Mando
@@ -558,6 +565,10 @@ export default function CalendarioPage() {
 
         {user && isGestor && viewTab === "normas" && (
           <NormasGestorView />
+        )}
+
+        {user && isGestor && viewTab === "bandeja" && (
+          <BandejaGestor />
         )}
 
         {user && canViewCuadroDeMando && viewTab === "cuadro-de-mando" && (

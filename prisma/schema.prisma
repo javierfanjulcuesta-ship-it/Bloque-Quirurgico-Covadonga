@@ -207,6 +207,8 @@ model PatientInBlock {
   preanesthesiaAppointmentAt DateTime?
   isDeferredUrgency        Boolean     @default(false)
   specialCircuitReason     String?     @db.Text
+  suspensionReason         String?
+  suspensionNote           String?     @db.Text
 
   reservation              Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
 
@@ -387,4 +389,90 @@ model UserAuditEvent {
   @@index([userId])
   @@index([eventType])
   @@index([createdAt])
+}
+
+/** Equivalente de la hoja 5_CAMBIOS. No borra la fila clínica. */
+model ScheduleChange {
+  id             String   @id @default(cuid())
+  reservationId  String?
+  patientId      String?
+  changeType     String
+  beforeJson     String   @db.Text
+  afterJson      String   @db.Text
+  reasonCode     String?
+  reasonText     String?  @db.Text
+  actorUserId    String?
+  createdAt      DateTime @default(now())
+
+  @@index([reservationId])
+  @@index([patientId])
+  @@index([createdAt])
+}
+
+model MailTeam {
+  id      String           @id @default(cuid())
+  name    String
+  members MailTeamMember[]
+}
+
+model MailTeamMember {
+  id     String   @id @default(cuid())
+  teamId String
+  userId String
+  team   MailTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+/** Destinatario de un circuito, por ejemplo el endoscopista de Endoscopias. */
+model ServiceRecipient {
+  id     String @id @default(cuid())
+  key    String @unique
+  userId String
+}
+
+model OutboundDraft {
+  id              String                   @id @default(cuid())
+  status          String                   @default("PENDING_APPROVAL")
+  subject         String
+  bodyText        String                   @db.Text
+  reservationId   String?
+  proposalId      String?
+  warning         String?
+  createdByUserId String?
+  sentByUserId    String?
+  sentAt          DateTime?
+  createdAt       DateTime                 @default(now())
+  recipients      OutboundDraftRecipient[]
+
+  @@index([status])
+  @@index([reservationId])
+}
+
+model OutboundDraftRecipient {
+  id          String        @id @default(cuid())
+  draftId     String
+  userId      String?
+  email       String
+  displayName String
+  draft       OutboundDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@index([draftId])
+}
+
+model Proposal {
+  id              String    @id @default(cuid())
+  weekStart       String
+  type            String
+  status          String    @default("PENDING")
+  summary         String
+  payloadJson     String    @db.Text
+  decisionReason  String?   @db.Text
+  decidedByUserId String?
+  decidedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([status])
+  @@index([weekStart])
 }
