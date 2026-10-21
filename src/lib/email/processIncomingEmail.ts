@@ -13,6 +13,7 @@ import { createReservationInDb } from "@/lib/reservations/createReservationInDb"
 import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { sendReplyToReservationEmail } from "./outlookService";
 import { getReservationReplyContent } from "./reservationReplyTemplates";
+import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/program/recognizeResource";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
@@ -40,9 +41,11 @@ function toCreateReservationInput(parsed: ParsedReservationEmail) {
     isDeferredUrgency: false,
   }));
 
+  const resource = decideIncomingResource(parsed.resourceId);
+  if (resource.action !== "use") return null;
   return {
     date: parsed.date,
-    resourceId: parsed.resourceId as "Q1" | "Q2" | "Q3" | "procedimientos-menores" | "tecnicas-dolor",
+    resourceId: resource.resourceId,
     shift: parsed.shift,
     slotIndex: parsed.slotIndex,
     patients,
@@ -175,6 +178,32 @@ async function recordFailure(params: {
   };
 }
 
+/** Sala no reconocida: no crea reserva, no contesta como confirmada y no inventa Q1. */
+async function leaveRoomPending(params: {
+  emailMessageId: string;
+  classification: string;
+  error: string;
+}): Promise<ProcessEmailResult> {
+  await prisma.emailProcessingLog.create({
+    data: {
+      emailMessageId: params.emailMessageId,
+      action: "room_pending",
+      errorMessage: params.error,
+      details: JSON.stringify({ resourceId: null, fallback: null }),
+    },
+  });
+  await prisma.emailMessage.update({
+    where: { id: params.emailMessageId },
+    data: { processingStatus: "PENDING", resultMessage: params.error },
+  });
+  return {
+    emailMessageId: params.emailMessageId,
+    classification: params.classification,
+    processingStatus: "PENDING",
+    error: params.error,
+  };
+}
+
 export async function processIncomingEmail(message: InboxMessage): Promise<ProcessEmailResult> {
   const externalId = message.id;
   const fromEmail = message.fromEmail?.trim().toLowerCase() ?? "";
@@ -217,6 +246,13 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
 
   const parseResult = parseReservationEmail({ subject: message.subject, bodyPlain });
   if (!parseResult.ok) {
+    if (missingFieldsLeaveRoomPending(parseResult.missingFields)) {
+      return leaveRoomPending({
+        emailMessageId: emailMessage.id,
+        classification,
+        error: "Sala no reconocida. La solicitud queda pendiente y no se asigna Q1.",
+      });
+    }
     return recordFailure({
       emailMessageId: emailMessage.id,
       classification,
@@ -269,6 +305,13 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
   }
 
   const input = toCreateReservationInput(parsed);
+  if (!input) {
+    return leaveRoomPending({
+      emailMessageId: emailMessage.id,
+      classification,
+      error: "Sala no reconocida. La solicitud queda pendiente y no se asigna Q1.",
+    });
+  }
   const policy = evaluateBasicBookingPolicy({
     date: input.date,
     resourceId: input.resourceId,

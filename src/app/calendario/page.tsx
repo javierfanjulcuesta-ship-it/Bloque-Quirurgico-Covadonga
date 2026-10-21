@@ -689,13 +689,7 @@ export default function CalendarioPage() {
                         </section>
                         <section>
                           <h2 className="mb-2 text-base font-semibold text-gray-800">Reservas de la semana</h2>
-                          {reservations.length === 0 ? (
-                            <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-6 text-center text-gray-500">
-                              No hay reservas. Los cirujanos y endoscopistas pueden crearlas desde el panel <strong>Estado del bloque</strong> (Reservar / programar).
-                            </p>
-                          ) : (
-                            <VistaSemanal storedReservations={reservations} addedUsers={usersDirectory} />
-                          )}
+                          <VistaSemanal storedReservations={reservations} addedUsers={usersDirectory} />
                         </section>
                       </>
                     )}
