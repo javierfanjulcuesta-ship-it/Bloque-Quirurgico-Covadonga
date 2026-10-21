@@ -44,6 +44,8 @@ Al elegir huecos, si el tramo se solapa en minutos con otro cirujano en el mismo
 
 La purga del texto identificativo que ya estuviera guardado es un script manual (`scripts/privacy/purge-identifying-text.ts`). No corre en las migraciones ni en CI. Qué haría falta para guardar identidad de verdad, con cifrado y base legal, está en `docs/ACTIVAR_DATOS_IDENTIFICATIVOS.md`.
 
+Una solicitud de quirófano que llega por correo del cirujano queda en la bandeja como propuesta. Aprobarla prepara un borrador y un apartado de 48 horas; el envío sigue siendo el botón Enviar. El detalle está en `docs/RESERVAS_POR_CORREO.md`. `AUTO_REPLY` y `STORE_PATIENT_IDENTITY` siguen apagados.
+
 ## Endoscopias
 
 `ENDO` es un recurso propio, con etiqueta Endoscopias. El parser del maestro y del correo reconocen «endoscopias» o `ENDO` y no los mandan a procedimientos menores ni a Q1. El endoscopista puede usar ENDO, procedimientos menores y técnicas del dolor. El cupo, las asignaciones y el parte tratan ENDO como sala: hace falta anestesista si hay casos, y salta la alerta de sala vacía si hay anestesista y no hay pacientes. Una asignación antigua con recurso `endoscopias` cuenta como cobertura de ENDO. Aprobar o importar el maestro no crea filas `PatientInBlock`.

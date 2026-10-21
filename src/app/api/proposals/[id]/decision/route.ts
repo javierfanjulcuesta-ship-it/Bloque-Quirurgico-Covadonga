@@ -4,6 +4,7 @@ import { toAuthSession, requireAuth, requirePermission } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { createParteDraft } from "@/lib/drafts/createParteDraft";
+import { stageApprovedSurgeonProposal } from "@/lib/mailbox/surgeonReply";
 import { rescheduleReservation } from "@/lib/reservations/rescheduleReservation";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!moved.ok) return NextResponse.json({ error: moved.error, code: moved.code }, { status: moved.status });
     const draft = await createParteDraft(prisma, { reservationId, actorUserId: session!.userId, proposalId: id });
     draftId = draft.id;
+  } else if (proposal.type === "SURGEON_EMAIL") {
+    try {
+      const staged = await stageApprovedSurgeonProposal(prisma, proposal, session!.userId);
+      draftId = staged.outboundDraftId;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se preparó la respuesta";
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
   } else if (proposal.type === "DRAFT_PARTE" && typeof payload.reservationId === "string") {
     const draft = await createParteDraft(prisma, {
       reservationId: payload.reservationId,

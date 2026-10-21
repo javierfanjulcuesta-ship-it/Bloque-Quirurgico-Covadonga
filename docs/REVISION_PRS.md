@@ -11,7 +11,7 @@ Los datos de paciente de esta tanda son ficticios (`Paciente Prueba NN`, `TEST-0
 3. Del 135 en adelante la base de GitHub ya es la rama anterior.
 4. No lance `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel.
 
-## Del 130 al 145
+## Del 130 en adelante
 
 | Orden | PR | Rama | Qué hace | Depende de | Riesgo |
 | --- | --- | --- | --- | --- | --- |
@@ -34,3 +34,9 @@ Los datos de paciente de esta tanda son ficticios (`Paciente Prueba NN`, `TEST-0
 | 17 | [#146](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/146) | `cursor/guia-revision-743e` | Esta guía. | 145 | Si se edita en un PR posterior, el número de las filas nuevas tiene que actualizarse aquí. |
 | 18 | [#147](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/147) | `cursor/choque-quirofano-743e` | Aviso de choque por minutos, quirófano alternativo y pestaña de capacidad. | 146 | El aviso no bloquea el guardado. No muestra pacientes. |
 | 19 | [#148](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/148) | `cursor/copia-local-743e` | Cómo actualizar una copia de Windows a `origin/hardening/integration` sin perder cambios ni tocar `CREDENCIALES.txt`. | 147 | Esa rama de integración aún no contiene estos PR. No usar `git stash --all` ni `git clean`. |
+| 20 | [#149](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/149) | `cursor/robustez-revisada-743e` | El parser rechaza una fecha imposible y un tramo que el turno no tiene. «dolor» o «menores» sueltos no cambian el quirófano. | 148 | Cambia cómo se lee un correo. No copia el cuerpo a la propuesta. |
+| 21 | [#150](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/150) | `cursor/buzon-abstracto-743e` | Conector de buzón: fichero para pruebas y Graph para leer y crear borradores. | 149 | Graph no envía. Sin las cuatro variables no arranca. Ver `docs/BUZON.md`. |
+| 22 | [#151](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/151) | `cursor/propuesta-correo-743e` | Cada solicitud de reserva crea una propuesta en la bandeja y la lista de lo que falta. | 150 | Un correo general sigue en `SKIPPED`. Una solicitud incompleta ahora sí deja propuesta. |
+| 23 | [#152](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/152) | `cursor/huecos-anonimos-743e` | Huecos libres por quirófano y día, con turno habitual, cupo de anestesia, choques y ENDO. | 151 | No lee el Excel maestro. Solo bloques ocupados, sin paciente. |
+| 24 | [#153](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/153) | `cursor/checklist-reserva-743e` | Enfermería, TCAE, material y seguro como pasos antes de confirmar. | 152 | El checklist no sustituye el clic de Enviar. |
+| 25 | [#154](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/154) | `cursor/respuesta-correo-743e` | Borrador de respuesta, apartado de 48 horas y auditoría de cada paso. | 153 | Aprobar no crea una reserva ni envía. `AUTO_REPLY` sigue apagado. Ver `docs/RESERVAS_POR_CORREO.md`. |

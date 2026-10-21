@@ -11,10 +11,10 @@ import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
 import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/program/recognizeResource";
 import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } from "@/lib/surgeons/habits";
-import { stripSensitiveKeys } from "@/lib/agent/minimize";
 import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import { planIncomingEmailStorage, redactLogDetails, redactOperationalError, sanitizeEventDetails } from "@/lib/identity/patientIdentity";
 import { planSurgeonEmailProposal } from "@/lib/mailbox/surgeonEmailRequest";
+import { mailAuditDetail, sealedProposalPayload } from "@/lib/mailbox/surgeonReply";
 import { persistIdentityVault } from "@/lib/identity/persistIdentityVault";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
@@ -235,9 +235,19 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
       type: planned.type,
       status: planned.status,
       summary: planned.summary,
-      payloadJson: JSON.stringify(planned.payload),
+      payloadJson: JSON.stringify(sealedProposalPayload({ ...planned.payload }, emailMessage.id)),
     },
     select: { id: true },
+  });
+  await prisma.mailboxAudit.create({
+    data: {
+      step: "ingested",
+      proposalId: proposal.id,
+      detailJson: mailAuditDetail({
+        missing: planned.payload.missing.length,
+        complete: planned.payload.missing.length === 0,
+      }),
+    },
   });
   await prisma.emailProcessingLog.create({
     data: {
@@ -367,7 +377,7 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     data: {
       weekStart: input.date,
       summary: planned.summary,
-      payloadJson: JSON.stringify(stripSensitiveKeys({
+      payloadJson: JSON.stringify(sealedProposalPayload({
         ...planned.payload,
         date: input.date,
         resourceId: input.resourceId,
@@ -379,7 +389,7 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
           procedure: patient.procedure,
           minutes: patient.estimatedDurationMinutes,
         })),
-      })),
+      }, emailMessage.id)),
     },
   });
 
