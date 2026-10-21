@@ -21,7 +21,7 @@ test("catalog suggests morning for Muel, Huescar and Corona, afternoon for Blanc
   assert.deepEqual(huescar.flags, [TURNO_INFERIDO, QUIROFANO_INFERIDO]);
 
   assert.equal(suggestSurgeonHabit({ surgeonName: "Corona" }).shift, "morning");
-  assert.equal(suggestSurgeonHabit({ surgeonName: "Blanco García" }).shift, "afternoon");
+  assert.equal(suggestSurgeonHabit({ surgeonName: "Blanco" }).shift, "afternoon");
 });
 
 test("an explicit shift is kept and a saved habit wins over the catalog without creating a reservation", () => {

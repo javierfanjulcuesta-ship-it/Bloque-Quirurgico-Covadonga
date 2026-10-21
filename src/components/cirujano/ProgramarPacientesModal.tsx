@@ -70,7 +70,7 @@ interface QuickParseResult {
   parseMode: "empty" | "heuristic" | "structured-medical";
   detectedSurgeonId?: string;
   detectedSurgeonName?: string;
-  /** Titular extraído de línea Dr./Dra. cuando no hay usuario en directorio (p. ej. "Dr Pérez"). */
+  /** Titular extraído de línea Dr./Dra. cuando no hay usuario en directorio (p. ej. "Dr. Corona"). */
   externalSurgeonName?: string;
   /** @deprecated usar externalSurgeonName; se mantiene para mensajes legacy. */
   titularFreeLine?: string;
@@ -136,7 +136,7 @@ function detectProcedureCount(text: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Línea completa opcionalmente con viñeta: "- Dr Pérez", "Dra García López", "Dr. Pérez" */
+/** Línea completa opcionalmente con viñeta: "- Dr. Corona", "Dra. Huéscar", "Dr. Corona" */
 const TITULAR_SURGEON_LINE = /^(-\s*)?(Dr\.?|Dra\.?)\s+(.+)$/i;
 
 function tryParseTitularSurgeonLine(raw: string): { displayName: string; surfaceForMatch: string } | null {
@@ -650,7 +650,7 @@ export function ProgramarPacientesModal({
               type="text"
               value={externalSurgeonDisplayName}
               onChange={(e) => setExternalSurgeonDisplayName(e.target.value)}
-              placeholder='Ej. Dr Pérez, Dra García López (también se detecta con "Convertir" desde líneas - Dr …)'
+              placeholder='Ej. Dr. Corona, Dra. Huéscar (también se detecta con "Convertir" desde líneas - Dr …)'
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             />
             <span className="mt-1 block text-xs text-gray-600">
@@ -697,7 +697,7 @@ export function ProgramarPacientesModal({
               <textarea
                 value={quickText}
                 onChange={(e) => setQuickText(e.target.value)}
-                placeholder={`Ejemplo estructurado:\nDr Rojas\n- CAR: ASISA\n- CAR PRIVADO\n\nCon viñeta en el titular:\n- Dr Pérez\n- FACO: MAPFRE\n\nO sin dos puntos:\nDra Castellanos\n- FACO MAPFRE\n- PRP PRIVADO\n\nModo libre (heurístico): DR ROJAS 3 CAR mutual // PRP`}
+                placeholder={`Ejemplo estructurado:\nDr. Corona\n- CAR: ASISA\n- CAR PRIVADO\n\nCon viñeta en el titular:\n- Dr. Corona\n- FACO: MAPFRE\n\nO sin dos puntos:\nDra. Huéscar\n- FACO MAPFRE\n- PRP PRIVADO\n\nModo libre (heurístico): DR CORONA 3 CAR mutual // PRP`}
                 className="min-h-[110px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">

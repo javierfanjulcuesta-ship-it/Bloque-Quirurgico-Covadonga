@@ -297,7 +297,7 @@ model AssignmentNotificationLog {
 **Cuerpo (texto plano):**
 
 ```
-Estimado/a Dr. María López,
+Estimado/a Anestesista Demo,
 
 Se le ha asignado el siguiente turno en el Bloque Quirúrgico:
 

@@ -23,8 +23,8 @@ import {
 function patient(overrides: Partial<PatientInBlock> = {}): PatientInBlock {
   return {
     id: "patient-demo",
-    name: "Paciente sintético",
-    numeroHistoria: "HC-DEMO-TEST",
+    name: "Paciente Prueba 01",
+    numeroHistoria: "TEST-0001",
     procedure: "Procedimiento sintético",
     estimatedDurationMinutes: 45,
     anesthesiaType: "General",
@@ -32,8 +32,6 @@ function patient(overrides: Partial<PatientInBlock> = {}): PatientInBlock {
     admissionType: "ambulatorio",
     notes: "",
     order: 0,
-    patientPhone: "+34 600 000 000",
-    patientEmail: "patient@example.test",
     preanesthesiaStatus: "PENDING",
     financingStatus: "PENDING",
     ...overrides,

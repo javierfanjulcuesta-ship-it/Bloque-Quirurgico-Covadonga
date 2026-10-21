@@ -88,8 +88,8 @@ Turno: mañana
 Tramo: 1
 
 PACIENTES:
-1. HC-001 | Juan Pérez | Artroscopia rodilla | 60 min | Regional | SNS | Ambulatorio
-2. HC-002 | María García | Meniscectomía | 45 min | General | SNS | Ambulatorio
+1. TEST-0001 | Paciente Prueba 01 | Artroscopia rodilla | 60 min | Regional | SNS | Ambulatorio
+2. TEST-0002 | Paciente Prueba 02 | Meniscectomía | 45 min | General | SNS | Ambulatorio
 ```
 
 O un formato más compacto:
@@ -97,8 +97,8 @@ O un formato más compacto:
 ```
 RESERVA
 2025-03-20 | Q1 | mañana | 0
-HC-001 | Juan Pérez | Artroscopia | 60 | Regional | SNS | Ambulatorio
-HC-002 | María García | Meniscectomía | 45 | General | SNS | Ambulatorio
+TEST-0001 | Paciente Prueba 01 | Artroscopia | 60 | Regional | SNS | Ambulatorio
+TEST-0002 | Paciente Prueba 02 | Meniscectomía | 45 | General | SNS | Ambulatorio
 ```
 
 O JSON para máxima precisión:
@@ -110,7 +110,7 @@ O JSON para máxima precisión:
   "turno": "morning",
   "tramo": 0,
   "pacientes": [
-    {"hc": "HC-001", "nombre": "Juan Pérez", "procedimiento": "Artroscopia", "duracion": 60, "anestesia": "Regional", "financiador": "SNS" }
+    {"hc": "TEST-0001", "nombre": "Paciente Prueba 01", "procedimiento": "Artroscopia", "duracion": 60, "anestesia": "Regional", "financiador": "SNS" }
   ]
 }
 ```

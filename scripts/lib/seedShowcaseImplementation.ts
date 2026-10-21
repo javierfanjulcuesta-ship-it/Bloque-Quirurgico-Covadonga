@@ -1,5 +1,7 @@
 /**
  * Dataset showcase: una semana laboral (lun–vie) en Q1, Q2, Q3 con casos variados.
+ * Las etiquetas son «Paciente Prueba NN» y «TEST-00NN». No se escriben en la base:
+ * el alta guarda solo caseLabel.
  * Idempotente en ese rango: borra reservas existentes en Q1–Q3 para esas fechas antes de insertar.
  *
  * Requisitos previos: usuarios en BD (cirujanos/endoscopistas + gestor recomendado).
@@ -87,8 +89,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1001",
-        fullName: "María Iglesias Ruiz",
+        historyNumber: "TEST-0001",
+        fullName: "Paciente Prueba 01",
         procedure: "Artroscopia de rodilla",
         estimatedDurationMinutes: 55,
         anesthesiaType: "General inhalatoria",
@@ -97,8 +99,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1002",
-        fullName: "Jorge Peral Domínguez",
+        historyNumber: "TEST-0002",
+        fullName: "Paciente Prueba 02",
         procedure: "Meniscectomía parcial",
         estimatedDurationMinutes: 55,
         anesthesiaType: "General + bloqueo femoral",
@@ -107,8 +109,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1003",
-        fullName: "Lucía Sanz Vega",
+        historyNumber: "TEST-0003",
+        fullName: "Paciente Prueba 03",
         procedure: "Lavado articular",
         estimatedDurationMinutes: 30,
         anesthesiaType: "General corta",
@@ -128,8 +130,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1004",
-        fullName: "Antonio Ferreño Gil",
+        historyNumber: "TEST-0004",
+        fullName: "Paciente Prueba 04",
         procedure: "Hernioplastia inguinal SESPA",
         estimatedDurationMinutes: 95,
         anesthesiaType: "General",
@@ -149,8 +151,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1005",
-        fullName: "Eva Mouriño Paz",
+        historyNumber: "TEST-0005",
+        fullName: "Paciente Prueba 05",
         procedure: "Colecistectomía laparoscópica",
         estimatedDurationMinutes: 75,
         anesthesiaType: "General",
@@ -159,8 +161,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1006",
-        fullName: "Hugo Valdés Núñez",
+        historyNumber: "TEST-0006",
+        fullName: "Paciente Prueba 06",
         procedure: "Apendicectomía laparoscópica",
         estimatedDurationMinutes: 65,
         anesthesiaType: "General",
@@ -169,8 +171,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1007",
-        fullName: "Nerea Codesal",
+        historyNumber: "TEST-0007",
+        fullName: "Paciente Prueba 07",
         procedure: "Biopsia hepática US",
         estimatedDurationMinutes: 40,
         anesthesiaType: "Sedación + local",
@@ -179,8 +181,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1008",
-        fullName: "Iker Blanco Fontán",
+        historyNumber: "TEST-0008",
+        fullName: "Paciente Prueba 08",
         procedure: "Cierre de ostoma",
         estimatedDurationMinutes: 35,
         anesthesiaType: "General corta",
@@ -200,8 +202,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1009",
-        fullName: "Rosa Lema Costas",
+        historyNumber: "TEST-0009",
+        fullName: "Paciente Prueba 09",
         procedure: "Mastectomía radical",
         estimatedDurationMinutes: 120,
         anesthesiaType: "General",
@@ -210,8 +212,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1010",
-        fullName: "Diego Suárez Prada",
+        historyNumber: "TEST-0010",
+        fullName: "Paciente Prueba 10",
         procedure: "Vaciamiento ganglionar",
         estimatedDurationMinutes: 55,
         anesthesiaType: "General",
@@ -231,8 +233,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1011",
-        fullName: "Carlos Taboada Vila",
+        historyNumber: "TEST-0011",
+        fullName: "Paciente Prueba 11",
         procedure: "Hallux valgus bilateral (un solo pie esta sesión)",
         estimatedDurationMinutes: 35,
         anesthesiaType: "Bloqueo poplíteo + sedación",
@@ -263,8 +265,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1012",
-        fullName: "Sofía Carballeda",
+        historyNumber: "TEST-0012",
+        fullName: "Paciente Prueba 12",
         procedure: "RTU próstata",
         estimatedDurationMinutes: 90,
         anesthesiaType: "Raquianestesia",
@@ -273,8 +275,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1013",
-        fullName: "Miguel Armesto",
+        historyNumber: "TEST-0013",
+        fullName: "Paciente Prueba 13",
         procedure: "Litotricia flexible",
         estimatedDurationMinutes: 70,
         anesthesiaType: "General",
@@ -283,8 +285,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1014",
-        fullName: "Paula Seoane",
+        historyNumber: "TEST-0014",
+        fullName: "Paciente Prueba 14",
         procedure: "Ureteroscopia",
         estimatedDurationMinutes: 55,
         anesthesiaType: "General",
@@ -304,8 +306,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1015",
-        fullName: "Alberto Neira Mosquera",
+        historyNumber: "TEST-0015",
+        fullName: "Paciente Prueba 15",
         procedure: "Ligadura hemorroides III-IV",
         estimatedDurationMinutes: 45,
         anesthesiaType: "Sedación",
@@ -314,8 +316,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: "Financiación 'otro' bucket.",
       },
       {
-        historyNumber: "HC-2026-1016",
-        fullName: "Cristina Pando López",
+        historyNumber: "TEST-0016",
+        fullName: "Paciente Prueba 16",
         procedure: "Fístula perianal",
         estimatedDurationMinutes: 50,
         anesthesiaType: "Raqui + sedación",
@@ -336,8 +338,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1017",
-        fullName: "Valentina Ordóñez",
+        historyNumber: "TEST-0017",
+        fullName: "Paciente Prueba 17",
         procedure: "Tiroidectomía total",
         estimatedDurationMinutes: 95,
         anesthesiaType: "General",
@@ -346,8 +348,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1018",
-        fullName: "Andrés Fojo Méndez",
+        historyNumber: "TEST-0018",
+        fullName: "Paciente Prueba 18",
         procedure: "Paratiroidectomía",
         estimatedDurationMinutes: 70,
         anesthesiaType: "General",
@@ -367,8 +369,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1019",
-        fullName: "Laura Grandal",
+        historyNumber: "TEST-0019",
+        fullName: "Paciente Prueba 19",
         procedure: "Bypass gástrico laparoscópico",
         estimatedDurationMinutes: 150,
         anesthesiaType: "General",
@@ -411,8 +413,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1020",
-        fullName: "Manuel Touceda",
+        historyNumber: "TEST-0020",
+        fullName: "Paciente Prueba 20",
         procedure: "Artroplastia cadera cementada SESPA",
         estimatedDurationMinutes: 140,
         anesthesiaType: "General",
@@ -421,8 +423,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1021",
-        fullName: "Pilar Codesido",
+        historyNumber: "TEST-0021",
+        fullName: "Paciente Prueba 21",
         procedure: "Sutura extensor largo dedo",
         estimatedDurationMinutes: 35,
         anesthesiaType: "Bloqueo + sedación",
@@ -442,8 +444,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1022",
-        fullName: "Fernando Bao Iglesias",
+        historyNumber: "TEST-0022",
+        fullName: "Paciente Prueba 22",
         procedure: "Artrodesis lumbar mínima",
         estimatedDurationMinutes: 110,
         anesthesiaType: "General",
@@ -463,8 +465,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1023",
-        fullName: "Greta Villar Suárez",
+        historyNumber: "TEST-0023",
+        fullName: "Paciente Prueba 23",
         procedure: "Histerectomía laparoscópica",
         estimatedDurationMinutes: 95,
         anesthesiaType: "General",
@@ -473,8 +475,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1024",
-        fullName: "Óscar Veiga Prada",
+        historyNumber: "TEST-0024",
+        fullName: "Paciente Prueba 24",
         procedure: "Salpingooforectomía",
         estimatedDurationMinutes: 80,
         anesthesiaType: "General",
@@ -495,8 +497,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1025",
-        fullName: "Aitana Rial",
+        historyNumber: "TEST-0025",
+        fullName: "Paciente Prueba 25",
         procedure: "Laparoscopia exploradora",
         estimatedDurationMinutes: 60,
         anesthesiaType: "General",
@@ -505,8 +507,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1026",
-        fullName: "Bruno Cid",
+        historyNumber: "TEST-0026",
+        fullName: "Paciente Prueba 26",
         procedure: "Drenaje colección subfrénica",
         estimatedDurationMinutes: 45,
         anesthesiaType: "General",
@@ -515,8 +517,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1027",
-        fullName: "Uxía Seoane",
+        historyNumber: "TEST-0027",
+        fullName: "Paciente Prueba 27",
         procedure: "Biopsia peritoneal",
         estimatedDurationMinutes: 40,
         anesthesiaType: "Sedación",
@@ -536,8 +538,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1028",
-        fullName: "Tania Bouzas",
+        historyNumber: "TEST-0028",
+        fullName: "Paciente Prueba 28",
         procedure: "Cistoscopia rígida",
         estimatedDurationMinutes: 25,
         anesthesiaType: "Sedación",
@@ -557,8 +559,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "GESTOR",
     patients: [
       {
-        historyNumber: "HC-2026-1029",
-        fullName: "Xoán Freire",
+        historyNumber: "TEST-0029",
+        fullName: "Paciente Prueba 29",
         procedure: "Amputación supracondílea",
         estimatedDurationMinutes: 100,
         anesthesiaType: "General",
@@ -567,8 +569,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
         notes: null,
       },
       {
-        historyNumber: "HC-2026-1030",
-        fullName: "Yolanda Meijide",
+        historyNumber: "TEST-0030",
+        fullName: "Paciente Prueba 30",
         procedure: "Desbridamiento tejidos",
         estimatedDurationMinutes: 45,
         anesthesiaType: "Sedación + local",
@@ -588,8 +590,8 @@ const SEED_RESERVATIONS: SeedReservation[] = [
     origin: "APP",
     patients: [
       {
-        historyNumber: "HC-2026-1031",
-        fullName: "Zoe Arca",
+        historyNumber: "TEST-0031",
+        fullName: "Paciente Prueba 31",
         procedure: "Neuroestimulador medular (recambio)",
         estimatedDurationMinutes: 85,
         anesthesiaType: "General",

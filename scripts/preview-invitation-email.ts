@@ -6,8 +6,8 @@
 import { buildInvitationEmail } from "../src/lib/email/invitationEmail";
 
 const EXAMPLE = {
-  name: "María García",
-  email: "maria.garcia@hospital.local",
+  name: "Usuario Prueba",
+  email: "usuario.prueba@example.test",
   invitedByName: "Javier Fanjul",
   appUrl: "https://mi-app.vercel.app",
   temporaryPassword: "Temp-2026-Acceso",

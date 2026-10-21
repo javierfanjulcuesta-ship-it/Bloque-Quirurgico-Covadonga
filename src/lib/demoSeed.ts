@@ -72,8 +72,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-seed-1",
-          name: "Paciente ejemplo 1",
-          numeroHistoria: "HC-DEMO-001",
+          name: "Paciente Prueba 01",
+          numeroHistoria: "TEST-0001",
           procedure: "Cirugía menor ejemplo",
           estimatedDurationMinutes: 45,
           anesthesiaType: "Local",
@@ -96,8 +96,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-seed-2",
-          name: "Paciente ejemplo 2",
-          numeroHistoria: "HC-DEMO-002",
+          name: "Paciente Prueba 02",
+          numeroHistoria: "TEST-0002",
           procedure: "Procedimiento ejemplo A",
           estimatedDurationMinutes: 60,
           anesthesiaType: "Regional",
@@ -108,8 +108,8 @@ function buildSeedReservations(): Reservation[] {
         } as PatientInBlock,
         {
           id: "pat-seed-3",
-          name: "Paciente ejemplo 3",
-          numeroHistoria: "HC-DEMO-003",
+          name: "Paciente Prueba 03",
+          numeroHistoria: "TEST-0003",
           procedure: "Procedimiento ejemplo B",
           estimatedDurationMinutes: 30,
           anesthesiaType: "Sedación",
@@ -132,8 +132,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-seed-4",
-          name: "Paciente ejemplo 4",
-          numeroHistoria: "HC-DEMO-004",
+          name: "Paciente Prueba 04",
+          numeroHistoria: "TEST-0004",
           procedure: "Endoscopia ejemplo",
           estimatedDurationMinutes: 40,
           anesthesiaType: "Sedación",
@@ -158,8 +158,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-citas-missing-contact",
-          name: "Paciente Demo Contacto",
-          numeroHistoria: "HC-DEMO-C01",
+          name: "Paciente Prueba 05",
+          numeroHistoria: "TEST-0005",
           procedure: "Procedimiento sintético 1",
           estimatedDurationMinutes: 55,
           anesthesiaType: "General",
@@ -185,8 +185,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-citas-future-pre",
-          name: "Paciente Demo Cita",
-          numeroHistoria: "HC-DEMO-C02",
+          name: "Paciente Prueba 06",
+          numeroHistoria: "TEST-0006",
           procedure: "Procedimiento sintético 2",
           estimatedDurationMinutes: 70,
           anesthesiaType: "Regional",
@@ -194,8 +194,6 @@ function buildSeedReservations(): Reservation[] {
           admissionType: "ambulatorio",
           notes: "",
           order: 0,
-          patientPhone: "+34 600 000 102",
-          patientEmail: "paciente.c02@example.test",
           preanesthesiaStatus: "SCHEDULED",
           preanesthesiaAppointmentAt: isoAtLocal(nextMon, 10, 20),
           financingStatus: "PENDING",
@@ -214,8 +212,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-citas-private-local",
-          name: "Paciente Demo Local",
-          numeroHistoria: "HC-DEMO-C03",
+          name: "Paciente Prueba 07",
+          numeroHistoria: "TEST-0007",
           procedure: "Procedimiento sintético 3",
           estimatedDurationMinutes: 35,
           anesthesiaType: LOCAL_NO_ANESTHETIST,
@@ -223,8 +221,6 @@ function buildSeedReservations(): Reservation[] {
           admissionType: "ambulatorio",
           notes: "",
           order: 0,
-          patientPhone: "+34 600 000 103",
-          patientEmail: "paciente.c03@example.test",
           preanesthesiaStatus: "PENDING",
           financingStatus: "PENDING",
         } as PatientInBlock,
@@ -242,8 +238,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-citas-no-apto",
-          name: "Paciente Demo No Apto",
-          numeroHistoria: "HC-DEMO-C04",
+          name: "Paciente Prueba 08",
+          numeroHistoria: "TEST-0008",
           procedure: "Procedimiento sintético 4",
           estimatedDurationMinutes: 80,
           anesthesiaType: "General",
@@ -251,8 +247,6 @@ function buildSeedReservations(): Reservation[] {
           admissionType: "ingreso",
           notes: "",
           order: 0,
-          patientPhone: "+34 600 000 104",
-          patientEmail: "paciente.c04@example.test",
           preanesthesiaStatus: "NO APTO",
           financingStatus: "APROBADA",
         } as PatientInBlock,
@@ -270,8 +264,8 @@ function buildSeedReservations(): Reservation[] {
       patients: [
         {
           id: "pat-citas-past-pre",
-          name: "Paciente Demo Seguimiento",
-          numeroHistoria: "HC-DEMO-C05",
+          name: "Paciente Prueba 09",
+          numeroHistoria: "TEST-0009",
           procedure: "Procedimiento sintético 5",
           estimatedDurationMinutes: 50,
           anesthesiaType: "Sedación",
@@ -279,8 +273,6 @@ function buildSeedReservations(): Reservation[] {
           admissionType: "ambulatorio",
           notes: "",
           order: 0,
-          patientPhone: "+34 600 000 105",
-          patientEmail: "paciente.c05@example.test",
           preanesthesiaStatus: "SCHEDULED",
           preanesthesiaAppointmentAt: pastPreanesthesia,
           financingStatus: "APROBADA",
