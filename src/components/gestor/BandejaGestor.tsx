@@ -70,7 +70,7 @@ export function BandejaGestor() {
     <section className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">Bandeja de borradores</h2>
-        <p className="text-sm text-gray-600">Nada sale ni se reserva solo. El gestor pulsa Enviar sobre un borrador concreto.</p>
+        <p className="text-sm text-gray-600">Nada sale ni se reserva solo. Aprobar una solicitud de correo prepara la respuesta y aparta el primer hueco 48 horas. El correo sale al pulsar Enviar sobre ese borrador.</p>
       </div>
       {error ? <p className="text-sm text-red-700">{error}</p> : null}
       {message ? <p className="text-sm text-emerald-800">{message}</p> : null}

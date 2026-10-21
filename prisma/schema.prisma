@@ -528,6 +528,36 @@ model PatientIdentityRecord {
   @@index([retentionUntil])
 }
 
+/** Hueco apartado un tiempo, sin convertir en reserva y sin datos de paciente. */
+model ProvisionalHold {
+  id           String   @id @default(cuid())
+  proposalId   String?
+  date         String
+  resourceId   String
+  shift        String
+  startMinutes Int
+  endMinutes   Int
+  status       String   @default("HOLD")
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([proposalId])
+  @@index([expiresAt])
+}
+
+/** Paso del circuito de correo. El detalle no lleva el cuerpo ni identidad de paciente. */
+model MailboxAudit {
+  id          String   @id @default(cuid())
+  step        String
+  actorUserId String?
+  proposalId  String?
+  detailJson  String
+  createdAt   DateTime @default(now())
+
+  @@index([proposalId])
+  @@index([createdAt])
+}
+
 /** Quién guardó o leyó una identidad. No contiene el texto del paciente. */
 model IdentityAccessAudit {
   id          String   @id @default(cuid())
