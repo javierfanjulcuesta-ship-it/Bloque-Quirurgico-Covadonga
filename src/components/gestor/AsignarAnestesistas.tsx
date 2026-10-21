@@ -12,8 +12,10 @@ import { useUsers } from "@/context/UsersContext";
 import { hasAnesthetistAccess } from "@/lib/types";
 import type { AnesthetistAssignment, PatientInBlock, ResourceId, Reservation, Shift } from "@/lib/types";
 import { ASSIGNMENT_FULL_SHIFT, ASSIGNMENT_PREANESTHESIA } from "@/lib/types";
-import { getAnesthetistsOverLimit } from "@/lib/storageAnesthetistAssignments";
-import { getAssignments, saveAssignments } from "@/lib/anesthetistAssignments";
+import { loadEditableAssignmentWeek, saveAssignments } from "@/lib/anesthetistAssignments";
+import { findCapacityExcesses } from "@/lib/anesthesia/capacity";
+import { effectiveMaxSimultaneousOr } from "@/lib/anesthesia/capacityCatalog";
+import { modoDemo } from "@/lib/config";
 import { isUnavailable as isAnesthetistUnavailable } from "@/lib/storageAnesthetistUnavailability";
 import { getStoredReservations } from "@/lib/storageMensajesYNotificaciones";
 import { WeekNavigation } from "@/components/calendar/WeekNavigation";
@@ -56,7 +58,7 @@ function getSlotPatientInfo(
   reservations: Reservation[],
   dateStr: string,
   shift: Shift,
-  resourceId: ResourceId,
+  resourceId: string,
   users: { id: string; name: string }[]
 ): SlotTurnDisplay {
   const matches = reservations.filter(
@@ -101,8 +103,9 @@ function getSlotPatientInfo(
 }
 
 
-/** Recursos OR que cuentan para el límite de 2 por turno. __full_shift__ cuenta como 1. */
-const RESOURCES_FOR_LIMIT = new Set<string>(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor", ASSIGNMENT_FULL_SHIFT]);
+/** Recursos OR que cuentan para el cupo por persona. __full_shift__ cuenta como 1. */
+const RESOURCES_FOR_LIMIT = new Set<string>(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor", "endoscopias", ASSIGNMENT_FULL_SHIFT]);
+const ASSIGNMENT_GRID: { id: string; label: string }[] = [...RESOURCES, { id: "endoscopias", label: "Endoscopias" }];
 
 /** Indica si un slot tiene pacientes SESPA (para recurso, full_shift o consulta). Consulta preanestesia: no aplica. */
 function slotHasSespa(
@@ -135,7 +138,7 @@ function getAnesthetistCountForSlot(
 }
 
 /** Identificador de slot en UI: recurso o "consulta-preanestesia" o "__full_shift__" */
-type SlotKey = ResourceId | "consulta-preanestesia" | typeof ASSIGNMENT_FULL_SHIFT;
+type SlotKey = ResourceId | "endoscopias" | "consulta-preanestesia" | typeof ASSIGNMENT_FULL_SHIFT;
 
 function assignmentMatchesSlot(a: AnesthetistAssignment, slotKey: SlotKey): boolean {
   if (slotKey === "consulta-preanestesia") return a.assignmentType === "PREANESTHESIA" && a.resourceId === ASSIGNMENT_PREANESTHESIA;
@@ -157,19 +160,21 @@ function getSuggestedAnesthetists(
   slotKey: SlotKey,
   assignments: AnesthetistAssignment[],
   anestList: { id: string; name: string; canSespa?: boolean }[],
-  hasSespa: boolean
+  hasSespa: boolean,
+  maxFor: (anesthetistId: string) => number,
 ): AnesthetistSuggestion[] {
   const countMap = getAnesthetistCountForSlot(assignments, dateStr, shift);
   const result: AnesthetistSuggestion[] = anestList.map((u) => {
     const isUnav = isAnesthetistUnavailable(u.id, dateStr, shift);
     const count = countMap.get(u.id) ?? 0;
-    const isOverLimit = RESOURCES_FOR_LIMIT.has(slotKey) && count >= 2;
+    const max = maxFor(u.id);
+    const isOverLimit = RESOURCES_FOR_LIMIT.has(slotKey) && count >= max;
     const needsSespa = hasSespa && !(u.canSespa === true);
     const available = !isUnav && !isOverLimit && !needsSespa;
     const disabled = needsSespa;
     let reason: string | undefined;
     if (isUnav) reason = "No disponibilidad solicitada";
-    else if (isOverLimit) reason = "Ya tiene 2 recursos en este turno";
+    else if (isOverLimit) reason = `Ya tiene ${count} de ${max} recursos en este turno`;
     else if (needsSespa) reason = "No habilitado para SESPA";
     return { id: u.id, name: u.name, available, disabled, reason };
   });
@@ -189,7 +194,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
   const { users } = useUsers();
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
   const [assignments, setAssignments] = useState<AnesthetistAssignment[]>([]);
-  const [alarm, setAlarm] = useState<{ over: { date: string; shift: Shift; anesthetistId: string; count: number }[]; pending: AnesthetistAssignment[] } | null>(null);
+  const [caps, setCaps] = useState<Record<string, number>>({});
   const [unavConfirm, setUnavConfirm] = useState<{ dateStr: string; shift: Shift; slotKey: SlotKey; anesthetistId: string } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -201,13 +206,33 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
     [propReservations]
   );
 
+  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
+  const dateFrom = toISODate(weekDays[0]!);
+  const dateTo = toISODate(weekDays[weekDays.length - 1]!);
+
   useEffect(() => {
-    getAssignments()
+    loadEditableAssignmentWeek(dateFrom, dateTo)
       .then(setAssignments)
       .catch(() => setAssignments([]));
-  }, []);
+  }, [dateFrom, dateTo]);
 
-  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
+  useEffect(() => {
+    if (modoDemo) return;
+    let cancelled = false;
+    fetch("/api/anesthetist-profiles", { credentials: "same-origin" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const profiles = (payload as { profiles?: Array<{ userId: string; maxSimultaneousOr: number }> }).profiles ?? [];
+        setCaps(Object.fromEntries(profiles.map((row) => [row.userId, row.maxSimultaneousOr])));
+      })
+      .catch(() => {
+        if (!cancelled) setCaps({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const anestList = useMemo(
     () => users.filter((u) => hasAnesthetistAccess(u.role)),
     [users]
@@ -277,11 +302,25 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
     return true;
   };
 
+  const nameById = useMemo(() => {
+    const names = new Map<string, string>();
+    users.forEach((user) => names.set(user.id, user.name));
+    return names;
+  }, [users]);
+
+  const maxFor = (anesthetistId: string) =>
+    caps[anesthetistId] ?? effectiveMaxSimultaneousOr(null, nameById.get(anesthetistId));
+
   const handleSave = async () => {
     setSaveError("");
-    const over = getAnesthetistsOverLimit(assignments, 2);
+    const capMap = new Map(anestList.map((user) => [user.id, maxFor(user.id)]));
+    const over = findCapacityExcesses(assignments, capMap);
     if (over.length > 0) {
-      setAlarm({ over, pending: assignments });
+      setSaveError(
+        over
+          .map((item) => `${nameById.get(item.anesthetistId) ?? item.anesthetistId}: ${item.count} de ${item.maxSimultaneousOr} el ${item.date}`)
+          .join(". "),
+      );
       return;
     }
     if (!validateSespaBeforeSave()) return;
@@ -301,39 +340,11 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
     }
   };
 
-  const handleConfirmAlarm = async () => {
-    if (alarm?.pending) {
-      setSaveError("");
-      if (!validateSespaBeforeSave(alarm.pending)) return;
-      setSaving(true);
-      try {
-        await saveAssignments(alarm.pending);
-        setAssignments(alarm.pending);
-        setSaveSuccess(true);
-        setSaveError("");
-        setTimeout(() => setSaveSuccess(false), 4000);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Error al guardar asignaciones";
-        setSaveError(msg);
-        console.error(err);
-      } finally {
-        setSaving(false);
-      }
-      setAlarm(null);
-    }
-  };
-
-  const nameById = useMemo(() => {
-    const m = new Map<string, string>();
-    users.forEach((u) => m.set(u.id, u.name));
-    return m;
-  }, [users]);
-
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <SectionIntro
         title="Asignar anestesistas"
-        description="Asigne un profesional a cada turno. En cada celda verá cirujano responsable, procedimiento principal y el tipo de caso (SESPA / privado). Máximo dos recursos por anestesista en el mismo turno."
+        description="Asigne un profesional a cada turno. En cada celda verá cirujano responsable, procedimiento principal y el tipo de caso (SESPA / privado). El cupo de quirófanos simultáneos es el de cada persona (2 por defecto). Guardar solo sustituye la semana visible."
       />
       {anestList.length === 0 && (
         <InlineNotice variant="warning" className="mb-4">
@@ -374,7 +385,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
               </tr>
             </thead>
             <tbody>
-              {RESOURCES.map((res) => (
+              {ASSIGNMENT_GRID.map((res) => (
                 <tr key={res.id} className="border-b border-gray-100 hover:bg-gray-50/80 transition-colors">
                   <td className="border-r-2 border-gray-300 bg-white p-2 font-medium text-gray-800">{res.label}</td>
                   {weekDays.map((d, dayIndex) => {
@@ -419,7 +430,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                             <option value=""> </option>
                             {(() => {
                               const hasSespa = morningSlot.hasSespa;
-                              const suggested = getSuggestedAnesthetists(dateStr, "morning", res.id as SlotKey, assignments, anestList, hasSespa);
+                              const suggested = getSuggestedAnesthetists(dateStr, "morning", res.id as SlotKey, assignments, anestList, hasSespa, maxFor);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -479,7 +490,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                             <option value=""> </option>
                             {(() => {
                               const hasSespa = afternoonSlot.hasSespa;
-                              const suggested = getSuggestedAnesthetists(dateStr, "afternoon", res.id as SlotKey, assignments, anestList, hasSespa);
+                              const suggested = getSuggestedAnesthetists(dateStr, "afternoon", res.id as SlotKey, assignments, anestList, hasSespa, maxFor);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -529,7 +540,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                         >
                           <option value=""> </option>
                           {(() => {
-                            const suggested = getSuggestedAnesthetists(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaM);
+                            const suggested = getSuggestedAnesthetists(dateStr, "morning", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaM, maxFor);
                             const available = suggested.filter((s) => s.available);
                             const others = suggested.filter((s) => !s.available);
                             return (
@@ -564,7 +575,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                         >
                           <option value=""> </option>
                           {(() => {
-                            const suggested = getSuggestedAnesthetists(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaA);
+                            const suggested = getSuggestedAnesthetists(dateStr, "afternoon", ASSIGNMENT_FULL_SHIFT, assignments, anestList, fullShiftHasSespaA, maxFor);
                             const available = suggested.filter((s) => s.available);
                             const others = suggested.filter((s) => !s.available);
                             return (
@@ -649,7 +660,7 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
                           >
                             <option value=""> </option>
                             {(() => {
-                              const suggested = getSuggestedAnesthetists(dateStr, "morning", "consulta-preanestesia" as SlotKey, assignments, anestList, false);
+                              const suggested = getSuggestedAnesthetists(dateStr, "morning", "consulta-preanestesia" as SlotKey, assignments, anestList, false, maxFor);
                               const available = suggested.filter((s) => s.available);
                               const others = suggested.filter((s) => !s.available);
                               return (
@@ -723,40 +734,6 @@ export function AsignarAnestesistas({ reservations: propReservations }: AsignarA
           </p>
         ) : null}
       </ActionBar>
-
-      {alarm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-w-md rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-lg">
-            <h3 className="mb-2 text-lg font-bold text-amber-900">Alarma: más de 2 recursos a la vez</h3>
-            <p className="mb-4 text-sm text-amber-800">
-              Los siguientes anestesistas están asignados a más de 2 recursos el mismo día y turno. ¿Desea confirmar esta decisión?
-            </p>
-            <ul className="mb-4 list-disc pl-4 text-sm text-amber-800">
-              {alarm.over.map((o) => (
-                <li key={`${o.date}-${o.shift}-${o.anesthetistId}`}>
-                  {nameById.get(o.anesthetistId) ?? o.anesthetistId}: {o.count} recursos el {o.date} ({o.shift === "morning" ? "mañana" : "tarde"})
-                </li>
-              ))}
-            </ul>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleConfirmAlarm}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
-              >
-                Confirmar
-              </button>
-              <button
-                type="button"
-                onClick={() => setAlarm(null)}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {unavConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

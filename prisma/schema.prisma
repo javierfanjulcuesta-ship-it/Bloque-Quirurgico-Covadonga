@@ -48,6 +48,8 @@ model User {
   updatedAt                DateTime                    @updatedAt
   reservations             Reservation[]               @relation("SurgeonReservations")
   anesthetistAssignments   AnesthetistAssignment[]
+  anesthetistProfile       AnesthetistProfile?
+  surgeonDefault           SurgeonDefault?
   anesthetistUnavailability AnesthetistUnavailability[]
   blockOpeningPlansApproved BlockOpeningPlan[]
   blockSlotPlansApproved   BlockSlotOpeningPlan[]
@@ -141,6 +143,30 @@ model AnesthetistAssignment {
   @@unique([date, shift, assignmentType, resourceId])
   @@index([anesthetistId])
   @@index([date])
+}
+
+/** Cupo de quirófanos simultáneos. Si no hay fila, manda el catálogo de datos o el defecto 2. */
+model AnesthetistProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  maxSimultaneousOr Int      @default(2)
+  updatedAt         DateTime @updatedAt
+  updatedByUserId   String?
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/** Turno y quirófano habitual. Es una sugerencia: no crea reservas. */
+model SurgeonDefault {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  defaultShift         Shift?
+  preferredResourceId  String?
+  active               Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+  updatedByUserId      String?
+
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /** No disponibilidad compartida del anestesista. Sustituye localStorage en modo real. */

@@ -9,6 +9,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
+import { AnesthetistCapacityEditor } from "@/components/gestor/AnesthetistCapacityEditor";
+import { SurgeonHabitEditor } from "@/components/gestor/SurgeonHabitEditor";
 
 interface ProgrammingRuleFull {
   id: string;
@@ -248,6 +250,9 @@ export function NormasGestorView() {
           </p>
         )}
       </div>
+
+      <AnesthetistCapacityEditor />
+      <SurgeonHabitEditor />
 
       <h3 className="mb-3 text-base font-semibold text-gray-800">Otras reglas</h3>
       <div className="space-y-4">

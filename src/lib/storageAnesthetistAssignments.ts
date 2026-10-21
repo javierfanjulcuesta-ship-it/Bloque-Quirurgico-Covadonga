@@ -9,7 +9,7 @@ import { RESOURCES } from "./constants";
 import { safeParseJSON } from "./storageSafe";
 
 const KEY_ASSIGNMENTS = "bloque_quirurgico_anesthetist_assignments";
-const VALID_RESOURCE_IDS = new Set<string>([...RESOURCES.map((r) => r.id), ASSIGNMENT_FULL_SHIFT, ASSIGNMENT_PREANESTHESIA]);
+const VALID_RESOURCE_IDS = new Set<string>([...RESOURCES.map((r) => r.id), "endoscopias", ASSIGNMENT_FULL_SHIFT, ASSIGNMENT_PREANESTHESIA]);
 
 function isValidAssignment(a: unknown): a is AnesthetistAssignment {
   if (!a || typeof a !== "object") return false;
