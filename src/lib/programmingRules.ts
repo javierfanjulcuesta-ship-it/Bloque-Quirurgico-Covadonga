@@ -1,36 +1,59 @@
 /**
- * Helper para leer reglas de programación desde BD.
- * Fallback a constantes si la regla no existe en BD (migración gradual).
- *
- * NOTA: ProgrammingRule no existe en schema desplegado. Siempre usa fallbacks locales.
+ * Lee las reglas de programación de la tabla ProgrammingRule.
+ * Las constantes locales solo se usan cuando esa tabla no tiene ninguna fila.
  */
 
-import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import {
   SCHEDULING_DEADLINE_DAY,
+  SCHEDULING_DEADLINE_HOUR,
+  SCHEDULING_DEADLINE_MINUTE,
   TRANSITION_MINUTES_PER_PROCEDURE,
 } from "./constants";
-
-/** Fallbacks locales: no existen en constants.ts de este proyecto. Cierre jueves 00:00 */
-const SCHEDULING_DEADLINE_HOUR = 0;
-const SCHEDULING_DEADLINE_MINUTE = 0;
+import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 
 export type ProgrammingRuleValue = string | number | { text: string } | unknown;
 
-/** Obtiene el valor de una regla. ProgrammingRule no existe en schema → solo fallbacks. */
-export async function getProgrammingRule(key: string): Promise<ProgrammingRuleValue | null> {
-  const fallbacks: Record<string, ProgrammingRuleValue> = {
-    normas_texto_completo: { text: NORMAS_PROGRAMACION_BLOQUE },
-    scheduling_deadline_day: SCHEDULING_DEADLINE_DAY,
-    scheduling_deadline_hour: SCHEDULING_DEADLINE_HOUR,
-    scheduling_deadline_minute: SCHEDULING_DEADLINE_MINUTE,
-    transition_minutes: TRANSITION_MINUTES_PER_PROCEDURE,
-    max_weeks_ahead: 4,
-  };
-  return fallbacks[key] ?? null;
+export interface StoredProgrammingRule {
+  key: string;
+  valueJson: string | null;
+  isActive: boolean;
 }
 
-/** Obtiene el texto de normas para correos/cirujano. */
+const FALLBACKS: Record<string, ProgrammingRuleValue> = {
+  normas_texto_completo: { text: NORMAS_PROGRAMACION_BLOQUE },
+  scheduling_deadline_day: SCHEDULING_DEADLINE_DAY,
+  scheduling_deadline_hour: SCHEDULING_DEADLINE_HOUR,
+  scheduling_deadline_minute: SCHEDULING_DEADLINE_MINUTE,
+  transition_minutes: TRANSITION_MINUTES_PER_PROCEDURE,
+  max_weeks_ahead: 4,
+};
+
+export function parseProgrammingRuleValue(valueJson: string | null): ProgrammingRuleValue | null {
+  if (valueJson == null || valueJson.trim() === "") return null;
+  try {
+    return JSON.parse(valueJson) as ProgrammingRuleValue;
+  } catch {
+    return valueJson;
+  }
+}
+
+/** Si `rows` está vacío, devuelve la constante. Si hay filas, solo vale la fila activa de esa clave. */
+export function resolveProgrammingRule(key: string, rows: StoredProgrammingRule[]): ProgrammingRuleValue | null {
+  if (rows.length === 0) return FALLBACKS[key] ?? null;
+  const row = rows.find((item) => item.key === key && item.isActive);
+  if (!row) return null;
+  return parseProgrammingRuleValue(row.valueJson);
+}
+
+export async function getProgrammingRule(key: string): Promise<ProgrammingRuleValue | null> {
+  const { prisma } = await import("@/lib/db/prisma");
+  const rows = await prisma.programmingRule.findMany({
+    select: { key: true, valueJson: true, isActive: true },
+  });
+  return resolveProgrammingRule(key, rows);
+}
+
+/** Texto de normas para correos y para el cirujano. */
 export async function getNormasTextoCompleto(): Promise<string> {
   const val = await getProgrammingRule("normas_texto_completo");
   if (val && typeof val === "object" && "text" in val && typeof (val as { text: string }).text === "string") {
