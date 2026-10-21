@@ -38,6 +38,8 @@ La migración `20261021160000_patient_case_label` aplica el límite a las tablas
 
 La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del Excel subido en esa sesión, en el parte de la respuesta, y no se leen de la reserva.
 
+Al elegir huecos, si el tramo se solapa en minutos con otro cirujano en el mismo quirófano, sale un aviso y el primer quirófano libre del turno (Q1, Q2 o Q3). No bloquea el guardado. La pestaña **Capacidad** del calendario de gestor muestra minutos ocupados y libres por turno y quirófano, sin pacientes.
+
 `scripts/lib/seedShowcaseImplementation.ts` y la demo local usan `Paciente Prueba NN` y `TEST-00NN`. Esas etiquetas no se escriben en Postgres: el alta guarda `Caso N`. No lanzar `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel. El chequeo `scripts/ci/no-identifying-fixture-columns.mjs` falla si un fixture trae una columna DNI, NIE, NIF o teléfono.
 
 La purga del texto identificativo que ya estuviera guardado es un script manual (`scripts/privacy/purge-identifying-text.ts`). No corre en las migraciones ni en CI. Qué haría falta para guardar identidad de verdad, con cifrado y base legal, está en `docs/ACTIVAR_DATOS_IDENTIFICATIVOS.md`.

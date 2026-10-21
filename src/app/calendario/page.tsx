@@ -34,6 +34,7 @@ import { AsignarAnestesistas } from "@/components/gestor/AsignarAnestesistas";
 import { NormasGestorView } from "@/components/gestor/NormasGestorView";
 import { BandejaGestor } from "@/components/gestor/BandejaGestor";
 import { SemanaImprimir } from "@/components/gestor/SemanaImprimir";
+import { CapacidadSemanal } from "@/components/gestor/CapacidadSemanal";
 import { CuadroDeMando } from "@/components/gestor/CuadroDeMando";
 import { ValoracionPreanestesia } from "@/components/anestesista/ValoracionPreanestesia";
 import { MiProgramacion } from "@/components/anestesista/MiProgramacion";
@@ -63,6 +64,7 @@ type CalendarioViewTab =
   | "normas"
   | "bandeja"
   | "imprimir"
+  | "capacidad"
   | "mensajes"
   | "consulta-preanestesia"
   | "mi-programacion"
@@ -106,6 +108,11 @@ function getCalendarioScreenContext(
       return {
         title: "Semana para imprimir",
         subtitle: "Hoja de la semana con iniciales calculadas al vuelo. No guarda una copia ni muestra historia, teléfono o email.",
+      };
+    case "capacidad":
+      return {
+        title: "Capacidad semanal",
+        subtitle: "Minutos ocupados y libres por quirófano y turno. No muestra pacientes.",
       };
     case "mensajes":
       return { title: "Mensajes", subtitle: "Bandeja de mensajes desde coordinación y la pantalla de acceso." };
@@ -478,6 +485,9 @@ export default function CalendarioPage() {
                       <AppNavTab active={viewTab === "imprimir"} onClick={() => setViewTab("imprimir")}>
                         Semana para imprimir
                       </AppNavTab>
+                      <AppNavTab active={viewTab === "capacidad"} onClick={() => setViewTab("capacidad")}>
+                        Capacidad
+                      </AppNavTab>
                       {canViewCuadroDeMando && (
                         <AppNavTab active={viewTab === "cuadro-de-mando"} onClick={() => setViewTab("cuadro-de-mando")}>
                           Cuadro de Mando
@@ -583,6 +593,10 @@ export default function CalendarioPage() {
 
         {user && isGestor && viewTab === "imprimir" && (
           <SemanaImprimir reservations={reservations} users={usersDirectory} />
+        )}
+
+        {user && isGestor && viewTab === "capacidad" && (
+          <CapacidadSemanal reservations={reservations} />
         )}
 
         {user && canViewCuadroDeMando && viewTab === "cuadro-de-mando" && (
