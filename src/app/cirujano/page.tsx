@@ -658,10 +658,6 @@ export default function CirujanoPage() {
     });
   }, [reservations, user?.id, isGestorScheduler]);
 
-  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
-    return null;
-  }
-
   const screen = useMemo(() => getCirujanoScreenContext(tab, { isGestorScheduler }), [tab, isGestorScheduler]);
   const workspaceQuickActions = useMemo(() => {
     if (isGestorScheduler) {
@@ -689,6 +685,10 @@ export default function CirujanoPage() {
       ],
     };
   }, [isGestorScheduler, tab, router]);
+
+  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
+    return null;
+  }
 
   const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;

@@ -56,18 +56,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     if (modoDemo) {
-      const stored = getStoredUser();
-      const users = getUsers();
-      const canonical = stored ? users.find((u) => u.id === stored.id) : null;
-      if (canonical) {
-        setUserState(canonical);
-        setStoredUser(canonical);
-      } else {
-        if (stored) setStoredUser(null);
-        setUserState(null);
-      }
-      setHydrated(true);
-      return;
+      const initial = window.setTimeout(() => {
+        if (cancelled) return;
+        const stored = getStoredUser();
+        const users = getUsers();
+        const canonical = stored ? users.find((u) => u.id === stored.id) : null;
+        if (canonical) {
+          setUserState(canonical);
+          setStoredUser(canonical);
+        } else {
+          if (stored) setStoredUser(null);
+          setUserState(null);
+        }
+        setHydrated(true);
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(initial);
+      };
     }
 
     fetch("/api/auth/session", { credentials: "include" })

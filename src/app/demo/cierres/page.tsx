@@ -51,7 +51,8 @@ export default function DemoCierresPage() {
 
   useEffect(() => {
     if (!modoDemo) return;
-    setClosures(getDemoSlotClosures());
+    const initial = window.setTimeout(() => setClosures(getDemoSlotClosures()), 0);
+    return () => window.clearTimeout(initial);
   }, []);
 
   useEffect(() => {

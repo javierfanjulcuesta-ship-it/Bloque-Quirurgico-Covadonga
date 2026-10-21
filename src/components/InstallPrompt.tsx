@@ -9,15 +9,15 @@ import { useState, useEffect } from "react";
 
 export function InstallPrompt() {
   const [show, setShow] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const standalone = window.matchMedia("(display-mode: standalone)").matches;
-    const isIOSDevice =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as unknown as { MSStream?: boolean }).MSStream;
-    setIsIOS(isIOSDevice);
-    if (!standalone && isIOSDevice) setShow(true);
+    const initial = window.setTimeout(() => {
+      const standalone = window.matchMedia("(display-mode: standalone)").matches;
+      const isIOSDevice =
+        /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as unknown as { MSStream?: boolean }).MSStream;
+      if (!standalone && isIOSDevice) setShow(true);
+    }, 0);
+    return () => window.clearTimeout(initial);
   }, []);
 
   if (!show) return null;

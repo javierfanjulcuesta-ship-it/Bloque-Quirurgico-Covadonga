@@ -48,7 +48,7 @@ jobs:
         run: npm run build
 
   lint:
-    name: Lint against the known error budget
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -63,13 +63,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # El informe JSON se genera aunque eslint salga con 1 por la deuda previa.
-      # El paso siguiente falla solo si un archivo supera el tope commiteado.
-      - name: Collect eslint JSON
-        run: npx eslint . -f json -o eslint-report.json || true
-
-      - name: Fail on new errors
-        run: node scripts/ci/eslint-budget.mjs eslint-report.json
+      - name: Lint
+        run: npm run lint
 
   postgres:
     name: Empty database migrate deploy and integration tests

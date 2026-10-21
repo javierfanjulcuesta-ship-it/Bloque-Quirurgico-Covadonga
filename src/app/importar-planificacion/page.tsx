@@ -59,6 +59,25 @@ export default function ImportarPlanificacionPage() {
     [users]
   );
 
+  const counters = useMemo(() => {
+    const valid = blocks.filter((b) => b.reviewStatus === "valid").length;
+    const review = blocks.filter((b) => b.reviewStatus === "review").length;
+    const ignored = blocks.filter((b) => b.reviewStatus === "ignored").length;
+    const withIssues = blocks.filter((b) => b.hasIssue).length;
+    return { valid, review, ignored, withIssues };
+  }, [blocks]);
+
+  const filteredBlocks = useMemo(() => {
+    return blocks.filter((b) => {
+      if (filter === "all") return true;
+      if (filter === "issues") return b.hasIssue;
+      if (filter === "review") return b.reviewStatus === "review";
+      if (filter === "ignored") return b.reviewStatus === "ignored";
+      if (filter === "valid") return b.reviewStatus === "valid";
+      return true;
+    });
+  }, [blocks, filter]);
+
   if (!hydrated || !user) return null;
   if (!hasGestorAccess(user.role)) {
     return (
@@ -89,25 +108,6 @@ export default function ImportarPlanificacionPage() {
   const updateBlock = (id: string, patch: Partial<PlanningPreviewBlock>) => {
     setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
   };
-
-  const counters = useMemo(() => {
-    const valid = blocks.filter((b) => b.reviewStatus === "valid").length;
-    const review = blocks.filter((b) => b.reviewStatus === "review").length;
-    const ignored = blocks.filter((b) => b.reviewStatus === "ignored").length;
-    const withIssues = blocks.filter((b) => b.hasIssue).length;
-    return { valid, review, ignored, withIssues };
-  }, [blocks]);
-
-  const filteredBlocks = useMemo(() => {
-    return blocks.filter((b) => {
-      if (filter === "all") return true;
-      if (filter === "issues") return b.hasIssue;
-      if (filter === "review") return b.reviewStatus === "review";
-      if (filter === "ignored") return b.reviewStatus === "ignored";
-      if (filter === "valid") return b.reviewStatus === "valid";
-      return true;
-    });
-  }, [blocks, filter]);
 
   return (
     <div className="min-h-screen bg-white p-4">

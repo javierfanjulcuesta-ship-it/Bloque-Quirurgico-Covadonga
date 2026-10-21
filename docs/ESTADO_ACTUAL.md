@@ -53,7 +53,7 @@ La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del 
 `.github/workflows/pr-checks.yml` corre en cualquier pull request, también si la base es otra rama `cursor/*`:
 
 - typecheck, `npm test` y `npm run build`;
-- eslint comparado con `scripts/ci/eslint-error-baseline.json` (20 errores ya conocidos de hooks y un `any`). Falla si aparece un error nuevo. No desactiva reglas;
+- `npm run lint` sin tope: eslint tiene que terminar sin errores;
 - Postgres 16 vacío: `prisma migrate deploy`, `migrate status`, `migrate diff` y las pruebas `test:*integration`. Comprueba que `IntakeFingerprint` existe y que `IntakeRow` y `PatientIdentity` no. La cadena ya tiene `0_baseline_production_20260811`; no hace falta otro baseline si ese job pasa.
 
 Ese job de Postgres no se ejecutó en la máquina donde se escribió el workflow.
@@ -73,6 +73,9 @@ Los PR están encadenados. Conviene mirarlos en este orden, cada uno contra su b
 9. CI de pull request.
 10. Semana para imprimir.
 11. Este documento y las marcas de obsoleto.
+12. `PatientInBlock` guarda `Caso N` y no historia, nombre, teléfono ni email.
+13. Nombres de demostración sustituidos por `Paciente Prueba NN` y `TEST-00NN`.
+14. Lint de CI sin tope de errores.
 
 ## Cómo probar en una base que no sea producción
 

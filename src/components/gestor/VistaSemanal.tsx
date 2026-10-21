@@ -107,7 +107,6 @@ export function VistaSemanal({
         if (!cancelled) setAssignments([]);
       });
     if (modoDemo) {
-      setPendingRooms([]);
       return () => {
         cancelled = true;
       };

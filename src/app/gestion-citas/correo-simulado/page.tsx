@@ -71,7 +71,8 @@ export default function SimulatedOutgoingMailPage() {
       router.replace("/");
       return;
     }
-    refresh();
+    const initial = window.setTimeout(refresh, 0);
+    return () => window.clearTimeout(initial);
   }, [hydrated, user, router, refresh]);
 
   const filtered = useMemo(

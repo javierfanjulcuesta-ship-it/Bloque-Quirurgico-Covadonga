@@ -76,7 +76,7 @@ export default function GestionCitasPage() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [overlays, setOverlays] = useState<DemoGestionCitasState>({});
   const [tab, setTab] = useState<WorklistTab>("pending");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(modoDemo);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -90,14 +90,14 @@ export default function GestionCitasPage() {
       router.replace("/");
       return;
     }
-    if (!modoDemo) {
-      setLoading(false);
-      return;
-    }
+    if (!modoDemo) return;
 
-    setOverlays(getDemoGestionCitasState());
+    const storedOverlays = getDemoGestionCitasState();
     getReservations()
-      .then(setReservations)
+      .then((rows) => {
+        setOverlays(storedOverlays);
+        setReservations(rows);
+      })
       .catch(() => setError("No se pudo cargar la lista operativa."))
       .finally(() => setLoading(false));
   }, [hydrated, user, router]);

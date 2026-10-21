@@ -29,8 +29,10 @@ export function WeekGridCalendar({
   isDayDisabled,
   getDayClassName,
 }: WeekGridCalendarProps) {
-  const periodMonday = useMemo(() => getWeekStart(periodStart), [periodStart.getTime()]);
-  const grid = useMemo(() => getCalendarGridWeeks(periodMonday, NUM_WEEKS), [periodMonday.getTime()]);
+  const periodTime = periodStart.getTime();
+  const periodMonday = useMemo(() => getWeekStart(new Date(periodTime)), [periodTime]);
+  const mondayTime = periodMonday.getTime();
+  const grid = useMemo(() => getCalendarGridWeeks(new Date(mondayTime), NUM_WEEKS), [mondayTime]);
 
   const periodLabel = useMemo(() => {
     const first = grid[0]?.[0];
