@@ -56,6 +56,6 @@ La primera línea tiene que citar `.gitignore`. `git status` no tiene que listar
 
 ## 4. Qué queda fuera
 
-`hardening/integration` no contiene los PR 130 en adelante. Para mirar un borrador, cambie a la rama de ese PR, no mezcle la cadena a mano. El orden y el riesgo de cada uno están en `docs/REVISION_PRS.md`.
+`hardening/integration` no contiene los PR 130 a 148. Para mirar un borrador, cambie a la rama de ese PR, no mezcle la cadena a mano. El orden y el riesgo de cada uno están en `docs/REVISION_PRS.md`.
 
 No lance `db:seed`, `usuarios:prueba` ni `seed:showcase` contra la base de Vercel. No ponga en el entorno `STORE_PATIENT_IDENTITY`.
