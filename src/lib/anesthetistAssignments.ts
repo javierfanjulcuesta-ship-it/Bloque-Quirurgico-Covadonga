@@ -18,6 +18,7 @@ import {
 } from "./api/anesthetistAssignments";
 
 let editableSnapshotRevision: string | null = null;
+let editableWeek: { dateFrom: string; dateTo: string } | null = null;
 
 export async function getAssignments(filters?: FetchAssignmentsFilters): Promise<AnesthetistAssignment[]> {
   if (modoDemo) {
@@ -46,9 +47,33 @@ export async function getAssignments(filters?: FetchAssignmentsFilters): Promise
   return snapshot.assignments;
 }
 
-export async function saveAssignments(assignments: AnesthetistAssignment[]): Promise<void> {
+/** Carga la semana editable y recuerda su revisión. No reescribe otras semanas. */
+export async function loadEditableAssignmentWeek(dateFrom: string, dateTo: string): Promise<AnesthetistAssignment[]> {
+  editableWeek = { dateFrom, dateTo };
   if (modoDemo) {
-    setStoredAnesthetistAssignments(assignments);
+    editableSnapshotRevision = "demo";
+    return getAssignments({ dateFrom, dateTo });
+  }
+  const snapshot = await fetchAssignmentsSnapshot({ dateFrom, dateTo });
+  if (!snapshot.revision) {
+    throw new Error("El servidor no devolvió la revisión de la semana.");
+  }
+  editableSnapshotRevision = snapshot.revision;
+  return snapshot.assignments;
+}
+
+export async function saveAssignments(assignments: AnesthetistAssignment[]): Promise<void> {
+  if (!editableWeek) {
+    throw new Error("Recargue la semana antes de guardar.");
+  }
+  const { dateFrom, dateTo } = editableWeek;
+  const inWeek = assignments.filter((assignment) => assignment.date >= dateFrom && assignment.date <= dateTo);
+
+  if (modoDemo) {
+    const kept = getStoredAnesthetistAssignments().filter(
+      (assignment) => assignment.date < dateFrom || assignment.date > dateTo,
+    );
+    setStoredAnesthetistAssignments([...kept, ...inWeek]);
     return;
   }
 
@@ -56,5 +81,5 @@ export async function saveAssignments(assignments: AnesthetistAssignment[]): Pro
     throw new Error("Recargue las asignaciones antes de guardar para evitar sobrescribir cambios concurrentes.");
   }
 
-  editableSnapshotRevision = await apiSaveAssignments(assignments, editableSnapshotRevision);
+  editableSnapshotRevision = await apiSaveAssignments(inWeek, editableSnapshotRevision, { dateFrom, dateTo });
 }

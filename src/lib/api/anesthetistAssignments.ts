@@ -45,6 +45,7 @@ export async function fetchAssignments(filters?: FetchAssignmentsFilters): Promi
 export async function saveAssignments(
   assignments: AnesthetistAssignment[],
   expectedRevision: string,
+  range: { dateFrom: string; dateTo: string },
 ): Promise<string> {
   const res = await fetch("/api/anesthetist-assignments", {
     method: "PUT",
@@ -52,6 +53,8 @@ export async function saveAssignments(
     credentials: "same-origin",
     body: JSON.stringify({
       expectedRevision,
+      dateFrom: range.dateFrom,
+      dateTo: range.dateTo,
       assignments: assignments.map((a) => ({
         date: a.date,
         shift: a.shift,
