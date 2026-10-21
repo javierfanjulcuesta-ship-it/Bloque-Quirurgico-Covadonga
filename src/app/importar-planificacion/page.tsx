@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useUsers } from "@/context/UsersContext";
@@ -11,6 +11,7 @@ import { PageShellHeader } from "@/components/ui/PageShellHeader";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { parsePlanningFilePreview, type PlanningPreviewBlock } from "@/lib/importPlanningPreview";
+import { annotateInferredHabits, type SavedSurgeonHabit } from "@/lib/surgeons/habits";
 
 type ReviewFilter = "all" | "issues" | "review" | "ignored" | "valid";
 const DAY_OPTIONS = ["lunes", "martes", "miércoles", "jueves", "viernes", "día no identificado"];
@@ -27,6 +28,24 @@ export default function ImportarPlanificacionPage() {
   const [blocks, setBlocks] = useState<PlanningPreviewBlock[]>([]);
   const [filter, setFilter] = useState<ReviewFilter>("all");
   const [error, setError] = useState<string | null>(null);
+  const [savedHabits, setSavedHabits] = useState<Array<SavedSurgeonHabit & { name: string }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/surgeon-defaults", { credentials: "same-origin" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const defaults = (payload as { defaults?: Array<{ name: string; saved: SavedSurgeonHabit | null }> }).defaults ?? [];
+        setSavedHabits(defaults.flatMap((row) => (row.saved ? [{ ...row.saved, name: row.name }] : [])));
+      })
+      .catch(() => {
+        if (!cancelled) setSavedHabits([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const surgeons = useMemo(
     () =>
@@ -54,7 +73,7 @@ export default function ImportarPlanificacionPage() {
     setFileName(file.name);
     try {
       const result = await parsePlanningFilePreview(file, surgeons);
-      setBlocks(result.blocks);
+      setBlocks(annotateInferredHabits(result.blocks, savedHabits));
       setIssues(result.issues);
       if (!result.blocks.length) setError("No se detectaron bloques preliminares en el archivo.");
     } catch (e) {
@@ -235,6 +254,7 @@ export default function ImportarPlanificacionPage() {
                           {SHIFT_OPTIONS.map((s) => <option key={s} value={s}>{s === "morning" ? "Mañana" : s === "afternoon" ? "Tarde" : "No detectado"}</option>)}
                         </select>
                         <p className="mt-1 text-[11px] text-slate-500">Detectado: {b.shift === "morning" ? "Mañana" : b.shift === "afternoon" ? "Tarde" : "No detectado"}</p>
+                        {b.suggestionNote ? <p className="mt-1 text-[11px] font-medium text-amber-800">{b.suggestionNote}</p> : null}
                       </td>
                       <td className="px-3 py-2">
                         <select

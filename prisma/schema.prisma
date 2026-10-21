@@ -49,6 +49,7 @@ model User {
   reservations             Reservation[]               @relation("SurgeonReservations")
   anesthetistAssignments   AnesthetistAssignment[]
   anesthetistProfile       AnesthetistProfile?
+  surgeonDefault           SurgeonDefault?
   anesthetistUnavailability AnesthetistUnavailability[]
   blockOpeningPlansApproved BlockOpeningPlan[]
   blockSlotPlansApproved   BlockSlotOpeningPlan[]
@@ -153,6 +154,19 @@ model AnesthetistProfile {
   updatedByUserId   String?
 
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/** Turno y quirófano habitual. Es una sugerencia: no crea reservas. */
+model SurgeonDefault {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  defaultShift         Shift?
+  preferredResourceId  String?
+  active               Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+  updatedByUserId      String?
+
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /** No disponibilidad compartida del anestesista. Sustituye localStorage en modo real. */

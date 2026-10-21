@@ -14,6 +14,7 @@ import { logReservationEvent } from "@/lib/reservations/logReservationEvent";
 import { sendReplyToReservationEmail } from "./outlookService";
 import { getReservationReplyContent } from "./reservationReplyTemplates";
 import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/program/recognizeResource";
+import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } from "@/lib/surgeons/habits";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
@@ -252,6 +253,35 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
         classification,
         error: "Sala no reconocida. La solicitud queda pendiente y no se asigna Q1.",
       });
+    }
+    if (missingFieldsLeaveShiftPending(parseResult.missingFields)) {
+      const sender = await prisma.user.findFirst({
+        where: { email: fromEmail, approved: true, deletedAt: null },
+        select: { name: true, surgeonDefault: { select: { defaultShift: true, preferredResourceId: true, active: true } } },
+      });
+      const saved = sender?.surgeonDefault
+        ? {
+            defaultShift: sender.surgeonDefault.defaultShift === "MORNING"
+              ? "morning" as const
+              : sender.surgeonDefault.defaultShift === "AFTERNOON"
+                ? "afternoon" as const
+                : null,
+            preferredResourceId: sender.surgeonDefault.preferredResourceId,
+            active: sender.surgeonDefault.active,
+          }
+        : null;
+      const suggestion = suggestSurgeonHabit({
+        explicitShift: null,
+        surgeonName: sender?.name || message.fromName || "",
+        saved,
+      });
+      if (suggestion.flags.includes(TURNO_INFERIDO)) {
+        return leaveRoomPending({
+          emailMessageId: emailMessage.id,
+          classification,
+          error: `Turno sugerido ${suggestion.shift === "afternoon" ? "tarde" : "mañana"} marcado ${TURNO_INFERIDO}. No se ha grabado la reserva.`,
+        });
+      }
     }
     return recordFailure({
       emailMessageId: emailMessage.id,
