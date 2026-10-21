@@ -111,7 +111,6 @@ test("concurrent different slots cannot create an overflow overlap", async () =>
     slotIndex: 0,
     patients: [
       {
-        historyNumber: "TEST-LONG",
         procedure: "Procedimiento ficticio largo",
         estimatedDurationMinutes: 100,
         anesthesiaType: "General",
@@ -130,7 +129,6 @@ test("concurrent different slots cannot create an overflow overlap", async () =>
     slotIndex: 1,
     patients: [
       {
-        historyNumber: "TEST-NEXT",
         procedure: "Procedimiento ficticio corto",
         estimatedDurationMinutes: 20,
         anesthesiaType: "General",
@@ -230,7 +228,7 @@ test("audit persistence failure rolls back reservation, patient and phase2 state
       slotIndex: 4,
       patients: [
         {
-          historyNumber: "TEST-ATOMIC-AUDIT",
+          caseLabel: "Caso 1",
           procedure: "Procedimiento ficticio de atomicidad",
           estimatedDurationMinutes: 30,
           anesthesiaType: "General",
@@ -287,7 +285,7 @@ test("reusing a cancelled slot cannot overflow into an occupied later slot", asy
       slotIndex: 1,
       patients: [
         {
-          historyNumber: "TEST-REUSE-NEXT",
+          caseLabel: "Caso 1",
           procedure: "Procedimiento ficticio corto",
           estimatedDurationMinutes: 20,
           anesthesiaType: "General",
@@ -311,7 +309,7 @@ test("reusing a cancelled slot cannot overflow into an occupied later slot", asy
       slotIndex: 0,
       patients: [
         {
-          historyNumber: "TEST-REUSE-LONG",
+          caseLabel: "Caso 1",
           procedure: "Procedimiento ficticio largo",
           estimatedDurationMinutes: 100,
           anesthesiaType: "General",

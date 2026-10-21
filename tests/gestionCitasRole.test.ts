@@ -159,22 +159,31 @@ test("local-no-anesthetist private case can be LISTO without ever becoming APTO"
   assert.equal(rows[0]!.globalStatus, "LISTO");
 });
 
-test("missing phone or email is a top-priority preparation incident", () => {
-  const incomplete = patient({ id: "missing-email", patientEmail: undefined, financingStatus: "APROBADA", preanesthesiaStatus: "APTO" });
+test("phone and email are not a stored preparation incident", () => {
+  const unlabeled = patient({
+    id: "sin-contacto",
+    patientEmail: undefined,
+    patientPhone: undefined,
+    financingStatus: "APROBADA",
+    preanesthesiaStatus: "APTO",
+  });
   const pendingCall = patient({ id: "pending-call", financingStatus: "APROBADA", preanesthesiaStatus: "APTO" });
   const rows = buildGestionCitasRows(
-    [reservation([pendingCall, incomplete])],
+    [reservation([unlabeled, pendingCall])],
     {
-      "missing-email": { confirmationStatus: "CONFIRMADO_CON_PACIENTE", authorizationStatus: "APROBADA" },
+      "sin-contacto": { confirmationStatus: "CONFIRMADO_CON_PACIENTE", authorizationStatus: "APROBADA" },
       "pending-call": { confirmationStatus: "PENDIENTE", authorizationStatus: "APROBADA" },
     },
     new Date("2026-08-18T12:00:00.000Z"),
   );
-  assert.equal(rows[0]!.patientId, "missing-email");
-  assert.equal(rows[0]!.priority, 10);
-  assert.equal(rows[0]!.globalStatus, "REQUIERE_ATENCION");
-  assert.ok(rows[0]!.reasons.includes("Falta email"));
-  assert.equal(rows[1]!.priority, 20);
+  assert.equal(rows[0]!.patientId, "pending-call");
+  assert.equal(rows[0]!.priority, 20);
+  assert.equal(rows[0]!.reasons.includes("Falta email"), false);
+  assert.equal(rows[0]!.reasons.includes("Falta teléfono"), false);
+  const ready = rows.find((row) => row.patientId === "sin-contacto");
+  assert.ok(ready);
+  assert.equal(ready.priority, 90);
+  assert.equal(ready.reasons.includes("Falta email"), false);
 });
 
 test("next-week worklist covers Monday through Friday with no invented proximity threshold", () => {

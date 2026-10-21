@@ -23,6 +23,7 @@ import {
 } from "./overflowConflicts";
 import { withSchedulingContextLock } from "./bookingContextLock";
 import { getEffectiveTotalMinutes } from "@/lib/utils";
+import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 
 export type ReservationOrigin = "APP" | "EMAIL" | "GESTOR";
 export type CreateReservationError =
@@ -50,20 +51,18 @@ export function patientFieldsForCreate(
   p: CreateReservationInput["patients"][number],
   fallbackOrderIndex: number,
 ) {
+  const orderIndex = p.orderIndex ?? fallbackOrderIndex;
   return {
     ...defaultPatientCircuitColumns(),
-    historyNumber: p.historyNumber,
-    fullName: p.fullName ?? null,
+    caseLabel: caseLabelFromOrder(orderIndex),
     procedure: p.procedure,
     estimatedDurationMinutes: p.estimatedDurationMinutes,
     anesthesiaType: p.anesthesiaType,
     insuranceType: p.insuranceType,
     admissionType: p.admissionType ?? null,
-    orderIndex: p.orderIndex ?? fallbackOrderIndex,
+    orderIndex,
     notes: p.notes ?? null,
     solicitudRecursos: p.solicitudRecursos ?? null,
-    patientEmail: p.patientEmail ?? null,
-    patientPhone: p.patientPhone ?? null,
     isDeferredUrgency: p.isDeferredUrgency ?? false,
     specialCircuitReason: p.isDeferredUrgency ? (p.specialCircuitReason?.trim() || null) : null,
   };
@@ -81,8 +80,6 @@ function alignPatientsForPhase2(
       patientId: row.id,
       isDeferredUrgency: !!src.isDeferredUrgency,
       specialCircuitReason: src.isDeferredUrgency ? (src.specialCircuitReason?.trim() || null) : null,
-      patientEmail: src.patientEmail,
-      patientPhone: src.patientPhone,
     };
   });
 }

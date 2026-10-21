@@ -53,7 +53,7 @@ before(async () => {
       data: {
         id: PATIENT_IDS[i]!,
         reservationId: RESERVATION_IDS[i]!,
-        historyNumber: `TEST-PRE-${i + 1}`,
+        caseLabel: `Caso ${i + 1}`,
         procedure: "Procedimiento ficticio",
         estimatedDurationMinutes: 30,
         anesthesiaType: "General",
@@ -83,8 +83,6 @@ test("two concurrent phase2 executions receive different preanesthesia slots", a
             patientId,
             isDeferredUrgency: false,
             specialCircuitReason: null,
-            patientEmail: null,
-            patientPhone: null,
           },
         ],
       }),
@@ -123,8 +121,6 @@ test("re-running phase2 for an already scheduled patient is idempotent", async (
         patientId: PATIENT_IDS[0]!,
         isDeferredUrgency: false,
         specialCircuitReason: null,
-        patientEmail: null,
-        patientPhone: null,
       }],
     }),
     applyAndLogPatientCircuitPhase2(prisma, {
@@ -137,8 +133,6 @@ test("re-running phase2 for an already scheduled patient is idempotent", async (
         patientId: PATIENT_IDS[0]!,
         isDeferredUrgency: false,
         specialCircuitReason: null,
-        patientEmail: null,
-        patientPhone: null,
       }],
     }),
   ]);

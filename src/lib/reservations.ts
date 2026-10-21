@@ -10,6 +10,7 @@ import { getStoredReservations, addOrUpdateStoredReservation } from "./storageMe
 import { isReservationRetentionStillAllowed } from "./schedulingDeadline";
 import { recordDemoAuditEvent } from "./demoAudit";
 import { isDemoSlotClosed } from "./demoBlockClosures";
+import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import {
   fetchReservations,
   createReservation,
@@ -207,8 +208,12 @@ export async function cancelReservationEntry(
 
 function applyDefinedPatientFields(patient: PatientInBlock, data: UpdatePatientData): PatientInBlock {
   const next = { ...patient };
-  if (data.numeroHistoria !== undefined) next.numeroHistoria = data.numeroHistoria;
-  if (data.name !== undefined) next.name = data.name;
+  const caseLabel = patient.caseLabel || caseLabelFromOrder(patient.order ?? 0);
+  next.caseLabel = caseLabel;
+  next.numeroHistoria = caseLabel;
+  next.name = undefined;
+  next.patientEmail = undefined;
+  next.patientPhone = undefined;
   if (data.procedure !== undefined) next.procedure = data.procedure;
   if (data.estimatedDurationMinutes !== undefined) next.estimatedDurationMinutes = data.estimatedDurationMinutes;
   if (data.anesthesiaType !== undefined) next.anesthesiaType = data.anesthesiaType;
@@ -216,8 +221,6 @@ function applyDefinedPatientFields(patient: PatientInBlock, data: UpdatePatientD
   if (data.admissionType !== undefined) next.admissionType = data.admissionType;
   if (data.notes !== undefined) next.notes = data.notes;
   if (data.solicitudRecursos !== undefined) next.solicitudRecursos = data.solicitudRecursos;
-  if (data.patientEmail !== undefined) next.patientEmail = data.patientEmail.trim() || undefined;
-  if (data.patientPhone !== undefined) next.patientPhone = data.patientPhone.trim() || undefined;
   return next;
 }
 
@@ -245,8 +248,6 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     return Promise.resolve(updated);
   }
   return updateReservationPatientApi(data.reservationId, data.patientId, {
-    historyNumber: data.numeroHistoria,
-    fullName: data.name,
     procedure: data.procedure,
     estimatedDurationMinutes: data.estimatedDurationMinutes,
     anesthesiaType: data.anesthesiaType,
@@ -254,7 +255,5 @@ export async function updateReservationPatientEntry(data: UpdatePatientData): Pr
     admissionType: data.admissionType,
     notes: data.notes,
     solicitudRecursos: data.solicitudRecursos,
-    patientEmail: data.patientEmail?.trim() || undefined,
-    patientPhone: data.patientPhone?.trim() || undefined,
   });
 }

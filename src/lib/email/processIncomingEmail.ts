@@ -11,8 +11,8 @@ import { classifyIncomingEmail } from "./classifyEmail";
 import { parseReservationEmail } from "./parseReservationEmail";
 import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/program/recognizeResource";
 import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } from "@/lib/surgeons/habits";
-import { patientInitials } from "@/lib/drafts/parteTemplate";
 import { stripSensitiveKeys } from "@/lib/agent/minimize";
+import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
@@ -28,8 +28,7 @@ const STATUS_SKIPPED = "SKIPPED";
 
 function toCreateReservationInput(parsed: ParsedReservationEmail) {
   const patients = (parsed.patients ?? []).map((p, i) => ({
-    historyNumber: p.numeroHistoria,
-    fullName: p.name ?? undefined,
+    caseLabel: caseLabelFromOrder(i),
     procedure: p.procedure,
     estimatedDurationMinutes: Math.max(1, p.estimatedDurationMinutes || 60),
     anesthesiaType: p.anesthesiaType || "General",
@@ -330,9 +329,8 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
         slotIndex: input.slotIndex,
         surgeonUserId: user.id,
         policyOk: policy.ok,
-        patients: (parsed.patients ?? []).map((patient) => ({
-          historyNumber: patient.numeroHistoria,
-          initials: patientInitials(patient.name),
+        patients: (parsed.patients ?? []).map((patient, index) => ({
+          caseLabel: caseLabelFromOrder(index),
           procedure: patient.procedure,
           minutes: patient.estimatedDurationMinutes,
         })),

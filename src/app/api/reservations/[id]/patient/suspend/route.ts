@@ -54,8 +54,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         reasonCode: raw.reason as string,
         reasonText: note || null,
         actorUserId: session!.userId,
-        beforeJson: JSON.stringify({ workflowStatus: patient.workflowStatus, historyNumber: patient.historyNumber }),
-        afterJson: JSON.stringify({ workflowStatus: "SUSPENDED", suspensionReason: raw.reason }),
       },
     });
   });

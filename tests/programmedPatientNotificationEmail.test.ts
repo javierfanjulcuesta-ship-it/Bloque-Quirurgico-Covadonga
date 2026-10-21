@@ -4,8 +4,7 @@ import { buildProgrammedPatientNotificationEmail } from "../src/lib/email/progra
 
 const baseInput = {
   patient: {
-    fullName: "Paciente Demo",
-    historyNumber: "DEMO-0001",
+    caseLabel: "Caso 1",
     procedure: "Procedimiento sintético",
     estimatedDurationMinutes: 75,
     anesthesiaType: "General",
@@ -13,8 +12,6 @@ const baseInput = {
     admissionType: "ambulatorio",
     solicitudRecursos: "ninguno",
     notes: "Datos exclusivamente ficticios",
-    patientEmail: "paciente@example.invalid",
-    patientPhone: "000000000",
   },
   surgery: {
     date: "2026-08-24",
@@ -33,8 +30,9 @@ const baseInput = {
 test("includes patient, surgical schedule and assigned preanesthesia appointment", () => {
   const email = buildProgrammedPatientNotificationEmail(baseInput);
   assert.match(email.subject, /Paciente programado/);
-  assert.match(email.text, /Paciente Demo/);
-  assert.match(email.text, /DEMO-0001/);
+  assert.match(email.text, /Caso 1/);
+  assert.equal(email.text.includes("Paciente Demo"), false);
+  assert.equal(email.text.includes("DEMO-0001"), false);
   assert.match(email.text, /09:30-10:30/);
   assert.match(email.text, /Q2/);
   assert.match(email.text, /Cirujano Demo/);

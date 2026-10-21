@@ -4,6 +4,7 @@
  */
 
 import type { MessageToGestor, AppNotification, Reservation, Shift } from "./types";
+import { operationalPatient } from "./patients/caseLabel";
 import { RESOURCES } from "./constants";
 import { safeParseJSON } from "./storageSafe";
 
@@ -191,14 +192,21 @@ export function getStoredReservations(): Reservation[] {
   const raw = window.localStorage.getItem(KEY_RESERVATIONS);
   const parsed = safeParseJSON<unknown>(raw, []);
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isValidReservation);
+  return parsed.filter(isValidReservation).map(sanitizeStoredReservation);
+}
+
+function sanitizeStoredReservation(reservation: Reservation): Reservation {
+  return {
+    ...reservation,
+    patients: reservation.patients.map((patient, index) => operationalPatient(patient, index)),
+  };
 }
 
 /** Añade o actualiza una reserva (misma ranura = actualiza). Así el gestor ve las reservas creadas por cirujanos/endoscopistas. */
 export function addOrUpdateStoredReservation(reservation: Reservation): void {
   const key = reservationSlotKey(reservation);
   const list = getStoredReservations().filter((r) => reservationSlotKey(r) !== key);
-  list.push(reservation);
+  list.push(sanitizeStoredReservation(reservation));
   if (typeof window !== "undefined") {
     window.localStorage.setItem(KEY_RESERVATIONS, JSON.stringify(list));
   }
@@ -207,6 +215,6 @@ export function addOrUpdateStoredReservation(reservation: Reservation): void {
 /** Sustituye todas las reservas (solo para cargar datos de ejemplo en modo DEMO). */
 export function setStoredReservationsForDemo(reservations: Reservation[]): void {
   if (typeof window === "undefined") return;
-  const valid = Array.isArray(reservations) ? reservations.filter(isValidReservation) : [];
+  const valid = Array.isArray(reservations) ? reservations.filter(isValidReservation).map(sanitizeStoredReservation) : [];
   window.localStorage.setItem(KEY_RESERVATIONS, JSON.stringify(valid));
 }

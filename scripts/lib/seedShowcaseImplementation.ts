@@ -12,6 +12,7 @@
  */
 
 import { PrismaClient, ReservationOrigin, ReservationStatus, Shift } from "@prisma/client";
+import { caseLabelFromOrder } from "../../src/lib/patients/caseLabel";
 
 const prisma = new PrismaClient();
 
@@ -665,8 +666,7 @@ async function main() {
           row.patients.length > 0
             ? {
                 create: row.patients.map((p) => ({
-                  historyNumber: p.historyNumber,
-                  fullName: p.fullName,
+                  caseLabel: caseLabelFromOrder(p.orderIndex),
                   procedure: p.procedure,
                   estimatedDurationMinutes: p.estimatedDurationMinutes,
                   anesthesiaType: p.anesthesiaType,

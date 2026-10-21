@@ -12,6 +12,7 @@ import {
   LARGE_BLOCK_REMAINDER_MINUTES,
 } from "@/lib/constants";
 import { resolveTitularSchedulerForm } from "@/lib/surgeonTitular";
+import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import type { Shift } from "@/lib/types";
 import { getUsers } from "@/lib/dataHelpers";
 import { hasGestorAccess, type UserRole } from "@/lib/types";
@@ -49,7 +50,7 @@ const ANESTHESIA_OPTIONS = ["Local", "Local (no precisa anestesista)", "Regional
 
 /** Fila con mínimo obligatorio para contar tiempo frente al bloque reservado. */
 function rowHasRequiredCore(p: Partial<PatientInBlock>): boolean {
-  return !!(p.numeroHistoria?.trim() && p.procedure?.trim() && p.entidadFinanciadora?.trim());
+  return !!(p.procedure?.trim() && p.entidadFinanciadora?.trim());
 }
 
 /** Minutos por fila para totales del modal: si faltan datos core no cuenta; si falta duración, asume 60 min (provisional). */
@@ -548,9 +549,10 @@ export function ProgramarPacientesModal({
       const anesthesia = p.anesthesiaType?.trim() ? p.anesthesiaType.trim() : "Por determinar";
       const baseNotes = p.notes?.trim() ?? "";
       const notesJoined = notePrefix ? (baseNotes ? `${notePrefix}${baseNotes}` : notePrefix.trimEnd()) : baseNotes;
+      const caseLabel = caseLabelFromOrder(i);
       return {
-        name: p.name,
-        numeroHistoria: p.numeroHistoria!.trim(),
+        caseLabel,
+        numeroHistoria: caseLabel,
         procedure: p.procedure!.trim(),
         estimatedDurationMinutes: duration,
         anesthesiaType: anesthesia,
@@ -559,8 +561,6 @@ export function ProgramarPacientesModal({
         notes: notesJoined,
         solicitudRecursos: (p.solicitudRecursos ? p.solicitudRecursos : defaultSolicitud) as SolicitudRecursosId,
         order: i,
-        patientEmail: p.patientEmail?.trim() || undefined,
-        patientPhone: p.patientPhone?.trim() || undefined,
         isDeferredUrgency: !!p.isDeferredUrgency,
         specialCircuitReason: p.isDeferredUrgency ? (p.specialCircuitReason?.trim() || undefined) : undefined,
       };
@@ -792,38 +792,9 @@ export function ProgramarPacientesModal({
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label>
-                  <span className="block text-sm font-medium text-gray-700">Nº historia clínica *</span>
-                  <input
-                    type="text"
-                    value={p.numeroHistoria ?? ""}
-                    onChange={(e) => updatePatient(index, "numeroHistoria", e.target.value)}
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    required
-                  />
-                </label>
-                <label>
-                  <span className="block text-sm font-medium text-gray-700">Email del paciente (opcional)</span>
-                  <input
-                    type="email"
-                    autoComplete="off"
-                    value={p.patientEmail ?? ""}
-                    onChange={(e) => updatePatient(index, "patientEmail", e.target.value)}
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    placeholder="contacto@ejemplo.com"
-                  />
-                </label>
-                <label>
-                  <span className="block text-sm font-medium text-gray-700">Teléfono del paciente (opcional)</span>
-                  <input
-                    type="tel"
-                    autoComplete="off"
-                    value={p.patientPhone ?? ""}
-                    onChange={(e) => updatePatient(index, "patientPhone", e.target.value)}
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    placeholder="Ej. 600 000 000"
-                  />
-                </label>
+                <p className="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {caseLabelFromOrder(index)}. El nombre, la historia, el teléfono y el email se quedan en el Excel maestro.
+                </p>
                 <div className="sm:col-span-2 rounded-lg border border-amber-100 bg-amber-50/60 p-3">
                   <label className="flex cursor-pointer items-start gap-2">
                     <input

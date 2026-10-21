@@ -37,8 +37,7 @@ interface PatientAttended {
   shift: Shift;
   resourceId: string;
   resourceLabel: string;
-  historyNumber: string;
-  fullName?: string;
+  caseLabel: string;
   procedure: string;
   anesthesiaType: string;
   insuranceType: string;
@@ -254,8 +253,7 @@ export function MiProgramacion({ anesthetistId, reservations: propReservations }
               shift: a.shift,
               resourceId: rid,
               resourceLabel: getResourceLabel(rid),
-              historyNumber: p.numeroHistoria ?? "—",
-              fullName: p.name,
+              caseLabel: p.caseLabel || p.numeroHistoria || "Caso",
               procedure: p.procedure ?? "—",
               anesthesiaType: p.anesthesiaType ?? "—",
               insuranceType: p.entidadFinanciadora ?? "—",
@@ -314,7 +312,7 @@ export function MiProgramacion({ anesthetistId, reservations: propReservations }
     lines.push("", "PACIENTES ATENDIDOS", "Fecha\tTurno\tRecurso\tNHC\tNombre\tProcedimiento\tAnestesia\tSeguro");
     for (const p of patientsAttended) {
       lines.push(
-        `${p.date}\t${p.shift === "morning" ? "Mañana" : "Tarde"}\t${p.resourceLabel}\t${p.historyNumber}\t${p.fullName ?? "—"}\t${p.procedure}\t${p.anesthesiaType}\t${p.insuranceType}`
+        `${p.date}\t${p.shift === "morning" ? "Mañana" : "Tarde"}\t${p.resourceLabel}\t${p.caseLabel}\t${p.procedure}\t${p.anesthesiaType}\t${p.insuranceType}`
       );
     }
     return lines.join("\n");
@@ -511,8 +509,7 @@ export function MiProgramacion({ anesthetistId, reservations: propReservations }
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Fecha</th>
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Turno</th>
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Recurso</th>
-                        <th className="border-b border-gray-200 p-2 text-left font-semibold">NHC</th>
-                        <th className="border-b border-gray-200 p-2 text-left font-semibold">Nombre</th>
+                        <th className="border-b border-gray-200 p-2 text-left font-semibold">Caso</th>
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Procedimiento</th>
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Anestesia</th>
                         <th className="border-b border-gray-200 p-2 text-left font-semibold">Seguro</th>
@@ -524,8 +521,7 @@ export function MiProgramacion({ anesthetistId, reservations: propReservations }
                           <td className="p-2">{p.date}</td>
                           <td className="p-2">{p.shift === "morning" ? "Mañana" : "Tarde"}</td>
                           <td className="p-2">{p.resourceLabel}</td>
-                          <td className="p-2">{p.historyNumber}</td>
-                          <td className="p-2">{p.fullName ?? "—"}</td>
+                          <td className="p-2">{p.caseLabel}</td>
                           <td className="p-2">{p.procedure}</td>
                           <td className="p-2">{p.anesthesiaType}</td>
                           <td className="p-2">{p.insuranceType}</td>

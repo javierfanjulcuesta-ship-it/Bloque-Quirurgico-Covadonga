@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { renderParte, type ParteCase, type SuspensionReason } from "./parteTemplate";
 import { resolveParteRecipients } from "./recipients";
+import { outboundDraftExpiresAt } from "./draftExpiry";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -52,7 +53,7 @@ export async function createParteDraft(
     date,
     shift,
     slotIndex: reservation.slotIndex,
-    fullName: patient.fullName,
+    caseLabel: patient.caseLabel,
     procedure: patient.procedure,
   }));
   const rendered = renderParte(cases, params.suspensionReason);
@@ -66,6 +67,7 @@ export async function createParteDraft(
       proposalId: params.proposalId ?? null,
       warning: resolved.warning ?? (recipients.length === 0 ? "No hay destinatarios con buzón." : null),
       createdByUserId: params.actorUserId ?? null,
+      expiresAt: outboundDraftExpiresAt(),
       recipients: {
         create: recipients.map((user) => ({
           userId: user.id,

@@ -29,7 +29,9 @@ export interface ParteCase {
   date: string;
   shift: "morning" | "afternoon";
   slotIndex: number;
+  /** Solo cuando el nombre llega del Excel de esta sesión. No se lee de la base. */
   fullName?: string | null;
+  caseLabel?: string | null;
   procedure: string;
 }
 
@@ -53,7 +55,10 @@ export function formatParteLine(item: ParteCase): string | null {
   if (!when || !clock) return null;
   const turno = item.shift === "morning" ? "MAÑANA" : "TARDE";
   const procedure = item.procedure.trim() || "Procedimiento";
-  return `${when.weekday} ${when.dayMonth} · ${clock} · ${turno} · ${patientInitials(item.fullName)} — ${procedure}`;
+  const who = item.fullName?.trim()
+    ? patientInitials(item.fullName)
+    : (item.caseLabel?.trim() || "Caso");
+  return `${when.weekday} ${when.dayMonth} · ${clock} · ${turno} · ${who} — ${procedure}`;
 }
 
 export function renderParte(cases: ParteCase[], suspensionReason?: SuspensionReason | null): { subject: string; body: string } {

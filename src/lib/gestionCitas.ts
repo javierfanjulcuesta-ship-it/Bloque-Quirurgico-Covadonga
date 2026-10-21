@@ -170,10 +170,8 @@ export function buildGestionCitasRows(
       const confirmation = overlay?.confirmationStatus ?? "PENDIENTE";
       const preanesthesia = derivePreanesthesiaOperationalStatus(patient, now);
       const authorization = deriveAuthorizationOperationalStatus(patient, overlay);
-      const contactComplete = !!(patient.patientPhone?.trim() && patient.patientEmail?.trim());
+      const contactComplete = true;
       const reasons: string[] = [];
-      if (!patient.patientPhone?.trim()) reasons.push("Falta teléfono");
-      if (!patient.patientEmail?.trim()) reasons.push("Falta email");
       if (preanesthesia === "NO_APTO") reasons.push("NO APTO");
       if (authorization === "DENEGADA") reasons.push("Autorización denegada");
       if (authorization === "PENDIENTE") reasons.push("Autorización pendiente");
@@ -182,8 +180,8 @@ export function buildGestionCitasRows(
       rows.push({
         reservationId: reservation.id,
         patientId: patient.id,
-        patientName: patient.name?.trim() || patient.numeroHistoria,
-        historyNumber: patient.numeroHistoria,
+        patientName: patient.caseLabel || patient.numeroHistoria || "Caso",
+        historyNumber: patient.caseLabel || patient.numeroHistoria || "Caso",
         procedure: patient.procedure,
         surgeryDate: reservation.date,
         surgeryTime: surgeryTimeForReservation(reservation),

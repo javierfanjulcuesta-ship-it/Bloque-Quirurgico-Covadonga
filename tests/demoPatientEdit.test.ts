@@ -21,9 +21,10 @@ test("demo patient updates stay in local reservation storage", () => {
 test("demo patient update preserves identity and only applies defined fields", () => {
   assert.ok(source.includes("function applyDefinedPatientFields"));
   assert.ok(source.includes("const next = { ...patient }"));
-  assert.ok(source.includes("if (data.numeroHistoria !== undefined)"));
-  assert.ok(source.includes("if (data.patientEmail !== undefined)"));
-  assert.ok(source.includes("if (data.patientPhone !== undefined)"));
+  assert.equal(source.includes("if (data.numeroHistoria !== undefined)"), false);
+  assert.equal(source.includes("if (data.patientEmail !== undefined)"), false);
+  assert.equal(source.includes("if (data.patientPhone !== undefined)"), false);
+  assert.ok(source.includes("next.patientEmail = undefined"));
   assert.ok(source.includes("Paciente DEMO no encontrado."));
   assert.ok(source.includes("Reserva DEMO no encontrada."));
 });

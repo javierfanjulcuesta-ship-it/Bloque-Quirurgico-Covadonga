@@ -1,7 +1,6 @@
 export interface ProgrammedPatientNotificationInput {
   patient: {
-    fullName?: string | null;
-    historyNumber: string;
+    caseLabel: string;
     procedure: string;
     estimatedDurationMinutes: number;
     anesthesiaType: string;
@@ -9,8 +8,6 @@ export interface ProgrammedPatientNotificationInput {
     admissionType?: string | null;
     solicitudRecursos?: string | null;
     notes?: string | null;
-    patientEmail?: string | null;
-    patientPhone?: string | null;
   };
   surgery: {
     date: string;
@@ -44,7 +41,7 @@ function line(label: string, value: string | number | null | undefined): string 
 export function buildProgrammedPatientNotificationEmail(
   input: ProgrammedPatientNotificationInput,
 ): ProgrammedPatientNotificationEmail {
-  const patientLabel = input.patient.fullName?.trim() || "Paciente programado";
+  const patientLabel = input.patient.caseLabel.trim() || "Caso";
   const preanesthesiaNotRequired = input.preanesthesia.status === "NOT_REQUIRED";
   const preanesthesiaStatusLabel = preanesthesiaNotRequired ? "No precisa" : input.preanesthesia.status;
   const preanesthesiaLabel = preanesthesiaNotRequired
@@ -57,8 +54,7 @@ export function buildProgrammedPatientNotificationEmail(
     "Se ha programado un paciente en QxFlow.",
     "",
     "PACIENTE",
-    line("Nombre", patientLabel),
-    line("NHC", input.patient.historyNumber),
+    line("Caso", patientLabel),
     line("Procedimiento", input.patient.procedure),
     line("Duración estimada", `${input.patient.estimatedDurationMinutes} min`),
     line("Tipo de anestesia", input.patient.anesthesiaType),
@@ -66,8 +62,6 @@ export function buildProgrammedPatientNotificationEmail(
     line("Tipo de ingreso", input.patient.admissionType),
     line("Recursos solicitados", input.patient.solicitudRecursos),
     line("Notas", input.patient.notes),
-    line("Email paciente", input.patient.patientEmail),
-    line("Teléfono paciente", input.patient.patientPhone),
     "",
     "PROGRAMACIÓN QUIRÚRGICA",
     line("Fecha", input.surgery.date),

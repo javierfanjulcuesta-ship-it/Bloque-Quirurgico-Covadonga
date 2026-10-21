@@ -24,8 +24,7 @@ function canonicalRoom(resourceId: string): string {
 
 export interface ProgramAlertPatient {
   id?: string;
-  name?: string;
-  numeroHistoria?: string;
+  caseLabel?: string;
   procedure?: string;
   estimatedDurationMinutes?: number;
   workflowStatus?: string;
@@ -185,7 +184,7 @@ function hasOrCoverage(
 }
 
 function roomLabel(reservation: ProgramAlertReservation, patient: ProgramAlertPatient): string {
-  const who = patient.name?.trim() || patient.numeroHistoria?.trim() || "Paciente";
+  const who = patient.caseLabel?.trim() || "Caso";
   const procedure = patient.procedure?.trim();
   return procedure ? `${who} — ${procedure}` : who;
 }
@@ -211,7 +210,7 @@ export function buildProgramAlerts(input: {
       if (!resourceId || !KNOWN_RESOURCES.has(resourceId)) {
         alerts.push({
           kind: "without_room",
-          id: `${reservation.id}:${patient.id ?? patient.numeroHistoria ?? iq}`,
+          id: `${reservation.id}:${patient.id ?? patient.caseLabel ?? iq}`,
           label: roomLabel(reservation, patient),
           date: reservation.date,
           detail: "Sala no reconocida. Queda pendiente, sin asignar Q1.",
