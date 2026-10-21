@@ -20,7 +20,7 @@ function describeAlert(
     case "too_many_surgeons":
       return `${alert.date} ${shiftLabel(alert.shift)}: ${alert.surgeonCount} cirujanos (más de 3).`;
     case "idle_endoscopy":
-      return `${alert.date} ${shiftLabel(alert.shift)}: anestesista en ${alert.resourceId === "endoscopias" ? "Endoscopias" : "menores"} sin pacientes. No se mueve solo.`;
+      return `${alert.date} ${shiftLabel(alert.shift)}: anestesista en ${alert.resourceId === "ENDO" || alert.resourceId === "endoscopias" ? "Endoscopias" : "menores"} sin pacientes. No se mueve solo.`;
     default:
       return "Alerta de programa.";
   }

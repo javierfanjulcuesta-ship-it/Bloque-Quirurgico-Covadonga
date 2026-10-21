@@ -89,7 +89,7 @@ function parseResource(value: unknown): string | null {
   if (/\bq ?1\b/.test(text) || text === "q1") return "Q1";
   if (/\bq ?2\b/.test(text) || text === "q2") return "Q2";
   if (/\bq ?3\b/.test(text) || text === "q3") return "Q3";
-  if (text.includes("endoscop")) return "endoscopias";
+  if (text.includes("endoscop") || text === "endo") return "ENDO";
   if (text.includes("menor")) return "procedimientos-menores";
   if (text.includes("dolor")) return "tecnicas-dolor";
   return null;

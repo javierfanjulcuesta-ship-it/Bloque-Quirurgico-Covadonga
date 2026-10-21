@@ -64,6 +64,7 @@ test("surgeon teams share one parte and endoscopy goes only to the configured en
     endoscopyUserId: "e",
   });
   assert.deepEqual(endoscopy.userIds, ["e"]);
+  assert.equal(isEndoscopyCase("ENDO"), true);
   assert.equal(isEndoscopyCase("procedimientos-menores", "endoscopia diagnóstica"), true);
   const missing = resolveParteRecipients({
     surgeonId: "b",

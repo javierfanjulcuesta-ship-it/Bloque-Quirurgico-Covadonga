@@ -8,11 +8,12 @@ import type { ResourceId, TimeSlot, UserRole } from "./types";
 /** IDs de quirófanos (Q1, Q2, Q3) para la opción "Cualquier quirófano" */
 export const QUIRUFANO_IDS: ResourceId[] = ["Q1", "Q2", "Q3"];
 
-/** Recursos del bloque: 3 quirófanos + procedimientos menores + técnicas del dolor */
+/** Recursos del bloque: 3 quirófanos + endoscopias + procedimientos menores + técnicas del dolor */
 export const RESOURCES: { id: ResourceId; label: string }[] = [
   { id: "Q1", label: "Q1" },
   { id: "Q2", label: "Q2" },
   { id: "Q3", label: "Q3" },
+  { id: "ENDO", label: "Endoscopias" },
   { id: "procedimientos-menores", label: "Procedimientos menores" },
   { id: "tecnicas-dolor", label: "Técnicas del dolor" },
 ];
@@ -77,15 +78,12 @@ export const PUNTOS_DE_SEGURIDAD: { id: SafetyCheckpointId; label: string }[] = 
   { id: "revision", label: "Revisión" },
 ];
 
-/** Recursos que puede reservar cada rol: cirujano cualquier recurso; endoscopista solo procedimientos menores y técnicas del dolor */
+/** Recursos que puede reservar cada rol. Endoscopias es ENDO, no un quirófano. */
 export function getAllowedResourcesForRole(role: UserRole): ResourceId[] {
   if (role === "endoscopista") {
-    return ["procedimientos-menores", "tecnicas-dolor"];
+    return ["ENDO", "procedimientos-menores", "tecnicas-dolor"];
   }
-  if (role === "cirujano") {
-    return ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"];
-  }
-  return ["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor"];
+  return ["Q1", "Q2", "Q3", "ENDO", "procedimientos-menores", "tecnicas-dolor"];
 }
 
 /** Opciones de solicitud de recursos para el cirujano al programar pacientes */

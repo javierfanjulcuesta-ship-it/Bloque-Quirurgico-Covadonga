@@ -123,6 +123,28 @@ test("suspended patients do not count as IQ or occupy the room", () => {
   assert.equal(result.alerts.some((alert) => alert.kind === "overlap"), false);
 });
 
+test("ENDO patients need their own anesthetist and an idle endoscopy assignment is not moved", () => {
+  const missing = buildProgramAlerts({
+    reservations: [reservation({ id: "endo", surgeonId: "endo-1", slotIndex: 0, resourceId: "ENDO", patients: [{ estimatedDurationMinutes: 30, procedure: "Procedimiento prueba" }] })],
+    assignments: [],
+  });
+  const gap = missing.alerts.find((alert) => alert.kind === "missing_anesthetist");
+  assert.ok(gap && gap.kind === "missing_anesthetist");
+  assert.equal(gap.resourceId, "ENDO");
+
+  const covered = buildProgramAlerts({
+    reservations: [reservation({ id: "endo", surgeonId: "endo-1", slotIndex: 0, resourceId: "ENDO", patients: [{ estimatedDurationMinutes: 30 }] })],
+    assignments: [{ date: "2031-10-24", shift: "morning", assignmentType: "OR", resourceId: "endoscopias", anesthetistId: "an-1" }],
+  });
+  assert.equal(covered.alerts.some((alert) => alert.kind === "missing_anesthetist"), false);
+
+  const idle = buildProgramAlerts({
+    reservations: [],
+    assignments: [{ date: "2031-10-24", shift: "morning", assignmentType: "OR", resourceId: "ENDO", anesthetistId: "an-1" }],
+  });
+  assert.equal(idle.alerts.some((alert) => alert.kind === "idle_endoscopy" && alert.resourceId === "ENDO"), true);
+});
+
 test("anesthetist in endoscopy or menores without patients is an alert and is not moved", () => {
   const result = buildProgramAlerts({
     reservations: [],

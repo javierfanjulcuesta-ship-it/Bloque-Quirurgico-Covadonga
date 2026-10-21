@@ -8,6 +8,7 @@ const RESOURCES_THAT_COUNT = new Set<string>([
   "procedimientos-menores",
   "tecnicas-dolor",
   "endoscopias",
+  "ENDO",
   ASSIGNMENT_FULL_SHIFT,
 ]);
 

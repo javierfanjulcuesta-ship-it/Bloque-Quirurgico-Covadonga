@@ -12,10 +12,15 @@ export const SURGEONS_PER_SHIFT_ALERT = 3;
 const OR_IDS = new Set<string>(QUIRUFANO_IDS);
 const KNOWN_RESOURCES = new Set<string>([
   ...QUIRUFANO_IDS,
+  "ENDO",
   "procedimientos-menores",
   "tecnicas-dolor",
   "endoscopias",
 ]);
+
+function canonicalRoom(resourceId: string): string {
+  return resourceId === "endoscopias" ? "ENDO" : resourceId;
+}
 
 export interface ProgramAlertPatient {
   id?: string;
@@ -175,7 +180,7 @@ function hasOrCoverage(
     if (assignment.assignmentType.trim().toUpperCase() !== "OR") return false;
     if (assignment.date !== date) return false;
     if (normalizeShift(assignment.shift) !== shift) return false;
-    return assignment.resourceId === resourceId || assignment.resourceId === ASSIGNMENT_FULL_SHIFT;
+    return canonicalRoom(assignment.resourceId) === canonicalRoom(resourceId) || assignment.resourceId === ASSIGNMENT_FULL_SHIFT;
   });
 }
 
@@ -262,12 +267,13 @@ export function buildProgramAlerts(input: {
     const shift = normalizeShift(reservation.shift);
     const resourceId = reservation.resourceId?.trim() ?? "";
     const patients = activePatients(reservation);
-    if (!shift || patients.length === 0 || !OR_IDS.has(resourceId)) continue;
-    const roomKey = `${reservation.date}|${shift}|${resourceId}`;
+    const roomId = canonicalRoom(resourceId);
+    if (!shift || patients.length === 0 || (!OR_IDS.has(roomId) && roomId !== "ENDO")) continue;
+    const roomKey = `${reservation.date}|${shift}|${roomId}`;
     const room = occupiedRooms.get(roomKey) ?? {
       date: reservation.date,
       shift,
-      resourceId,
+      resourceId: roomId,
       patientCount: 0,
     };
     room.patientCount += patients.length;
@@ -302,15 +308,16 @@ export function buildProgramAlerts(input: {
     });
   }
 
-  const endoscopyResources = new Set(["procedimientos-menores", "endoscopias"]);
+  const endoscopyResources = new Set(["procedimientos-menores", "endoscopias", "ENDO"]);
   for (const assignment of assignments) {
     const shift = normalizeShift(assignment.shift);
     if (!shift || assignment.assignmentType.trim().toUpperCase() !== "OR") continue;
     if (!endoscopyResources.has(assignment.resourceId)) continue;
+    const assignedRoom = canonicalRoom(assignment.resourceId);
     const patientCount = input.reservations.reduce((sum, reservation) => {
       if (reservation.date !== assignment.date) return sum;
       if (normalizeShift(reservation.shift) !== shift) return sum;
-      if (reservation.resourceId !== assignment.resourceId) return sum;
+      if (canonicalRoom(reservation.resourceId?.trim() ?? "") !== assignedRoom) return sum;
       return sum + activePatients(reservation).length;
     }, 0);
     if (patientCount === 0) {

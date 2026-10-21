@@ -15,7 +15,7 @@ import { recognizeResourceId } from "@/lib/program/recognizeResource";
 export const dynamic = "force-dynamic";
 
 const MAX_BODY = 8 * 1024;
-const KNOWN = new Set(["Q1", "Q2", "Q3", "procedimientos-menores", "tecnicas-dolor", "endoscopias"]);
+const KNOWN = new Set(["Q1", "Q2", "Q3", "ENDO", "procedimientos-menores", "tecnicas-dolor", "endoscopias"]);
 
 function toShift(value: Shift | null | undefined): HabitShift | null {
   if (value === "MORNING") return "morning";

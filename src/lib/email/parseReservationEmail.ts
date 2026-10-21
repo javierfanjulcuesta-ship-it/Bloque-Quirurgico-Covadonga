@@ -32,6 +32,7 @@ function parseResourceId(text: string): string | null {
   if (/\bQ1\b/.test(upper) || /quir[oó]fano\s*1|recurso\s*Q1/i.test(text)) return "Q1";
   if (/\bQ2\b/.test(upper) || /quir[oó]fano\s*2|recurso\s*Q2/i.test(text)) return "Q2";
   if (/\bQ3\b/.test(upper) || /quir[oó]fano\s*3|recurso\s*Q3/i.test(text)) return "Q3";
+  if (/\bendo\b|endoscop/i.test(text)) return "ENDO";
   if (/procedimientos?\s*menores|menores/i.test(text)) return "procedimientos-menores";
   if (/tecnicas?\s*(del)?\s*dolor|dolor/i.test(text)) return "tecnicas-dolor";
   return null;

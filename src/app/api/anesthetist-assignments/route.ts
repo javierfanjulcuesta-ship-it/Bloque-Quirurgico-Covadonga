@@ -32,6 +32,7 @@ const VALID_RESOURCES = new Set([
   "procedimientos-menores",
   "tecnicas-dolor",
   "endoscopias",
+  "ENDO",
 ]);
 const PREANESTHESIA = "__preanestesia__";
 const FULL_SHIFT = "__full_shift__";
