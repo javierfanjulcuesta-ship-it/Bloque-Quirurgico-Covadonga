@@ -32,13 +32,15 @@ La migración `20261021160000_patient_case_label` aplica el límite a las tablas
 | `Proposal.payloadJson` | tipo, procedimiento y etiqueta de caso | La migración y `stripSensitiveKeys` quitan historia, nombre, iniciales de paciente, DNI, teléfono y email. Las iniciales del cirujano se conservan. |
 | `ScheduleChange` | tipo, motivo e ids internos | Sin JSON de antes/después. |
 | `OutboundDraft` | texto del parte y `expiresAt` a los 7 días | El listado oculta lo caducado, borra el cuerpo y el envío responde 409. El parte del Excel de sesión no se guarda. |
-| `EmailMessage` | remitente y cuerpo del correo, que puede incluir pacientes | Sigue existiendo. El webhook no crea reservas. No se reexporta historia ni teléfono. |
-| `ContactMessage` | nombre y email de quien escribe a la pantalla de acceso | Contacto profesional o de acceso, no un paciente del Excel clínico. |
+| `EmailMessage` | dirección del remitente y el estado del procesamiento | Las escrituras nuevas dejan nombre, asunto y cuerpo vacíos o con la etiqueta «Correo recibido». Las columnas siguen, para poder cifrar más adelante. El flag `STORE_PATIENT_IDENTITY` está apagado. |
+| `ContactMessage` | email de respuesta y la ficha «Solicitante» / «[redactado]» | El nombre, el asunto y el texto no se guardan en claro. El listado tampoco los enseña si quedaron de antes. |
 | `ReservationEvent` y avisos al buzón de gestión | ids, etiqueta de caso y el email de administración configurado | No llevan historia, nombre, teléfono ni email del paciente. |
 
 La hoja **Semana para imprimir** muestra `Caso N`. Las iniciales salen solo del Excel subido en esa sesión, en el parte de la respuesta, y no se leen de la reserva.
 
 `scripts/lib/seedShowcaseImplementation.ts` y la demo local usan `Paciente Prueba NN` y `TEST-00NN`. Esas etiquetas no se escriben en Postgres: el alta guarda `Caso N`. No lanzar `db:seed`, `usuarios:prueba` ni `seed:showcase` contra Vercel. El chequeo `scripts/ci/no-identifying-fixture-columns.mjs` falla si un fixture trae una columna DNI, NIE, NIF o teléfono.
+
+La purga del texto identificativo que ya estuviera guardado es un script manual (`scripts/privacy/purge-identifying-text.ts`). No corre en las migraciones ni en CI. Qué haría falta para guardar identidad de verdad, con cifrado y base legal, está en `docs/ACTIVAR_DATOS_IDENTIFICATIVOS.md`.
 
 ## Endoscopias
 

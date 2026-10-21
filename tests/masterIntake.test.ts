@@ -137,6 +137,7 @@ test("week export and the import route do not persist patient identifiers", () =
   assert.equal(importRoute.includes("patientIdentity"), false);
   assert.equal(importRoute.includes("intakeRow"), false);
   assert.match(schema, /model IntakeFingerprint/);
-  assert.equal(/model IntakeRow|model PatientIdentity/.test(schema), false);
+  assert.equal(/model IntakeRow\b|model PatientIdentity\b/.test(schema), false);
+  assert.match(schema, /model PatientIdentityRecord/);
   assert.match(readFileSync(".gitignore", "utf8"), /\/prisma\/\*\.db/);
 });
