@@ -18,9 +18,12 @@ import { readTextBodyWithLimit } from "@/lib/http/requestBody";
 import { isRealDateOnly } from "@/lib/reservations/bookingPolicy";
 import {
   assignmentSnapshotRevision,
-  replaceAssignmentSnapshot,
+  replaceAssignmentWeek,
   type AssignmentSnapshotRow,
 } from "@/lib/reservations/anesthetistAssignmentSnapshot";
+import { assignmentOutsideRange, validateAssignmentWeekRange } from "@/lib/anesthesia/assignmentRange";
+import { findCapacityExcesses } from "@/lib/anesthesia/capacity";
+import { effectiveMaxSimultaneousOr } from "@/lib/anesthesia/capacityCatalog";
 
 const VALID_RESOURCES = new Set([
   "Q1",
@@ -28,6 +31,7 @@ const VALID_RESOURCES = new Set([
   "Q3",
   "procedimientos-menores",
   "tecnicas-dolor",
+  "endoscopias",
 ]);
 const PREANESTHESIA = "__preanestesia__";
 const FULL_SHIFT = "__full_shift__";
@@ -137,10 +141,10 @@ export async function GET(request: Request) {
       orderBy: [{ date: "asc" }, { shift: "asc" }, { assignmentType: "asc" }, { resourceId: "asc" }],
     });
 
-    // Solo una carga completa de gestor es un snapshot editable. Las vistas filtradas
-    // son de lectura y no exponen una revisión que pudiera confundirse con el conjunto total.
+    // La parrilla del gestor edita una semana. La revisión es de ese rango, no de toda la historia.
+    const isWeekEditable = canAssign && !anesthetistId && Boolean(dateFrom && dateTo);
     const isFullEditableSnapshot = canAssign && !anesthetistId && !dateFrom && !dateTo;
-    const revision = isFullEditableSnapshot ? assignmentSnapshotRevision(snapshotRows(list)) : null;
+    const revision = isWeekEditable || isFullEditableSnapshot ? assignmentSnapshotRevision(snapshotRows(list)) : null;
 
     return NextResponse.json({ assignments: list.map(toFrontend), revision });
   } catch {
@@ -173,7 +177,9 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Payload inválido" }, { status: 400 });
     }
 
-    const raw = body as { assignments?: unknown; expectedRevision?: unknown };
+    const raw = body as { assignments?: unknown; expectedRevision?: unknown; dateFrom?: unknown; dateTo?: unknown };
+    const week = validateAssignmentWeekRange(raw.dateFrom, raw.dateTo);
+    if (!week.ok) return NextResponse.json({ error: week.error }, { status: 400 });
     if (!Array.isArray(raw.assignments)) {
       return NextResponse.json({ error: "assignments debe ser un array" }, { status: 400 });
     }
@@ -211,6 +217,12 @@ export async function PUT(request: Request) {
         return NextResponse.json({ error: "Hay dos anestesistas asignados al mismo recurso/turno." }, { status: 400 });
       }
       slotKeys.add(key);
+    }
+    if (toUpsert.some((assignment) => assignmentOutsideRange(assignment.date, week.range))) {
+      return NextResponse.json(
+        { error: "Hay asignaciones fuera de la semana indicada. No se ha guardado ningún cambio." },
+        { status: 400 },
+      );
     }
 
     const distinctAnesthetistIds = [...new Set(toUpsert.map((a) => a.anesthetistId))];
@@ -251,11 +263,28 @@ export async function PUT(request: Request) {
         }),
         prisma.user.findMany({
           where: { id: { in: [...new Set(orAssignments.map((a) => a.anesthetistId))] } },
-          select: { id: true, canSespa: true },
+          select: { id: true, name: true, canSespa: true, anesthetistProfile: { select: { maxSimultaneousOr: true } } },
         }),
       ]);
 
       const canSespaByAnesthetist = new Map(anesthetists.map((u) => [u.id, !!u.canSespa]));
+      const maxByAnesthetist = new Map(
+        anesthetists.map((user) => [
+          user.id,
+          effectiveMaxSimultaneousOr(user.anesthetistProfile?.maxSimultaneousOr, user.name),
+        ]),
+      );
+      const excesses = findCapacityExcesses(orAssignments, maxByAnesthetist);
+      if (excesses.length > 0) {
+        return NextResponse.json(
+          {
+            error: "Un anestesista supera su cupo de quirófanos simultáneos.",
+            code: "anesthetist_capacity_exceeded",
+            excesses,
+          },
+          { status: 409 },
+        );
+      }
       const isSespaInsurance = (s: string | null | undefined) => !!(s && /^sespa$/i.test(s.trim()));
       const slotHasSespa = (dateStr: string, shift: "MORNING" | "AFTERNOON", resourceId: string): boolean => {
         const resourceIds = resourceId === FULL_SHIFT ? Array.from(VALID_RESOURCES) : [resourceId];
@@ -280,7 +309,7 @@ export async function PUT(request: Request) {
       }
     }
 
-    const saved = await replaceAssignmentSnapshot(prisma, raw.expectedRevision, toUpsert);
+    const saved = await replaceAssignmentWeek(prisma, raw.expectedRevision, week.range, toUpsert);
     if (!saved.ok) {
       return NextResponse.json(
         {
