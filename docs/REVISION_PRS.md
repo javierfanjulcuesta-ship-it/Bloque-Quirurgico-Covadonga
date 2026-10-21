@@ -31,12 +31,9 @@ Los datos de paciente de esta tanda son ficticios (`Paciente Prueba NN`, `TEST-0
 | 14 | [#143](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/143) | `cursor/lint-limpio-743e` | `npm run lint` tiene que terminar sin errores. Se quitó el tope de errores. | 142 | Quedan avisos. Un aviso no tumba el job; un error sí. |
 | 15 | [#144](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/144) | `cursor/entorno-pruebas-743e` | Documenta una base de prueba y un humo en memoria. El script de migraciones se niega si la URL no parece de prueba. | 143 | No crea la base de preview en Vercel. Hay que hacerla a mano si se quiere. Ver `docs/ENTORNO_PRUEBAS.md`. |
 | 16 | [#145](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/145) | `cursor/identidad-apagada-743e` | No guarda texto identificativo en las escrituras nuevas. Deja preparada una caja cifrada, apagada. | 144 | `STORE_PATIENT_IDENTITY` apagado. La purga es manual y no está en CI. Ver `docs/ACTIVAR_DATOS_IDENTIFICATIVOS.md`. |
+| 17 | [#146](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/146) | `cursor/guia-revision-743e` | Esta guía. | 145 | Si se edita en un PR posterior, el número de las filas nuevas tiene que actualizarse aquí. |
+| 18 | [#147](https://github.com/javierfanjulcuesta-ship-it/Bloque-Quirurgico-Covadonga/pull/147) | `cursor/choque-quirofano-743e` | Aviso de choque por minutos, quirófano alternativo y pestaña de capacidad. | 146 | El aviso no bloquea el guardado. No muestra pacientes. |
 
 ## Lo que sigue encima de esta guía
 
-Todavía no tienen número. Se abrirán en este orden, cada uno con base en el anterior:
-
-1. Aviso de choque de quirófano al programar, quirófano libre alternativo y capacidad semanal por turno y sala.
-2. `docs/ACTUALIZAR_COPIA_LOCAL.md`, para actualizar una copia de Windows a `origin/hardening/integration` sin perder cambios locales y sin tocar `CREDENCIALES.txt`.
-
-Cuando existan, esta página debe citar su número. Hasta entonces no están en `hardening/integration`.
+Falta `docs/ACTUALIZAR_COPIA_LOCAL.md`: cómo actualizar una copia de Windows a `origin/hardening/integration` sin perder cambios locales y sin tocar `CREDENCIALES.txt`. Cuando tenga número, hay que añadirlo a esta tabla. Hasta entonces no está en `hardening/integration`.

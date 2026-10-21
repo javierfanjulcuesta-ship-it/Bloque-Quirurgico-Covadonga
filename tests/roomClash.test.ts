@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   describeRoomClash,
+  findDayRoomWarnings,
   findRoomClashes,
   shiftCapacityMinutes,
   weeklyRoomCapacity,
@@ -80,6 +81,17 @@ test("when Q2 is also taken the suggestion moves to Q3, and then to none", () =>
   });
   assert.equal(none[0]?.alternativeResourceId, null);
   assert.match(describeRoomClash(none[0]!), /No hay otro quirófano libre/);
+});
+
+test("a case that runs past its slot warns on that day and points to a free room", () => {
+  const warnings = findDayRoomWarnings("2031-10-20", [reservation({ minutes: 120 })]);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.kind, "spill");
+  assert.equal(warnings[0]?.overlapMinutes, 40);
+  assert.equal(warnings[0]?.alternativeResourceId, "Q2");
+  const text = describeRoomClash(warnings[0]!);
+  assert.match(text, /se solapa 40 min con el hueco siguiente/);
+  assert.equal(text.includes("Paciente"), false);
 });
 
 test("weekly capacity counts clock minutes and can go below zero", () => {

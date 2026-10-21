@@ -27,7 +27,7 @@ import {
 import { fetchBlockPlans } from "@/lib/api/blockOpeningPlan";
 import { getAllowedResourcesForRole } from "@/lib/constants";
 import { RESOURCES, QUIRUFANO_IDS } from "@/lib/constants";
-import { describeRoomClash, findRoomClashes } from "@/lib/program/roomClash";
+import { describeRoomClash, findDayRoomWarnings, findRoomClashes } from "@/lib/program/roomClash";
 import { modoDemo } from "@/lib/config";
 import { getUsers, buildSlotViews } from "@/lib/dataHelpers";
 import { getDisplaySurgeonName } from "@/lib/surgeonTitular";
@@ -510,6 +510,10 @@ export default function CirujanoPage() {
     }).map(describeRoomClash),
     [selectedSlots, clashSurgeonId, reservations],
   );
+  const dayClashText = useMemo(() => {
+    if (!selectedDateForGrid) return [];
+    return findDayRoomWarnings(toISODate(selectedDateForGrid), reservations).map(describeRoomClash);
+  }, [selectedDateForGrid, reservations]);
 
   const canCancelPatient = !modoDemo && user && hasPermission(user.role, "patient:cancel");
   const canCancelReservation = !modoDemo && user && hasPermission(user.role, "booking:cancel");
@@ -1151,6 +1155,11 @@ export default function CirujanoPage() {
                       </InlineNotice>
                     )}
                     <CalendarStateLegend variant="compact" className="mb-4" />
+                    {dayClashText.map((text) => (
+                      <InlineNotice key={text} variant="warning" className="mb-4">
+                        {text} El aviso no impide guardar.
+                      </InlineNotice>
+                    ))}
 
                     {selectedKeys.size > 0 && (
                       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ribera-red)]/30 bg-ribera-red-pale p-4">
