@@ -1,3 +1,5 @@
+> **Documento histórico, no vigente.** Describe localStorage o el checkpoint `main` (`c905836`). La rama de trabajo es `hardening/integration`. El estado actual, la política de datos de paciente y cómo probar están en [docs/ESTADO_ACTUAL.md](docs/ESTADO_ACTUAL.md). No usar este archivo para decidir qué se persiste ni para desplegar.
+
 # Auditoría – Bloque Quirúrgico (app real, entorno sanitario)
 
 Prioridad: funcionalidad → seguridad backend → estabilidad → claridad → mantenimiento → rendimiento. No se prioriza optimización de tamaño si afecta robustez.
