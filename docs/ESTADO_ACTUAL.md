@@ -81,6 +81,10 @@ El detalle, con enlaces y riesgos, está en `docs/REVISION_PRS.md`. Los PR está
 13. Nombres de demostración sustituidos por `Paciente Prueba NN` y `TEST-00NN`.
 14. Lint de CI sin tope de errores.
 
+## Copia en Windows
+
+Los pasos para traer `origin/hardening/integration` sin perder cambios locales y sin tocar `CREDENCIALES.txt` están en `docs/ACTUALIZAR_COPIA_LOCAL.md`. Esa rama no incluye los PR en borrador.
+
 ## Cómo probar en una base que no sea producción
 
 No usar la base de Vercel ni ejecutar semillas. Hace falta un Postgres vacío de prueba y `DATABASE_URL` / `DIRECT_URL` apuntando a él.
