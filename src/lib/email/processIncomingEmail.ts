@@ -14,6 +14,7 @@ import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } f
 import { stripSensitiveKeys } from "@/lib/agent/minimize";
 import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
 import { planIncomingEmailStorage, redactLogDetails, redactOperationalError, sanitizeEventDetails } from "@/lib/identity/patientIdentity";
+import { planSurgeonEmailProposal } from "@/lib/mailbox/surgeonEmailRequest";
 import { persistIdentityVault } from "@/lib/identity/persistIdentityVault";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
@@ -223,6 +224,29 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     return { emailMessageId: emailMessage.id, classification, processingStatus: STATUS_SKIPPED };
   }
 
+  const planned = planSurgeonEmailProposal({
+    subject: message.subject,
+    bodyPlain,
+    fromName: message.fromName,
+  }, receivedAt.toISOString().slice(0, 10));
+  const proposal = await prisma.proposal.create({
+    data: {
+      weekStart: planned.weekStart,
+      type: planned.type,
+      status: planned.status,
+      summary: planned.summary,
+      payloadJson: JSON.stringify(planned.payload),
+    },
+    select: { id: true },
+  });
+  await prisma.emailProcessingLog.create({
+    data: {
+      emailMessageId: emailMessage.id,
+      action: "proposal_pending",
+      details: JSON.stringify({ proposalId: proposal.id, missing: planned.payload.missing.length }),
+    },
+  });
+
   const parseResult = parseReservationEmail({ subject: message.subject, bodyPlain });
   if (!parseResult.ok) {
     if (missingFieldsLeaveRoomPending(parseResult.missingFields)) {
@@ -338,19 +362,18 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
     });
   }
 
-  const proposal = await prisma.proposal.create({
+  await prisma.proposal.update({
+    where: { id: proposal.id },
     data: {
       weekStart: input.date,
-      type: "INTAKE_EMAIL",
-      status: "PENDING",
-      summary: `Propuesta de correo ${input.date}`.slice(0, 240),
+      summary: planned.summary,
       payloadJson: JSON.stringify(stripSensitiveKeys({
+        ...planned.payload,
         date: input.date,
         resourceId: input.resourceId,
         shift: input.shift,
         slotIndex: input.slotIndex,
         surgeonUserId: user.id,
-        policyOk: policy.ok,
         patients: (parsed.patients ?? []).map((patient, index) => ({
           caseLabel: caseLabelFromOrder(index),
           procedure: patient.procedure,
@@ -358,7 +381,6 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
         })),
       })),
     },
-    select: { id: true },
   });
 
   await prisma.emailProcessingLog.create({
