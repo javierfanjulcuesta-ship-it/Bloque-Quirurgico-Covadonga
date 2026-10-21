@@ -12,6 +12,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { parsePlanningFilePreview, type PlanningPreviewBlock } from "@/lib/importPlanningPreview";
 import { annotateInferredHabits, type SavedSurgeonHabit } from "@/lib/surgeons/habits";
+import { MasterIntakePanel } from "@/components/gestor/MasterIntakePanel";
 
 type ReviewFilter = "all" | "issues" | "review" | "ignored" | "valid";
 const DAY_OPTIONS = ["lunes", "martes", "miércoles", "jueves", "viernes", "día no identificado"];
@@ -127,6 +128,8 @@ export default function ImportarPlanificacionPage() {
             </>
           }
         />
+
+        <MasterIntakePanel />
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-lg font-bold text-[var(--ribera-navy)]">Subir Excel/PDF de planificación</h2>

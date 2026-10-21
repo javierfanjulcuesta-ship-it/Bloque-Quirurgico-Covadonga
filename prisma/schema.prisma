@@ -476,3 +476,56 @@ model Proposal {
   @@index([status])
   @@index([weekStart])
 }
+
+/** Fichero maestro revisable. No es una reserva. */
+model IntakeBatch {
+  id              String      @id @default(cuid())
+  fileName        String
+  sheetNames      String
+  contentHash     String
+  status          String      @default("REVIEW")
+  rowCount        Int
+  missingKeysJson String?     @db.Text
+  createdByUserId String?
+  createdAt       DateTime    @default(now())
+  rows            IntakeRow[]
+
+  @@index([createdAt])
+}
+
+/** Fila de 1_PROGRAMA o DATOS_IQ. El alta a reserva es un paso aparte. */
+model IntakeRow {
+  id                  String      @id @default(cuid())
+  batchId             String
+  dedupKey            String
+  historyNumber       String
+  patientName         String
+  procedure           String
+  serviceDate         String
+  shift               String?
+  resourceId          String?
+  slotIndex           Int?
+  surgeonName         String?
+  minutes             Int         @default(60)
+  status              String      @default("PENDING")
+  flags               String      @default("")
+  suggestedShift      String?
+  suggestedResourceId String?
+  reservationId       String?
+  createdAt           DateTime    @default(now())
+  batch               IntakeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([dedupKey])
+  @@index([historyNumber])
+  @@index([status])
+  @@index([serviceDate])
+}
+
+/** Nombre aceptado por historia. Un nombre distinto no se fusiona aquí. */
+model PatientIdentity {
+  id            String   @id @default(cuid())
+  historyNumber String   @unique
+  displayName   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
