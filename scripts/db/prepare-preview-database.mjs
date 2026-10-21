@@ -11,6 +11,7 @@ import { assertPreviewDatabase } from "./databaseTarget.mjs";
 
 const CONFIRM = "preparar";
 
+/** @param {Record<string, string | undefined>} [env] */
 export function previewMigrateAllowed(env = process.env) {
   try {
     assertPreviewDatabase(env.DATABASE_URL, env.PRODUCTION_DATABASE_URL);

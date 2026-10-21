@@ -264,6 +264,9 @@ model EmailMessage {
   bodyPlain         String?
   bodySummary       String?
   bodyHtml          String?
+  /** redacted: columnas de texto vacías. ciphertext: el texto vive cifrado en PatientIdentityRecord. */
+  identityMode      String              @default("redacted")
+  bodyRedactedAt    DateTime?
   receivedAt        DateTime
   classification    EmailClassification @default(UNKNOWN)
   processingStatus  EmailProcessingStatus @default(PENDING)
@@ -280,9 +283,11 @@ model ContactMessage {
   id        String   @id @default(cuid())
   fromName  String
   fromEmail String
-  subject   String?
-  body      String   @db.Text
-  createdAt DateTime @default(now())
+  subject        String?
+  body           String   @db.Text
+  identityMode   String   @default("redacted")
+  bodyRedactedAt DateTime?
+  createdAt      DateTime @default(now())
 
   @@index([createdAt])
 }
@@ -503,4 +508,36 @@ model IntakeFingerprint {
   @@index([serviceDate])
   @@index([caseFingerprint])
   @@index([historyFingerprint])
+}
+
+/**
+ * Reserva para guardar identidad cifrada más adelante.
+ * Con STORE_PATIENT_IDENTITY apagado no se insertan filas.
+ */
+model PatientIdentityRecord {
+  id             String    @id @default(cuid())
+  subjectKind    String
+  subjectId      String
+  fieldName      String
+  ciphertext     String    @db.Text
+  keyVersion     String
+  retentionUntil DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([subjectKind, subjectId])
+  @@index([retentionUntil])
+}
+
+/** Quién guardó o leyó una identidad. No contiene el texto del paciente. */
+model IdentityAccessAudit {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  role        String
+  action      String
+  subjectKind String
+  subjectId   String
+  createdAt   DateTime @default(now())
+
+  @@index([subjectId])
+  @@index([createdAt])
 }

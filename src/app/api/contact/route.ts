@@ -10,6 +10,8 @@ import { checkRateLimit } from "@/lib/auth/rateLimit";
 import { prisma } from "@/lib/db/prisma";
 import { CONTACT_REQUEST_MAX_BYTES, parseContactInput } from "@/lib/contactInput";
 import { readTextBodyWithLimit } from "@/lib/http/requestBody";
+import { planContactStorage, presentContactMessage } from "@/lib/identity/patientIdentity";
+import { persistIdentityVault } from "@/lib/identity/persistIdentityVault";
 
 const CONTACT_RATE_WINDOW_MS = 15 * 60 * 1000; // 15 min
 const CONTACT_MAX_ATTEMPTS = 5;
@@ -43,13 +45,22 @@ export async function POST(request: Request) {
     }
 
     const { fromName, fromEmail, subject, body } = parsed.data;
-    await prisma.contactMessage.create({
+    const plan = planContactStorage({ fromName, fromEmail, subject, body });
+    const created = await prisma.contactMessage.create({
       data: {
-        fromName,
-        fromEmail,
-        subject: subject || "Mensaje de usuario sin acceso – Bloque Quirúrgico",
-        body,
+        fromName: plan.row.fromName,
+        fromEmail: plan.row.fromEmail,
+        subject: plan.row.subject,
+        body: plan.row.body,
+        identityMode: plan.row.identityMode,
+        bodyRedactedAt: plan.row.bodyRedactedAt,
       },
+    });
+    await persistIdentityVault(prisma, {
+      subjectKind: "contact",
+      subjectId: created.id,
+      role: "anonymous",
+      vault: plan.vault,
     });
 
     return NextResponse.json({ ok: true });
@@ -74,14 +85,17 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      messages: list.map((m) => ({
-        id: m.id,
-        fromName: m.fromName,
-        fromEmail: m.fromEmail,
-        subject: m.subject,
-        body: m.body,
-        date: m.createdAt.toISOString(),
-      })),
+      messages: list.map((m) => {
+        const shown = presentContactMessage(m);
+        return {
+          id: shown.id,
+          fromName: shown.fromName,
+          fromEmail: shown.fromEmail,
+          subject: shown.subject,
+          body: shown.body,
+          date: shown.createdAt.toISOString(),
+        };
+      }),
     });
   } catch {
     console.error("[contact GET] request failed");

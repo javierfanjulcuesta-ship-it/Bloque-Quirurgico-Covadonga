@@ -13,6 +13,8 @@ import { decideIncomingResource, missingFieldsLeaveRoomPending } from "@/lib/pro
 import { missingFieldsLeaveShiftPending, suggestSurgeonHabit, TURNO_INFERIDO } from "@/lib/surgeons/habits";
 import { stripSensitiveKeys } from "@/lib/agent/minimize";
 import { caseLabelFromOrder } from "@/lib/patients/caseLabel";
+import { planIncomingEmailStorage, redactLogDetails, redactOperationalError, sanitizeEventDetails } from "@/lib/identity/patientIdentity";
+import { persistIdentityVault } from "@/lib/identity/persistIdentityVault";
 import type { InboxMessage, ParsedReservationEmail } from "./types";
 
 const CLASSIFICATION_TO_PRISMA = {
@@ -74,6 +76,11 @@ function resultFromExisting(existing: {
   };
 }
 
+function storedLogDetails(details?: Record<string, unknown> | null): string | null {
+  if (!details) return null;
+  return redactLogDetails(JSON.stringify(sanitizeEventDetails(details)));
+}
+
 async function claimIncomingEmail(params: {
   externalId: string;
   fromEmail: string;
@@ -84,19 +91,34 @@ async function claimIncomingEmail(params: {
   receivedAt: Date;
   classification: (typeof CLASSIFICATION_TO_PRISMA)[keyof typeof CLASSIFICATION_TO_PRISMA];
 }) {
+  const plan = planIncomingEmailStorage({
+    fromName: params.fromName,
+    subject: params.subject,
+    bodyPlain: params.bodyPlain,
+    bodyHtml: params.bodyHtml,
+  });
   try {
     const emailMessage = await prisma.emailMessage.create({
       data: {
         externalId: params.externalId,
         fromEmail: params.fromEmail,
-        fromName: params.fromName,
-        subject: params.subject,
-        bodyPlain: params.bodyPlain,
-        bodyHtml: params.bodyHtml,
+        fromName: plan.row.fromName,
+        subject: plan.row.subject,
+        bodyPlain: plan.row.bodyPlain,
+        bodyHtml: plan.row.bodyHtml,
+        bodySummary: plan.row.bodySummary,
+        identityMode: plan.row.identityMode,
+        bodyRedactedAt: plan.row.bodyRedactedAt,
         receivedAt: params.receivedAt,
         classification: params.classification,
         processingStatus: "PENDING",
       },
+    });
+    await persistIdentityVault(prisma, {
+      subjectKind: "email",
+      subjectId: emailMessage.id,
+      role: "system",
+      vault: plan.vault,
     });
     return { created: true as const, emailMessage };
   } catch (err) {
@@ -119,13 +141,13 @@ async function recordFailure(params: {
     data: {
       emailMessageId: params.emailMessageId,
       action: "error",
-      errorMessage: params.error,
-      details: params.details ? JSON.stringify(params.details) : null,
+      errorMessage: redactOperationalError(params.error),
+      details: storedLogDetails(params.details),
     },
   });
   await prisma.emailMessage.update({
     where: { id: params.emailMessageId },
-    data: { processingStatus: STATUS_FAILED, resultMessage: params.error } as Record<string, unknown>,
+    data: { processingStatus: STATUS_FAILED, resultMessage: redactOperationalError(params.error) } as Record<string, unknown>,
   });
   return {
     emailMessageId: params.emailMessageId,
@@ -145,8 +167,8 @@ async function leaveRoomPending(params: {
     data: {
       emailMessageId: params.emailMessageId,
       action: "room_pending",
-      errorMessage: params.error,
-      details: JSON.stringify({ resourceId: null, fallback: null }),
+      errorMessage: redactOperationalError(params.error),
+      details: storedLogDetails({ resourceId: null, fallback: null }),
     },
   });
   await prisma.emailMessage.update({
@@ -321,7 +343,7 @@ export async function processIncomingEmail(message: InboxMessage): Promise<Proce
       weekStart: input.date,
       type: "INTAKE_EMAIL",
       status: "PENDING",
-      summary: (message.subject ?? "Correo de reserva").slice(0, 240),
+      summary: `Propuesta de correo ${input.date}`.slice(0, 240),
       payloadJson: JSON.stringify(stripSensitiveKeys({
         date: input.date,
         resourceId: input.resourceId,

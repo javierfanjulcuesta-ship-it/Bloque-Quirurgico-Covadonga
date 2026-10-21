@@ -4,6 +4,7 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { sanitizeEventDetails } from "@/lib/identity/patientIdentity";
 
 export type ReservationEventType =
   | "RESERVATION_CREATED"
@@ -53,7 +54,7 @@ export async function writeReservationEvent(
       eventType: params.eventType,
       actorUserId: params.actorUserId ?? null,
       origin: params.origin ?? null,
-      detailsJson: params.detailsJson ? JSON.stringify(params.detailsJson) : null,
+      detailsJson: params.detailsJson ? JSON.stringify(sanitizeEventDetails(params.detailsJson)) : null,
     },
   });
 }

@@ -117,6 +117,8 @@ jobs:
 
       - name: Identifying intake tables stay dropped
         run: |
+          # PatientIdentity es el modelo antiguo y no debe existir.
+          # PatientIdentityRecord es la caja cifrada y queda vacía mientras STORE_PATIENT_IDENTITY esté apagado.
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='IntakeFingerprint');" | grep -qx t
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='IntakeRow');" | grep -qx f
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='PatientIdentity');" | grep -qx f
