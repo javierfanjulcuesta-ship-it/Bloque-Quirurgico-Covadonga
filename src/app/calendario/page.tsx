@@ -10,7 +10,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useUsers } from "@/context/UsersContext";
-import { roleLabel, hasGestorAccess } from "@/lib/types";
+import { roleLabel, hasGestorAccess, hasGestionCitasAccess } from "@/lib/types";
 import { hasPermission } from "@/lib/auth/permissions";
 import { getAllowedResourcesForRole, RESOURCES } from "@/lib/constants";
 import { ASSIGNMENT_FULL_SHIFT } from "@/lib/types";
@@ -203,6 +203,10 @@ export default function CalendarioPage() {
       router.replace("/");
       return;
     }
+    if (hasGestionCitasAccess(user.role)) {
+      router.replace("/gestion-citas");
+      return;
+    }
     if (user.role === "cirujano" || user.role === "endoscopista") {
       router.replace("/cirujano");
       return;
@@ -231,26 +235,33 @@ export default function CalendarioPage() {
   }, [modoDemo, refreshReservations]);
 
   useEffect(() => {
-    if (!modoDemo && isAnestesista && user?.id && selectedDateForGrid) {
-      const from = new Date(selectedDateForGrid);
-      from.setDate(from.getDate() - 7);
-      const to = new Date(selectedDateForGrid);
-      to.setDate(to.getDate() + 7);
-      getAssignments({
-        anesthetistId: user.id,
-        dateFrom: toISODate(from),
-        dateTo: toISODate(to),
-      })
-        .then((list) =>
-          setAnesthetistAssignments(
-            list.map((a) => ({ date: a.date, shift: a.shift, assignmentType: a.assignmentType, resourceId: a.resourceId }))
-          )
-        )
-        .catch(() => setAnesthetistAssignments([]));
-    } else {
+    if (!isAnestesista || !user?.id || !selectedDateForGrid) {
       setAnesthetistAssignments([]);
+      return;
     }
-  }, [modoDemo, isAnestesista, user?.id, selectedDateForGrid]);
+    const from = new Date(selectedDateForGrid);
+    from.setDate(from.getDate() - 7);
+    const to = new Date(selectedDateForGrid);
+    to.setDate(to.getDate() + 7);
+    let cancelled = false;
+    getAssignments({
+      anesthetistId: user.id,
+      dateFrom: toISODate(from),
+      dateTo: toISODate(to),
+    })
+      .then((list) => {
+        if (cancelled) return;
+        setAnesthetistAssignments(
+          list.map((a) => ({ date: a.date, shift: a.shift, assignmentType: a.assignmentType, resourceId: a.resourceId }))
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAnesthetistAssignments([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAnestesista, user?.id, selectedDateForGrid]);
 
   const handleLogout = () => {
     logout();
@@ -402,7 +413,7 @@ export default function CalendarioPage() {
     return { [mon]: total, [thu]: total } as Record<string, number>;
   }, [weekStart, reservations]);
 
-  if (!hydrated || !user || user.role === "cirujano" || user.role === "endoscopista") {
+  if (!hydrated || !user || user.role === "cirujano" || user.role === "endoscopista" || hasGestionCitasAccess(user.role)) {
     return null;
   }
 

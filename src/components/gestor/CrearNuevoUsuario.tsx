@@ -11,6 +11,7 @@ import { roleLabel } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
 import { isValidEmail } from "@/lib/validation";
 import { useUsers } from "@/context/UsersContext";
+import { modoDemo } from "@/lib/config";
 
 const ROLES_FOR_INVITE: UserRole[] = ["anestesista", "gestor", "gestor-anestesista", "cirujano", "endoscopista", "gestion-citas"];
 
@@ -28,6 +29,18 @@ export function CrearNuevoUsuario() {
   /** Si el alta en BD fue OK pero falló el email: el gestor debe poder copiar la contraseña temporal aquí. */
   const [manualCredentials, setManualCredentials] = useState<{ email: string; tempPassword: string } | null>(null);
   const { refresh } = useUsers();
+
+  if (modoDemo) {
+    return (
+      <section className="rounded-xl border border-gray-200 bg-white p-6">
+        <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Crear nuevo usuario</h2>
+        <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-sm text-gray-600">
+          El alta, la invitación por correo y las contraseñas temporales no están disponibles en modo demostración.
+          El directorio visible es el equipo ficticio de esta demo.
+        </p>
+      </section>
+    );
+  }
 
   const handleEnviar = async () => {
     setError("");
