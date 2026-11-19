@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { getUsers } from "@/lib/dataHelpers";
 import { resetDemoStorage } from "@/lib/demoReset";
-import { loadDemoSeed } from "@/lib/demoSeed";
+import { ensureDemoSeed, loadDemoSeed } from "@/lib/demoSeed";
 import { addMessageToGestor, addNotification } from "@/lib/storageMensajesYNotificaciones";
 import { hasGestorAccess, hasGestionCitasAccess } from "@/lib/types";
 import { roleLabel } from "@/lib/types";
@@ -37,7 +37,7 @@ export default function HomePage() {
   const [contactBody, setContactBody] = useState("");
   const [contactSent, setContactSent] = useState(false);
   const [contactError, setContactError] = useState("");
-  const [loadExampleSuccess, setLoadExampleSuccess] = useState(false);
+  const [seedMessage, setSeedMessage] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -45,6 +45,11 @@ export default function HomePage() {
 
   const demoUsers = getUsers();
   const hasNoDemoUsers = demoUsers.length === 0;
+
+  useEffect(() => {
+    if (!modoDemo) return;
+    ensureDemoSeed();
+  }, []);
 
   useEffect(() => {
     if (!authUser || !router) return;
@@ -68,15 +73,17 @@ export default function HomePage() {
 
   const handleEnterDemo = () => {
     if (!selectedUser) return;
+    ensureDemoSeed();
     login(selectedUser);
     router.replace(workspaceForRole(selectedUser.role));
   };
 
   const handleRestablecerDemo = () => {
     resetDemoStorage();
+    loadDemoSeed();
     logout();
     setSelectedUser(null);
-    setLoadExampleSuccess(false);
+    setSeedMessage("Demostración restablecida con la semana ficticia de ejemplo.");
     router.replace("/");
   };
 
@@ -95,8 +102,7 @@ export default function HomePage() {
 
   const handleLoadExample = () => {
     loadDemoSeed();
-    setLoadExampleSuccess(true);
-    setTimeout(() => setLoadExampleSuccess(false), 6000);
+    setSeedMessage("Semana ficticia cargada de nuevo. Seleccione un perfil y entre.");
   };
 
   const noUserSelected = !selectedUser || hasNoDemoUsers;
@@ -195,7 +201,7 @@ export default function HomePage() {
               onClick={handleRestablecerDemo}
               className="rounded border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
             >
-              Restablecer demo
+              Restablecer semana de ejemplo
             </button>
           )}
           </div>
@@ -228,7 +234,29 @@ export default function HomePage() {
           </InlineNotice>
         )}
         <div className="space-y-2">
-          {demoUsers.map((u) => (
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Perfiles de la visita</p>
+          {demoUsers.filter((u) => !u.id.startsWith("demo-cirujano-") && u.id !== "demo-anestesista-ferrer").map((u) => (
+            <label
+              key={u.id}
+              className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 p-3 transition-colors ${
+                selectedUser?.id === u.id ? "border-[var(--ribera-red)] bg-red-50/30" : "border-gray-200 hover:border-gray-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="demoUser"
+                checked={selectedUser?.id === u.id}
+                onChange={() => setSelectedUser(u)}
+                className="h-4 w-4 border-gray-300 text-[var(--ribera-red)] focus:ring-[var(--ribera-red)]"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-gray-900">{u.name}</p>
+                <p className="text-sm text-gray-500">{u.email} · {roleLabel(u.role)}</p>
+              </div>
+            </label>
+          ))}
+          <p className="pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Equipo ficticio de la misma semana</p>
+          {demoUsers.filter((u) => u.id.startsWith("demo-cirujano-") || u.id === "demo-anestesista-ferrer").map((u) => (
             <label
               key={u.id}
               className={`flex cursor-pointer items-center gap-3 rounded-lg border-2 p-3 transition-colors ${
@@ -288,12 +316,12 @@ export default function HomePage() {
             onClick={handleRestablecerDemo}
             className="text-xs font-medium text-gray-500 hover:text-gray-700 underline"
           >
-            Restablecer demo
+            Restablecer semana de ejemplo
           </button>
         </div>
-        {loadExampleSuccess && (
+        {seedMessage && (
           <InlineNotice variant="success" className="mt-3 text-center" role="status">
-            Datos de ejemplo cargados. Seleccione un usuario y pulse Entrar en modo DEMO para verlos.
+            {seedMessage}
           </InlineNotice>
         )}
           </>

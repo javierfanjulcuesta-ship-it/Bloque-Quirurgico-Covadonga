@@ -11,6 +11,8 @@ import type { User } from "@/lib/types";
 import { fetchUsers } from "@/lib/api/users";
 import { useUsers } from "@/context/UsersContext";
 import { useAuth } from "@/context/AuthContext";
+import { modoDemo } from "@/lib/config";
+import { getUsers } from "@/lib/dataHelpers";
 
 type Filter = "all" | "active" | "inactive";
 
@@ -45,6 +47,11 @@ export function ListaUsuariosGestor() {
   }, []);
 
   useEffect(() => {
+    if (modoDemo) {
+      setUsers(getUsers());
+      setLoading(false);
+      return;
+    }
     load();
   }, [load]);
 
@@ -193,6 +200,26 @@ export function ListaUsuariosGestor() {
     if (filter === "inactive") return !active && !deleted;
     return true;
   });
+
+  if (modoDemo) {
+    const directory = getUsers();
+    return (
+      <div className="space-y-3">
+        <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          No disponible en modo demostración: desactivar, reactivar, invitaciones y contraseñas requieren el backend real.
+          Este listado es solo el directorio ficticio.
+        </p>
+        <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200">
+          {directory.map((person) => (
+            <li key={person.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="font-medium text-gray-900">{person.name}</span>
+              <span className="text-gray-500">{person.email} · {roleLabel(person.role)}{person.canSespa ? " · SESPA" : ""}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 import { ADMIN_NOTIFICATION_EMAIL_RULE_KEY } from "@/lib/reservations/surgicalCircuitConstants";
+import { modoDemo } from "@/lib/config";
 
 interface ProgrammingRuleFull {
   id: string;
@@ -62,6 +63,10 @@ export function NormasGestorView() {
   }, []);
 
   useEffect(() => {
+    if (modoDemo) {
+      setLoading(false);
+      return;
+    }
     fetchRules();
   }, [fetchRules]);
 
@@ -171,6 +176,18 @@ export function NormasGestorView() {
       setAdminSaving(false);
     }
   };
+
+  if (modoDemo) {
+    return (
+      <section className="rounded-xl border border-gray-200 bg-white p-6">
+        <h2 className="mb-2 text-xl font-bold text-[var(--ribera-navy)]">Normas de programación</h2>
+        <p className="mb-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          La edición de normas no está disponible en modo demostración. El texto siguiente es la norma estática de referencia y no se guarda en ningún servidor.
+        </p>
+        <pre className="whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 font-sans text-sm text-gray-700">{NORMAS_PROGRAMACION_BLOQUE}</pre>
+      </section>
+    );
+  }
 
   if (loading) {
     return (

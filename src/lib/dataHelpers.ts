@@ -273,6 +273,11 @@ export const MOCK_USERS: User[] = [
   { id: "demo-anestesista", name: "Anestesista Demo", email: "anestesista@demo", role: "anestesista", approved: true, canSespa: true },
   { id: "demo-cirujano", name: "Cirujano Demo", email: "cirujano@demo", role: "cirujano", approved: true },
   { id: "demo-endoscopista", name: "Endoscopista Demo", email: "endoscopista@demo", role: "endoscopista", approved: true },
+  // Equipo ficticio adicional para que la semana de quirófano no dependa de un solo profesional.
+  { id: "demo-cirujano-vega", name: "Dra. Elena Vega (cirugía general)", email: "elena.vega@demo", role: "cirujano", approved: true },
+  { id: "demo-cirujano-soler", name: "Dr. Martín Soler (traumatología)", email: "martin.soler@demo", role: "cirujano", approved: true },
+  { id: "demo-cirujano-campos", name: "Dra. Nuria Campos (ginecología)", email: "nuria.campos@demo", role: "cirujano", approved: true },
+  { id: "demo-anestesista-ferrer", name: "Dra. Lucía Ferrer", email: "lucia.ferrer@demo", role: "anestesista", approved: true, canSespa: false },
 ];
 
 function normalizedName(name: string): string {

@@ -39,7 +39,7 @@ import { HistoricoView } from "@/components/HistoricoView";
 import { NormasProgramacionView } from "@/components/cirujano/NormasProgramacionView";
 import { UltimasLiberacionesView } from "@/components/cirujano/UltimasLiberacionesView";
 import type { Reservation, ResourceId, PatientInBlock } from "@/lib/types";
-import { hasProgrammingAccess, hasGestorAccess, hasAnesthetistAccess, roleLabel } from "@/lib/types";
+import { hasProgrammingAccess, hasGestorAccess, hasAnesthetistAccess, hasGestionCitasAccess, roleLabel } from "@/lib/types";
 import { PageShellHeader } from "@/components/ui/PageShellHeader";
 import { AppNavTab } from "@/components/ui/AppNavTab";
 import { InlineNotice } from "@/components/ui/InlineNotice";
@@ -54,7 +54,7 @@ import {
   holguraSuggestionBadgeLabel,
   holguraSuggestionLevel,
 } from "@/lib/reservationUnderutilization";
-import { deriveReservationBlockState, getReservationTimingSummary } from "@/lib/reservationState";
+import { deriveReservationBlockState, getReservationTimingSummary, reservationBlockStateLabel } from "@/lib/reservationState";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 
 function slotKey(date: string, resourceId: string, shift: string, slotIndex: number) {
@@ -390,6 +390,10 @@ export default function CirujanoPage() {
       router.replace("/");
       return;
     }
+    if (hasGestionCitasAccess(user.role)) {
+      router.replace("/gestion-citas");
+      return;
+    }
     if (!hasProgrammingAccess(user.role)) {
       router.replace("/calendario");
     }
@@ -652,7 +656,7 @@ export default function CirujanoPage() {
     return own.map((r) => {
       const timing = getReservationTimingSummary(r);
       const state = deriveReservationBlockState(r);
-      const stateLabel = state === "EMPTY" ? "EMPTY" : state === "PARTIAL" ? "PARTIAL" : state === "FULL" ? "FULL" : "CANCELLED";
+      const stateLabel = reservationBlockStateLabel(state);
       return {
         reservation: r,
         timing,
@@ -662,10 +666,6 @@ export default function CirujanoPage() {
       };
     });
   }, [reservations, user?.id, isGestorScheduler]);
-
-  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
-    return null;
-  }
 
   const screen = useMemo(() => getCirujanoScreenContext(tab, { isGestorScheduler }), [tab, isGestorScheduler]);
   const workspaceQuickActions = useMemo(() => {
@@ -694,6 +694,10 @@ export default function CirujanoPage() {
       ],
     };
   }, [isGestorScheduler, tab, router]);
+
+  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
+    return null;
+  }
 
   const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;
@@ -980,6 +984,14 @@ export default function CirujanoPage() {
                 ? "Listado de pacientes programados en el bloque. Puede anular un paciente o anular la reserva de un tramo concreto (una fila en base de datos por hueco). Si un cirujano reservó varios tramos seguidos, cada uno se anula por separado."
                 : "Pacientes en sus reservas. Puede anular un paciente o anular la reserva de este tramo concreto (un hueco). Si reservó varios tramos seguidos, cancele cada reserva por separado."}
             </p>
+            {modoDemo && (
+              <p className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                En la demostración las anulaciones no usan el backend.{" "}
+                <button type="button" onClick={() => router.push("/demo/anulaciones")} className="font-semibold text-[var(--ribera-navy)] hover:underline">
+                  Abrir anulaciones de la demo
+                </button>
+              </p>
+            )}
             {misReservasResumen.length > 0 && (
               <div className="mb-5 grid gap-3 md:grid-cols-2">
                 {misReservasResumen.map(({ reservation, timing, state, stateLabel, resourceLabel }) => (
