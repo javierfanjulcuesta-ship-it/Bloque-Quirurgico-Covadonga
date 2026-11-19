@@ -14,6 +14,13 @@ export function getReservationTimingSummary(reservation: Reservation): Reservati
   return { totalMinutes, usedMinutes, freeMinutes };
 }
 
+export function reservationBlockStateLabel(state: ReservationBlockState): string {
+  if (state === "EMPTY") return "Sin pacientes";
+  if (state === "PARTIAL") return "Parcial";
+  if (state === "FULL") return "Completo";
+  return "Anulada";
+}
+
 export function deriveReservationBlockState(reservation: Reservation): ReservationBlockState {
   if (reservation.status === "cancelled" || reservation.status === "released") return "CANCELLED";
   const patientCount = reservation.patients?.length ?? 0;

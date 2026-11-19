@@ -81,7 +81,7 @@ function SummaryBlock({ title, from, to, summary }: { title: string; from: strin
 
 export default function ManagerAppointmentsSummaryPage() {
   const router = useRouter();
-  const { user, hydrated } = useAuth();
+  const { user, hydrated, logout } = useAuth();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -128,12 +128,17 @@ export default function ManagerAppointmentsSummaryPage() {
 
   return (
     <main className="mx-auto w-full max-w-7xl p-4 md:p-6">
-      <div className="mb-5">
-        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Gestor · DEMO</p>
-        <h1 className="mt-1 text-2xl font-bold text-[var(--ribera-navy)]">Gestión de citas</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-600">
-          Visión ejecutiva de preparación de pacientes. Solo muestra recuentos operativos; no expone diagnósticos, ASA, medicación ni notas de anestesia.
-        </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--ribera-red)]">Gestor · DEMO</p>
+          <h1 className="mt-1 text-2xl font-bold text-[var(--ribera-navy)]">Gestión de citas</h1>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">
+            Visión ejecutiva de preparación de pacientes. Solo muestra recuentos operativos; no expone diagnósticos, ASA, medicación ni notas de anestesia.
+          </p>
+        </div>
+        <button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Cerrar sesión
+        </button>
       </div>
 
       {error ? <InlineNotice variant="error" className="mb-4">{error}</InlineNotice> : null}

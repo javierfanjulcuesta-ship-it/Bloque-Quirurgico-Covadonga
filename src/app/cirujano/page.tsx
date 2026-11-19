@@ -54,7 +54,7 @@ import {
   holguraSuggestionBadgeLabel,
   holguraSuggestionLevel,
 } from "@/lib/reservationUnderutilization";
-import { deriveReservationBlockState, getReservationTimingSummary } from "@/lib/reservationState";
+import { deriveReservationBlockState, getReservationTimingSummary, reservationBlockStateLabel } from "@/lib/reservationState";
 import { NORMAS_PROGRAMACION_BLOQUE } from "@/lib/email/emailConstants";
 
 function slotKey(date: string, resourceId: string, shift: string, slotIndex: number) {
@@ -656,7 +656,7 @@ export default function CirujanoPage() {
     return own.map((r) => {
       const timing = getReservationTimingSummary(r);
       const state = deriveReservationBlockState(r);
-      const stateLabel = state === "EMPTY" ? "EMPTY" : state === "PARTIAL" ? "PARTIAL" : state === "FULL" ? "FULL" : "CANCELLED";
+      const stateLabel = reservationBlockStateLabel(state);
       return {
         reservation: r,
         timing,
@@ -666,10 +666,6 @@ export default function CirujanoPage() {
       };
     });
   }, [reservations, user?.id, isGestorScheduler]);
-
-  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
-    return null;
-  }
 
   const screen = useMemo(() => getCirujanoScreenContext(tab, { isGestorScheduler }), [tab, isGestorScheduler]);
   const workspaceQuickActions = useMemo(() => {
@@ -698,6 +694,10 @@ export default function CirujanoPage() {
       ],
     };
   }, [isGestorScheduler, tab, router]);
+
+  if (!hydrated || !user || !hasProgrammingAccess(user.role)) {
+    return null;
+  }
 
   const handleSoloReservar = async () => {
     if (selectedSlots.length === 0) return;

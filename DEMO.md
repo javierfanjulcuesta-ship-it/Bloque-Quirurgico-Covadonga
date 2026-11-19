@@ -42,15 +42,14 @@ npm run dev
 
 Abrir [http://localhost:3000](http://localhost:3000). En desarrollo la demo está activa sola: no hace falta base de datos ni `DATABASE_URL`.
 
-Para comprobar el mismo modo que se despliega (build de producción, API bloqueada):
+En esta rama el build de producción ya queda aislado, sin copiar variables:
 
 ```bash
-cp env.demo.example .env.local
 npm run build
 npm run start
 ```
 
-`env.demo.example` solo contiene el modo aislado y una URL de Postgres **falsa** (`127.0.0.1`, base `qxflow_demo_unused`). Prisma la necesita para generar el cliente durante el build; la aplicación no se conecta a ella porque `/api` queda deshabilitada.
+`env.demo.example` solo hace falta si se quiere forzar el mismo modo en otra rama. La URL de Postgres que aparece ahí es falsa y `prisma generate` no se conecta.
 
 Comprobación rápida del aislamiento:
 
@@ -60,23 +59,27 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/reservations
 
 Tiene que responder `503` con el código `ISOLATED_DEMO_BACKEND_DISABLED`.
 
-## Despliegue de la demo (Vercel, proyecto aparte)
+## Despliegue público (lo tiene que pulsar el propietario)
 
-La aplicación de producción también está en Vercel y usa Postgres, JWT y correo. **La demo no se despliega en ese proyecto.** Hay que usar un proyecto de Vercel distinto, o un entorno que no comparta variables con producción.
+Desde aquí no hay un enlace público. Las vistas previas de los proyectos `bloque-quirurgico-covadonga` y `bloque-quirurgico-covadonga-awdb` piden cuenta de Vercel. No hay que cambiar sus variables ni su protección: pueden apuntar a la base real.
 
-El propietario tiene que hacer esto una vez:
+La rama `cursor/demo-aislada-a622` (y una rama que se llame exactamente `demo`) se construye siempre en modo aislado, sin variables. Aunque el proyecto tenga `DATABASE_URL`, ese build no crea el cliente de Prisma y `/api` responde 503. Hace falta un proyecto nuevo, o un enlace compartido de esa rama, para que lo vea alguien sin cuenta.
 
-1. Crear un proyecto de Vercel nuevo, asociado a este repositorio, con la rama que se quiera enseñar. No reutilizar el proyecto de producción ni copiar sus variables.
-2. En **Settings → Environment Variables** de ese proyecto, definir al menos:
-   - `NEXT_PUBLIC_DEPLOYMENT_MODE` = `isolated-demo`
-   - `QXFLOW_ISOLATED_DEMO` = `true`
-   - `DATABASE_URL` y `DIRECT_URL` con el valor de ejemplo de `env.demo.example` (no es una base real; solo permite que `prisma generate` pase en el build).
-3. No definir `JWT_SECRET`, `SMTP_*`, `AZURE_*`, `CRON_SECRET` ni `EMAIL_WEBHOOK_SECRET`. No hace falta: la demo no inicia sesión real ni envía correo.
-4. Lanzar el despliegue. `NEXT_PUBLIC_DEPLOYMENT_MODE` se incorpora en el build; si se cambia después, hay que volver a desplegar.
-5. Abrir la URL del proyecto. Debe salir el selector de perfiles, no el formulario de contraseña.
-6. Abrir `https://<dominio-demo>/api/reservations` y confirmar el `503` de demo aislada.
+### Opción recomendada: proyecto nuevo y URL pública
 
-Con eso la URL se puede compartir. Cada visitante tiene su propia semana en su navegador. Restablecer no afecta a los demás.
+1. En Vercel: **Add New… → Project**. Importar este mismo repositorio.
+2. **Production Branch:** `cursor/demo-aislada-a622`.
+3. **Environment Variables:** no añadir ninguna. No pulsar «Import» desde los proyectos existentes.
+4. Deploy.
+5. En ese proyecto nuevo: **Settings → Deployment Protection → Vercel Authentication → Disabled**. No tocar esa opción en los proyectos de producción.
+6. Abrir la URL `*.vercel.app` del proyecto nuevo. Tiene que salir «Acceso de demostración», no el formulario de contraseña.
+7. Abrir `https://<esa-url>/api/reservations`. Tiene que responder 503 y `ISOLATED_DEMO_BACKEND_DISABLED`.
+
+Esa URL se puede enviar. Cada navegador guarda su semana. No usa la base de datos.
+
+### Si no se quiere un proyecto nuevo
+
+En el deployment de la rama `cursor/demo-aislada-a622` (no en el de producción): **Share → Anyone with the link**. Ese enlace salta la protección solo de ese deployment. No cambia variables. Sirve después de que Vercel haya construido el commit que fuerza el modo aislado; los enlaces anteriores siguen detrás del acceso de Vercel y no deben compartirse.
 
 El despliegue de **producción** (migraciones, correo, secretos) está en `docs/DEPLOY-VERCEL.md` y no forma parte de esta demo.
 

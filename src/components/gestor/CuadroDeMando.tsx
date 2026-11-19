@@ -1038,7 +1038,7 @@ export function CuadroDeMando({
       }
     }
     return rows;
-  }, [resources, weekDatesIso, turnProfitabilityMap, turnAvailableMinutesByKey, weekStart]);
+  }, [resources, weekDatesIso, turnProfitabilityMap, turnAvailableMinutesByKey, weekStart, reservations, anesthetistAssignments]);
 
   const structuralOptimizationRows = useMemo(() => {
     const orIds = mainOperatingRoomIds(resources);
